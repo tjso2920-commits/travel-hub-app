@@ -21,7 +21,7 @@ w.eval("fmSetHotelFromSpot();bgSetTotal(80000);bgSetDays(4);foodMap.courseStart=
 const panels=[...w.document.querySelectorAll('details.fm-panel')].map(d=>({id:d.getAttribute('ontoggle'),open:d.hasAttribute('open'),sum:d.querySelector('summary').textContent.trim()}));
 console.log('--- 패널 ---'); panels.forEach(p=>console.log('  ',p.open?'[열림]':'[접힘]',p.sum.replace(/\s+/g,' ')));
 /* 매직 넘버는 패널이 하나 늘 때마다 깨진다. 있어야 할 패널이 다 있는지로 검사한다. */
-const want=['여행 인박스 · 링크로 담기','구역 자동 묶기','여행 일정 배분','오늘 동선','예산 · 지출','환율','여행 준비','사진으로 기록','여행 일지','날씨'];
+const want=['여행 인박스 · 링크로 담기','구역 자동 묶기','여행 일정 배분','오늘 동선','예산 · 지출','환율','여행 준비','사진으로 기록','여행 일지','날씨','현지 상황 보기'];
 const titles=panels.map(p=>p.sum.replace(/\s+/g,' '));
 for(const nm of want)t('패널 존재: '+nm, titles.some(x=>x.includes(nm)));
 t('구역만 기본 열림', panels.filter(p=>p.open).length===1 && panels.find(p=>p.open).sum.includes('구역'));

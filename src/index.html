@@ -2360,6 +2360,40 @@ async function wxFetch(quiet){
   if(quiet)throw e;
  }
 }
+/* ── 현지 상황 보기: 라이브캠·교통·재난 정보로 나가는 링크 ──
+   34절이 요청한 "실시간 라이브캠/CCTV" 다. 다만 34절 스스로 "모든 곳에 붙이는 핵심 기능보다
+   가치가 분명한 곳에 선택적으로" 라고 정리해 두었고, 실제로 키 없이 어느 도시에서나 쓸 수 있는
+   공개 영상 소스는 존재하지 않는다. 그래서 영상을 앱 안에 끌어와 심지 않는다.
+   대신 목적지 이름을 넣은 검색·공식 사이트 링크로 내보낸다 — 나라를 바꿔도 그대로 동작한다.
+   API 키도 요금도 없고, 남의 영상을 복제하지 않으므로 34절 법적 경계 5번에도 어긋나지 않는다. */
+const LV_LINKS=[
+ {k:'cam',   t:'라이브캠 영상',   d:'유튜브에서 지금 송출 중인 현지 영상을 찾습니다.',
+  u:'https://www.youtube.com/results?search_query={q}&sp=EgJAAQ%253D%253D'},
+ {k:'window',t:'세계 라이브캠',   d:'공개 웹캠 모음 사이트에서 도시를 찾습니다.',
+  u:'https://www.skylinewebcams.com/en/search.html?q={dest}'},
+ {k:'traffic',t:'실시간 교통·혼잡', d:'구글 지도의 교통 상황 레이어를 엽니다.',
+  u:'https://www.google.com/maps/search/{dest}/data=!5m1!1e1'},
+ {k:'alert', t:'기상 특보·재난',   d:'목적지의 기상 경보를 검색합니다.',
+  u:'https://www.google.com/search?q={dest}+%EA%B8%B0%EC%83%81%ED%8A%B9%EB%B3%B4'}
+];
+function lvUrl(k){
+ const it=LV_LINKS.find(x=>x.k===k); if(!it)return'#';
+ const dest=affDest();
+ return it.u
+  .split('{q}').join(encodeURIComponent(dest+' live'))
+  .split('{dest}').join(encodeURIComponent(dest));
+}
+function lvHTML(){
+ const dest=affDest();
+ const rows=LV_LINKS.map(function(x){
+  return '<div class="fm-guide-step"><b>·</b><div><h4>'+esc(x.t)+'</h4><p>'+esc(x.d)+'</p>'+
+   '<div class="xactions"><a class="xaction sub" href="'+esc(lvUrl(x.k))+'" target="_blank" rel="noopener noreferrer">'+esc(x.t)+' 열기</a></div></div></div>';
+ }).join('');
+ return fmPanel('live','LIVE','현지 상황 보기',esc(dest),
+  '<div class="xsmall">지금 그곳이 어떤지 밖에서 확인합니다. 앱이 영상을 직접 틀지는 않고 각 서비스로 열어 줍니다 — 그래야 키·요금 없이, 남의 영상을 복제하지 않고 쓸 수 있습니다.</div>'+
+  '<div class="fm-guide" style="margin-top:10px">'+rows+'</div>'+
+  '<div class="xsmall" style="margin-top:8px">목적지는 <b>일정</b> 탭의 여행 준비에서 바꾸면 여기도 함께 바뀝니다. 라이브캠은 도시마다 있을 수도, 없을 수도 있습니다.</div>');
+}
 function wxHTML(){
  const days=wxDays(),today=wxFor(TODAY),src=(foodMap.wx||{}).src||'';
  const sum=today?(wxTxt(TODAY)):(days.length?'오늘 예보 없음':'미조회');
@@ -2554,6 +2588,44 @@ function shConsume(){
  const note=[title, String(text).replace(url,'').trim()].filter(Boolean).join(' · ').slice(0,300);
  return {url:url,note:note};
 }
+/* 이 앱을 공유 대상으로 부르는 주소. 아이폰 단축어에 붙여 넣을 접두사다. */
+function shBase(){
+ try{
+  if(location.protocol==='file:')return'';        /* 파일로 열면 공유 주소를 만들 수 없다 */
+  return location.origin+location.pathname+'?url=';
+ }catch(e){return'';}
+}
+async function shCopyBase(){
+ const v=shBase(); const out=document.getElementById('shCopyOut');
+ if(!v){if(out)out.textContent='먼저 앱을 인터넷 주소로 열어야 합니다.';return;}
+ try{await navigator.clipboard.writeText(v);if(out)out.textContent='복사했습니다. 단축어에 붙여 넣으세요.';}
+ catch(e){
+  /* 클립보드 권한이 없으면 직접 고를 수 있게 입력칸을 선택 상태로 만든다. */
+  const el=document.getElementById('shBaseIn');
+  if(el){el.focus();el.select();}
+  if(out)out.textContent='자동 복사가 막혔습니다. 위 칸의 주소를 길게 눌러 복사해 주세요.';
+ }
+}
+/* 아이폰 Safari 는 PWA share_target 을 지원하지 않는다. 대신 단축어로 같은 흐름을 만든다.
+   안드로이드는 홈 화면에 추가하면 OS 공유 시트에 이 앱이 그냥 뜬다. */
+function shGuideHTML(){
+ const base=shBase();
+ return '<details class="xcard" style="margin-top:10px"><summary style="font-size:12.5px;font-weight:800;cursor:pointer">공유 버튼으로 바로 담기 (아이폰·안드로이드)</summary>'+
+  '<div class="xsmall" style="margin-top:9px"><b style="color:var(--text)">안드로이드</b><br>'+
+  '홈 화면에 이 앱을 추가하면 인스타·틱톡의 <b>공유</b> 목록에 이 앱이 바로 나타납니다. 눌러서 공유하면 인박스에 담깁니다.</div>'+
+  '<div class="xsmall" style="margin-top:11px"><b style="color:var(--text)">아이폰</b><br>'+
+  '아이폰 사파리는 앱을 공유 목록에 올리는 기능을 지원하지 않습니다. 대신 <b>단축어</b>를 한 번 만들면 똑같이 됩니다.</div>'+
+  '<div class="fm-guide" style="margin-top:9px">'+
+  '<div class="fm-guide-step"><b>1</b><div><h4>단축어 앱에서 새 단축어 만들기</h4><p><b>단축어</b> 앱 → 오른쪽 위 <b>+</b> → 동작 검색에서 <b>URL 열기</b> 를 추가합니다.</p></div></div>'+
+  '<div class="fm-guide-step"><b>2</b><div><h4>공유 시트에 표시 켜기</h4><p>위쪽 <b>ⓘ</b>(정보) → <b>공유 시트에 표시</b> 를 켭니다. 받는 항목은 <b>URL</b> 로 둡니다.</p></div></div>'+
+  '<div class="fm-guide-step"><b>3</b><div><h4>주소 + 공유된 링크 붙이기</h4><p>‘URL 열기’ 칸에 아래 주소를 붙여 넣고, 그 <b>바로 뒤에</b> 변수 <b>단축어 입력</b> 을 넣습니다.</p>'+
+  (base
+    ? '<input class="xinput wide" id="shBaseIn" readonly value="'+esc(base)+'" style="margin-top:7px"><div class="xactions"><button class="xaction sub" onclick="shCopyBase()">주소 복사</button></div><div class="xsmall" id="shCopyOut"></div>'
+    : '<div class="xsmall" style="margin-top:7px">지금은 파일로 열려 있어 주소를 만들 수 없습니다. 앱을 인터넷 주소로 연 뒤 이 안내를 다시 보세요.</div>')+
+  '</div></div>'+
+  '<div class="fm-guide-step"><b>4</b><div><h4>이름 정하고 저장</h4><p>단축어 이름을 <b>여행 인박스에 담기</b> 로 저장합니다. 이제 인스타·틱톡에서 <b>공유 → 여행 인박스에 담기</b> 를 누르면 이 앱이 열리며 링크가 담깁니다.</p></div></div>'+
+  '</div></details>';
+}
 let shJustAdded=false;   /* 공유로 막 담긴 것이 있으면 인박스에 한 번 알린다 */
 function shHandle(){
  const got=shConsume(); if(!got)return false;
@@ -2590,6 +2662,7 @@ function ibHTML(){
   '<div class="fm-grid" style="margin-top:8px"><input class="xinput wide" id="ibUrl" placeholder="인스타그램·틱톡·유튜브·구글맵 링크"><textarea class="xta wide" id="ibNote" placeholder="왜 저장했는지 · 가게 이름·메뉴 등 기억나는 정보"></textarea></div>'+
   '<div class="xactions"><button class="xaction" onclick="ibAdd()">＋ 인박스에 담기</button></div>'+
   (shJustAdded?'<div class="tool-result">공유한 링크를 담았습니다. 아래에서 장소 이름을 확인하고 확정하세요.</div>':'')+
+  shGuideHTML()+
   (rows||'<div class="empty" style="margin-top:8px">아직 담은 링크가 없습니다.</div>'));
 }
 /* ── 여행 일지: 여행이 끝난 뒤에도 "언제 어디 갔고 얼마 썼는지" 가 남는다 ──
@@ -2907,7 +2980,7 @@ renderFoodMap=function(){
   plHTML()+csHTML()+bgHTML()+fxHTML()+affHTML();
  /* 지금 여행 — 현장에서 다음 행동을 정하는 곳 */
  nRoot.innerHTML='<div id="fmGpsPanel">'+fmGpsPanelHTML()+'</div>'+
-  asHTML()+wxHTML()+
+  asHTML()+wxHTML()+lvHTML()+
    '<div class="xcard"><h3><span class="tag">SMART</span>오늘의 자동 선택</h3><div class="xsmall">현재 위치/호텔, 영업상태, 우선순위, 평점, 방문 여부를 함께 봅니다.</div><div class="fm-quick"><button onclick="fmDecision(\'now\')">⚡ 지금 어디 가지?</button><button onclick="fmDecision(\'crawl\')">🍶 술집 3차 코스</button><button onclick="fmDecision(\'balanced\')">🧭 균형 코스</button><button onclick="fmDecision(\'rain\')">☔ 비 오는 날</button><button onclick="fmDecision(\'region\')">📍 한 지역 공략</button><button onclick="fmDecision(\'spare\')">⏱ 빈 시간 코스</button></div><select class="xselect" style="margin-top:8px" onchange="fmSetSpare(this.value)">'+fm2Opts([[30,'빈 시간 30분'],[60,'빈 시간 60분'],[90,'빈 시간 90분'],[120,'빈 시간 120분']],+foodMap.spare)+'</select></div>'+
   fm2DecisionHTML()+
   '<div class="fm-spot-tools" id="fmSpotTools"></div>'+phHTML()+tjHTML();

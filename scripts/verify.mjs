@@ -210,7 +210,11 @@ requireTokens(sales, '판매용', [
   'function csReplanNow()',
   'function wxSoon(h)',
   'function shGrabUrl(s)',
-  'function shHandle()'
+  'function shHandle()',
+  'function shBase()',
+  'function shGuideHTML()',
+  'const LV_LINKS=',
+  'function lvHTML()'
 ]);
 for (const personalToken of ['스태프밀', '윤식', '96 → 80', 'F&B 경력자', '十年以上']) {
   check(!sales.includes(personalToken), `판매용: 개인 신상 문자열 제외 ${personalToken}`);
