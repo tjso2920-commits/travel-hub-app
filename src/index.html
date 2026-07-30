@@ -35,34 +35,19 @@
   .g-dday .u{font-size:16px;color:var(--muted);font-weight:600}
   .g-goal{font-size:13.5px;color:var(--muted);margin-bottom:26px}
   .g-goal b{color:var(--text)}
-  .g-card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:14px}
   .g-card .t{font-size:12px;font-family:var(--mono);letter-spacing:.14em;color:var(--wasabi);margin-bottom:9px;text-transform:uppercase}
-  .g-routine{font-size:15px;font-weight:700}
   .g-routine .sub{display:block;font-size:12.5px;color:var(--muted);font-weight:400;margin-top:3px}
-  .g-w{display:flex;align-items:center;gap:10px}
-  .g-w input{flex:1;background:var(--bg);border:1px solid var(--line2);border-radius:10px;padding:12px 13px;
-    color:var(--text);font-size:16px;font-family:var(--mono)}
-  .g-w input:focus{outline:none;border-color:var(--wasabi)}
   .g-w .u{font-size:13px;color:var(--muted)}
-  .g-avg{font-size:11.5px;color:var(--faint);margin-top:7px}
   .g-btns{display:flex;flex-direction:column;gap:10px;margin-top:8px}
   .g-btn{padding:17px;border-radius:14px;border:none;font-size:16px;font-weight:800;cursor:pointer;letter-spacing:-.01em}
   .g-btn.w{background:var(--wasabi);color:#1a1710}
   .g-btn.r{background:var(--surface2);color:var(--muted);border:1px solid var(--line2)}
-  .g-skip{margin-top:14px;text-align:center;font-size:12px;color:var(--faint)}
-
-  .ob label{display:block;font-size:12px;color:var(--muted);font-weight:700;margin:14px 0 6px 2px}
-  .ob input{width:100%;background:var(--bg);border:1px solid var(--line2);border-radius:10px;padding:12px 13px;color:var(--text);font-size:15px}
-  .ob input:focus{outline:none;border-color:var(--wasabi)}
-  .ob .row2{display:flex;gap:10px}.ob .row2>div{flex:1}
-  .ob .hint{font-size:11px;color:var(--faint);margin-top:4px}
 
   header{padding:20px 20px 16px;border-bottom:1px solid var(--line)}
   .h-top{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
   .h-date{font-family:var(--mono);font-size:12.5px;color:var(--wasabi);letter-spacing:.06em;font-weight:700}
   .h-dday{margin-left:auto;font-family:var(--mono);font-size:13px;font-weight:800;color:var(--ember-soft);
     background:rgba(224,105,47,.12);padding:3px 10px;border-radius:14px}
-  .h-goal{display:flex;align-items:baseline;gap:8px;font-family:var(--mono);margin-top:10px;line-height:1}
   .h-goal .from{font-size:26px;font-weight:800;color:var(--faint)}
   .h-goal .arr{font-size:16px;color:var(--ember)}
   .h-goal .to{font-size:34px;font-weight:800;color:var(--wasabi)}
@@ -80,83 +65,34 @@
   nav button.on::after{content:"";position:absolute;left:3px;right:3px;bottom:0;height:2px;background:var(--wasabi);border-radius:2px}
   .tab{display:none;padding:20px 18px 8px}
   .tab.on{display:block}
-
-  .sec-head{display:flex;align-items:center;gap:10px;margin-bottom:4px}
-  .sec-head h2{font-size:18px;font-weight:800;color:var(--text)}
   .sec-head .tools{margin-left:auto;display:flex;gap:7px}
   .btn{font-size:12px;font-weight:700;padding:7px 12px;border-radius:20px;border:1px solid var(--line2);
     background:var(--surface);color:var(--muted);cursor:pointer;transition:.15s}
   .btn:active{transform:scale(.96)}
   .btn.on{background:var(--wasabi);color:#1a1710;border-color:var(--wasabi)}
-  .sec-sub{font-size:12.5px;color:var(--muted);margin:2px 0 16px;line-height:1.5}
-  .sec-sub b{color:var(--wasabi)}
 
   .day{background:var(--surface);border:1px solid var(--line);border-radius:14px;margin-bottom:11px;overflow:hidden}
   .day.rest{opacity:.92;border-style:dashed}
   .day.today{border-color:rgba(180,194,74,.45)}
-  .day-top{display:flex;align-items:center;gap:10px;padding:14px 15px;cursor:pointer;user-select:none}
   .day:not(.closed) .day-top{border-bottom:1px solid var(--line)}
   .day.rest:not(.closed) .day-top{border-bottom:0}
-  .caret{margin-left:2px;color:var(--faint);font-size:11px;transition:.18s;flex-shrink:0}
   .day.closed .caret{transform:rotate(-90deg)}
-  .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
-  .dot.rec{background:var(--wasabi);box-shadow:0 0 8px rgba(180,194,74,.5)}
-  .dot.low{background:var(--ember);box-shadow:0 0 8px rgba(224,105,47,.5)}
   .dot.rest{background:var(--faint)}
-  .day-name{font-size:16.5px;font-weight:800}
-  .day-name .en{font-family:var(--mono);font-size:10.5px;color:var(--faint);font-weight:600;margin-left:5px}
-  .tbadge{font-family:var(--mono);font-size:9.5px;font-weight:800;color:#1a1710;background:var(--wasabi);
-    padding:2px 6px;border-radius:8px;letter-spacing:.04em}
-  .prog{font-family:var(--mono);font-size:11px;color:var(--wasabi);font-weight:700;background:rgba(180,194,74,.12);padding:2px 7px;border-radius:12px}
   .prog.done{background:var(--wasabi);color:#1a1710}
   .prog.rest{background:var(--surface2);color:var(--faint)}
-  .day-role{margin-left:auto;font-size:11px;font-weight:700;padding:4px 8px;border-radius:20px;white-space:nowrap}
-  .role-main{background:rgba(180,194,74,.16);color:var(--wasabi)}
-  .role-mini{background:rgba(167,156,135,.14);color:var(--muted)}
-  .role-cardio{background:rgba(224,105,47,.14);color:var(--ember-soft)}
-  .role-rest{background:var(--surface2);color:var(--faint)}
-  .day-body{padding:4px 15px 13px}
   .day.rest .day-body{padding:13px 15px}
   .day.closed .day-body{display:none}
 
   .ex{display:flex;flex-direction:column;gap:9px;padding:12px 0;border-bottom:1px solid var(--line)}
   .ex:last-of-type{border-bottom:0}
-  .ex-row{display:flex;align-items:center;gap:10px}
-  .ex-main{flex:1;min-width:0}
-  .ex-name{font-size:14.5px;font-weight:500}
-  .ex-name .alt{color:var(--faint);font-weight:400;font-size:12px}
   .ex-name .pick{color:var(--wasabi-deep);font-weight:700;font-size:11px;font-family:var(--mono)}
   .ex.done .ex-name{color:var(--faint);text-decoration:line-through;text-decoration-color:var(--wasabi-deep)}
-  .ex-set{font-family:var(--mono);font-size:12.5px;font-weight:600;color:var(--wasabi);white-space:nowrap;opacity:.85}
   .ex.done .ex-set{color:var(--faint)}
-  .edit-btns{display:none;gap:5px;flex-shrink:0}
   .icn{width:28px;height:28px;border-radius:8px;border:1px solid var(--line2);background:var(--surface2);
     color:var(--muted);cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center}
   .icn.del{color:var(--ember-soft)}
-  body.editing .edit-btns{display:flex}
-  .vids{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
-  .chip{display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:8px;background:var(--raise);
-    border:1px solid var(--line2);text-decoration:none;font-size:11.5px;font-weight:600;color:var(--text)}
-  .chip svg{width:9px;height:9px;fill:var(--ember-soft);flex-shrink:0}
-  .chip:active{background:var(--ember);color:#1a1710}
-  .chip.solo{color:var(--ember-soft);background:rgba(224,105,47,.1);border-color:rgba(224,105,47,.25)}
-  body.editing .chip::after{content:"✎";margin-left:2px;color:var(--ember-soft);font-size:10px}
   .chip.short{background:rgba(180,194,74,.14);border-color:rgba(180,194,74,.4);color:var(--wasabi)}
   .chip.short svg{fill:var(--wasabi)}
-  .vidtog{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:9px;background:var(--raise);
-    border:1px solid var(--line2);color:var(--text);font-size:12px;font-weight:700;cursor:pointer}
-  .vidtog svg{width:10px;height:10px;fill:var(--ember-soft)}
-  .vidtog .cv{color:var(--faint);font-size:10px;margin-left:2px}
-  .vidtog.op{background:var(--surface2);border-color:var(--wasabi-deep)}
-  .vidpanel{margin-top:8px;padding:10px;background:var(--surface2);border-radius:10px;display:flex;flex-direction:column;gap:8px}
-  .vgrow{display:flex;flex-direction:column;gap:5px}
-  .vgname{font-size:11.5px;font-weight:700;color:var(--muted)}
-  .vgchips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
-  .vgdel{border:none;background:transparent;color:var(--ember-soft);font-size:13px;cursor:pointer;padding:2px 4px}
-  .addlink{display:none;background:transparent;border:1px dashed var(--line2);color:var(--muted);cursor:pointer;
-    font-size:11.5px;font-weight:700;padding:5px 10px;border-radius:8px}
-  body.editing .addlink{display:inline-flex}
-  .sets{display:flex;align-items:center;gap:5px}
   .seg{flex:1;height:9px;border-radius:5px;background:var(--surface2);border:1px solid var(--line2);
     cursor:pointer;transition:.12s;max-width:44px;min-width:14px}
   .seg:active{transform:scaleY(1.3)}
@@ -164,70 +100,25 @@
   .sets .cnt{font-family:var(--mono);font-size:11.5px;font-weight:700;color:var(--muted);margin-left:7px;white-space:nowrap;min-width:34px;text-align:right}
   .ex.done .sets .cnt{color:var(--wasabi)}
   body.editing .seg{pointer-events:none;opacity:.4}
-  .add-ex{display:none;width:100%;margin-top:9px;padding:9px;border:1px dashed var(--line2);border-radius:9px;
-    background:transparent;color:var(--muted);font-size:12.5px;font-weight:700;cursor:pointer}
-  body.editing .add-ex{display:block}
-  .stair{display:flex;align-items:center;gap:8px;margin-top:11px;padding:10px 12px;background:var(--surface2);border-radius:9px;font-size:13px}
-  .stair .lbl{font-weight:700;color:var(--ember-soft)}
   .stair .val{font-family:var(--mono);font-weight:700;margin-left:auto}
-  .stair.zero{background:rgba(224,105,47,.09);border:1px dashed rgba(224,105,47,.4)}
   .stair.zero .lbl,.stair.zero .val{color:var(--ember)}
   .note-mini{font-size:12px;color:var(--muted);margin-top:9px;line-height:1.45}
   .day.rest .note-mini{margin-top:0;font-size:13px}
   .note-mini b{color:var(--text)}
-
-  .gaugebox{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:15px 16px;margin-bottom:12px}
-  .gr{margin-bottom:13px}.gr:last-child{margin-bottom:0}
-  .gr .lab{display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:6px}
   .gr .lab .l{color:var(--muted);font-weight:700}
   .gr .lab .v{font-family:var(--mono);font-weight:700}
-  .gbar{height:10px;background:var(--surface2);border-radius:6px;overflow:hidden}
-  .gbar i{display:block;height:100%;border-radius:6px;background:var(--wasabi);transition:width .3s}
   .gbar i.over{background:var(--ember)}
-  .gnote{font-size:11px;color:var(--faint);margin-top:4px}
-  .srch{display:flex;gap:8px;margin-bottom:10px}
-  .srch input{flex:1;background:var(--surface);border:1px solid var(--line2);border-radius:11px;padding:12px 13px;color:var(--text);font-size:14.5px}
-  .srch input:focus{outline:none;border-color:var(--wasabi)}
-  .aibtns{display:flex;gap:7px;margin-bottom:12px;flex-wrap:wrap}
-  .aibtn{flex:1;min-width:100px;padding:10px;border-radius:10px;border:1px dashed rgba(224,105,47,.4);
-    background:rgba(224,105,47,.07);color:var(--ember-soft);font-size:12px;font-weight:700;cursor:pointer;text-align:center}
   .results{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:14px}
-  .fchip{padding:8px 12px;border-radius:10px;background:var(--raise);border:1px solid var(--line2);
-    font-size:12.5px;font-weight:600;cursor:pointer}
   .fchip .k{color:var(--wasabi);font-family:var(--mono);font-size:11px;margin-left:5px}
-  .fchip.tgl{background:transparent;border:1px dashed var(--line2);color:var(--muted);font-weight:700}
-  .fhead{display:flex;align-items:center;margin-bottom:9px}
-  .fhead span{font-size:12.5px;font-weight:700;color:var(--muted)}
   .fhead .btn{margin-left:auto}
-  .fchip.ed{display:inline-flex;align-items:center;gap:8px;cursor:default}
-  .fchip.ed.hid{opacity:.4}
-  .fchip .pin,.fchip .del,.fchip .res{border:none;background:transparent;cursor:pointer;font-size:13px;padding:2px;line-height:1}
-  .fchip .pin{color:var(--faint)} .fchip .pin.on{color:var(--wasabi)}
+  .fchip .pin,.fchip .del,.fchip .res{border:none;background:transparent;cursor:pointer;font-size:13px;padding:2px;line-height:1} .fchip .pin.on{color:var(--wasabi)}
   .fchip .del{color:var(--ember-soft)} .fchip .res{color:var(--wasabi)}
-  .flist{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-bottom:12px}
-  .fi{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--line);font-size:13.5px}
-  .fi:last-child{border-bottom:0}
   .fi .n{flex:1;min-width:0}
-  .fi .kp{font-family:var(--mono);font-size:11.5px;color:var(--muted);white-space:nowrap}
-  .fi .kp b{color:var(--wasabi)}
-  .stp{display:flex;align-items:center;gap:6px}
-  .stp button{width:24px;height:24px;border-radius:7px;border:1px solid var(--line2);background:var(--surface2);color:var(--text);font-size:13px;cursor:pointer;line-height:1}
   .stp .q{font-family:var(--mono);font-size:12px;font-weight:700;min-width:26px;text-align:center}
   .fi .x{color:var(--ember-soft);background:none;border:none;font-size:15px;cursor:pointer;padding:2px 4px}
   .empty{padding:18px;text-align:center;color:var(--faint);font-size:12.5px}
-  .burnrow{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:13px 15px;margin-bottom:12px}
   .burnrow .l{font-size:13px;font-weight:700;color:var(--muted)}
-  .burnrow input{width:90px;margin-left:auto;background:var(--bg);border:1px solid var(--line2);border-radius:9px;
-    padding:8px 10px;color:var(--text);font-family:var(--mono);font-size:14px;text-align:right}
   .burnrow .u{font-size:12px;color:var(--faint)}
-  .netline{font-size:12px;color:var(--muted);text-align:right;margin:-4px 2px 14px}
-  .netline b{color:var(--ember-soft);font-family:var(--mono)}
-
-  .calhead{display:flex;align-items:center;gap:12px;margin-bottom:12px}
-  .calhead h3{font-family:var(--mono);font-size:16px;font-weight:800;flex:1;text-align:center}
-  .calhead button{width:34px;height:34px;border-radius:10px;border:1px solid var(--line2);background:var(--surface);color:var(--muted);font-size:15px;cursor:pointer}
-  .cgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
-  .cw{font-family:var(--mono);font-size:10px;color:var(--faint);text-align:center;padding:4px 0}
   .cd{aspect-ratio:1/1.15;background:var(--surface);border:1px solid var(--line);border-radius:10px;
     display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:pointer;position:relative;min-width:0}
   .cd.o{opacity:.25}
@@ -237,19 +128,14 @@
   .cd .marks{height:8px;display:flex;align-items:center;justify-content:center;gap:3px}
   .adot.w{background:var(--wasabi)} .adot.r{background:#7BA7C9} .adot.m{background:var(--ember)}
   .adot.j{background:#CDB7FF;box-shadow:0 0 7px rgba(205,183,255,.58)}
-  .adot.w2{background:#67C8B5;box-shadow:0 0 7px rgba(103,200,181,.55)}
   .cd .kc{font-family:var(--mono);font-size:8.5px;color:var(--muted);line-height:1}
   .cd .kc.jpcal{color:#DCCBFF;font-weight:800}
-  .callegend{display:flex;gap:14px;margin-top:12px;font-size:11.5px;color:var(--muted);flex-wrap:wrap}
-  .callegend span{display:flex;align-items:center;gap:5px}
 
   .rule{background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:15px 16px;margin-bottom:12px}
   .rule.hot{border-color:rgba(224,105,47,.35);background:linear-gradient(180deg,rgba(224,105,47,.06),var(--surface))}
   .rule h3{font-size:14.5px;font-weight:800;display:flex;align-items:center;gap:8px;margin-bottom:11px}
   .rule h3 .k{font-family:var(--mono);font-size:11px;color:var(--wasabi);font-weight:700}
   .rule.hot h3 .k{color:var(--ember)}
-  .kv{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--line);font-size:13.5px}
-  .kv:last-child{border-bottom:0}
   .kv .a{color:var(--muted)}
   .kv .b{font-family:var(--mono);font-weight:600;text-align:right;white-space:nowrap}
   .kv .b.g{color:var(--wasabi)} .kv .b.o{color:var(--ember-soft)}
@@ -259,41 +145,22 @@
   .steps li::before{content:counter(s);position:absolute;left:0;top:8px;width:22px;height:22px;border-radius:50%;
     background:var(--surface2);color:var(--wasabi);font-family:var(--mono);font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center}
   .steps li b{color:var(--text)} .steps li .x{color:var(--faint);font-size:12px}
-  .ptable{background:var(--surface);border:1px solid var(--line);border-radius:13px;overflow:hidden;margin-bottom:14px}
   .ptable .row{display:flex;justify-content:space-between;padding:9px 15px;border-bottom:1px solid var(--line);font-size:13.5px}
   .ptable .row:last-child{border-bottom:0}
   .ptable .row .g{font-family:var(--mono);font-weight:700;color:var(--wasabi)}
   .ptable .row.head{background:var(--surface2);font-family:var(--mono);font-size:11px;letter-spacing:.05em;color:var(--faint);text-transform:uppercase}
-  .formula{background:var(--raise);border-radius:12px;padding:16px;margin-bottom:12px;text-align:center}
-  .formula .lab{font-size:11px;font-family:var(--mono);letter-spacing:.15em;color:var(--wasabi);text-transform:uppercase;margin-bottom:10px}
-  .formula .eq{font-size:16px;font-weight:700;line-height:1.6}
-  .formula .eq .op{color:var(--faint);margin:0 3px}
   .formula .res{margin-top:12px;padding-top:12px;border-top:1px solid var(--line2);font-family:var(--mono);font-size:14px;color:var(--ember-soft);font-weight:700}
-  .tl{position:relative;padding-left:20px}
-  .tl::before{content:"";position:absolute;left:5px;top:6px;bottom:12px;width:2px;background:var(--line2)}
-  .slot{position:relative;margin-bottom:14px}
-  .slot::before{content:"";position:absolute;left:-19px;top:5px;width:10px;height:10px;border-radius:50%;background:var(--surface);border:2px solid var(--wasabi-deep)}
   .slot.key::before{border-color:var(--ember);background:var(--ember)}
   .slot .time{font-family:var(--mono);font-size:11px;color:var(--wasabi);font-weight:700}
   .slot.key .time{color:var(--ember)}
-  .slot .what{font-size:14.5px;font-weight:600;margin-top:2px}
   .slot .why{font-size:12px;color:var(--muted);margin-top:2px;line-height:1.45}
-  .slot.nap .what{color:var(--faint);font-weight:400}
-  .foodnote{margin-top:4px;padding:10px 12px;background:rgba(180,194,74,.07);border-radius:9px;font-size:12.5px;color:var(--muted);line-height:1.5}
-  .foodnote b{color:var(--wasabi)}
-  .clincher{margin:22px 0 8px;padding:20px 18px;border-radius:16px;background:linear-gradient(135deg,rgba(224,105,47,.16),rgba(180,194,74,.07));border:1px solid rgba(224,105,47,.3);text-align:center}
-  .clincher .lab{font-family:var(--mono);font-size:11px;letter-spacing:.2em;color:var(--ember);margin-bottom:10px}
   .clincher .line{font-size:17px;font-weight:800;line-height:1.5}
   .clincher .line b{color:var(--wasabi)}
   .set-in{width:100%;background:var(--bg);border:1px solid var(--line2);border-radius:9px;padding:10px 12px;color:var(--text);font-size:14px;margin-top:6px}
   .set-in:focus{outline:none;border-color:var(--wasabi)}
-  .setlab{font-size:12px;color:var(--muted);font-weight:700;margin-top:12px}
   .sethint{font-size:11px;color:var(--faint);margin-top:4px;line-height:1.5}
   .sbtn{margin-top:10px;padding:11px 14px;border-radius:10px;border:1px solid var(--line2);background:var(--surface2);color:var(--text);font-size:13px;font-weight:700;cursor:pointer;width:100%}
   .sbtn.warn{color:var(--ember-soft);border-color:rgba(224,105,47,.35)}
-  .togrow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13.5px}
-  .togrow:last-child{border-bottom:0}
-  .togrow input{width:18px;height:18px;accent-color:var(--wasabi)}
   .aistat{padding:11px 13px;border-radius:10px;font-size:12.5px;font-weight:700;margin-bottom:14px;line-height:1.4}
   .aistat.ok{background:rgba(180,194,74,.12);color:var(--wasabi);border:1px solid rgba(180,194,74,.3)}
   .aistat.no{background:rgba(224,105,47,.1);color:var(--ember-soft);border:1px solid rgba(224,105,47,.3)}
@@ -323,19 +190,9 @@
   .modal .hint{font-size:11px;color:var(--faint);margin:-10px 0 14px 2px;line-height:1.5}
   .modal-btns{display:flex;gap:9px;margin-top:4px}
   .modal-btns button{flex:1;padding:13px;border-radius:11px;font-size:14px;font-weight:700;cursor:pointer;border:none}
-  .mb-save{background:var(--wasabi);color:#1a1710}
   .mb-cancel{background:var(--surface2);color:var(--muted)}
-  .sh-stat{display:flex;gap:8px;margin-bottom:14px}
-  .sh-stat button{flex:1;padding:11px 4px;border-radius:10px;border:1px solid var(--line2);background:var(--surface2);color:var(--muted);font-size:12.5px;font-weight:700;cursor:pointer}
   .sh-stat button.sel{background:var(--wasabi);color:#1a1710;border-color:var(--wasabi)}
-  .sh-stat button.selr{background:#7BA7C9;color:#10161b;border-color:#7BA7C9}
-  .sh-stat button.selm{background:var(--ember);color:#1a1710;border-color:var(--ember)}
-  .calsum{background:var(--surface2);border-radius:10px;padding:10px 13px;margin-bottom:4px}
-  .cs-row{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;color:var(--muted)}
-  .cs-row b{font-family:var(--mono);color:var(--text)}
-  .cs-row.net{border-top:1px solid var(--line);margin-top:3px;padding-top:8px}
-  .cs-row.net b{color:var(--wasabi)}
-  .cs-row.over b{color:var(--ember-soft)} .cs-row.under b{color:var(--wasabi)}
+  .cs-row.over b{color:var(--ember-soft)}
 
   /* 일본어·맛집지도 신규 탭 전용 — 기존 스타일과 분리 */
   .xhero{background:linear-gradient(145deg,var(--surface),var(--surface2));border:1px solid var(--line2);
@@ -578,9 +435,6 @@
   .xmode button.on,.fm-cats button.on{background:#C7EC32;border-color:#C7EC32;color:#151719}
 
   .h-dday,.prog,.role-main,.place-cat,.fm-badge.good{background-color:rgba(199,236,50,.09)}
-  .chip.solo{background:rgba(201,112,132,.09);border-color:rgba(201,112,132,.25)}
-  .aibtn{background:rgba(201,112,132,.055);border-color:rgba(201,112,132,.36)}
-  .stair.zero{background:rgba(201,112,132,.065);border-color:rgba(201,112,132,.38)}
   .rule.hot,.xcard.hot{border-color:rgba(201,112,132,.28);background:linear-gradient(180deg,rgba(201,112,132,.045),#181B1E)}
   .fm-badge.hot{border-color:rgba(201,112,132,.3)}
   .fm-decision{border-color:rgba(199,236,50,.25);background:linear-gradient(180deg,rgba(199,236,50,.045),#181B1E)}
@@ -618,32 +472,14 @@
   input::placeholder,textarea::placeholder{color:var(--faint);opacity:.9}
   button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid rgba(199,236,50,.72);outline-offset:2px}
 
-  /* WORKOUT 2 · 기존 운동 모듈과 분리된 개인용 90일 보완 루틴 */
   .w2-hero{border:1px solid rgba(199,236,50,.22);border-radius:14px;padding:15px;margin:0 0 14px;
     background:linear-gradient(135deg,rgba(199,236,50,.075),rgba(176,154,232,.045) 55%,var(--surface));box-shadow:0 14px 34px rgba(0,0,0,.18)}
-  .w2-hero .eyebrow{font-family:var(--mono);font-size:10px;font-weight:800;letter-spacing:.1em;color:var(--wasabi);margin-bottom:5px}
-  .w2-hero h3{font-size:17px;margin-bottom:6px}.w2-hero p{font-size:12px;line-height:1.55;color:var(--muted)}
-  .w2-statgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:11px}
-  .w2-stat{min-width:0;border:1px solid var(--line);border-radius:10px;padding:9px 7px;background:rgba(16,18,20,.34);text-align:center}
-  .w2-stat b{display:block;font-family:var(--mono);font-size:13px;color:var(--text)}
-  .w2-stat span{display:block;font-size:9.5px;color:var(--faint);margin-top:3px;line-height:1.3}
-  .w2-guide-title{font-size:15px;font-weight:850;margin:19px 2px 10px;color:var(--text)}
-  .w2-volume{display:grid;grid-template-columns:1fr 1fr;gap:7px}
-  .w2-volume .kv{border:1px solid var(--line);border-radius:10px;background:var(--surface);padding:9px 10px}
-  body.editing #tab-train2 .edit-btns{display:none}
-  body.editing #tab-train2 .chip::after{content:none}
-  body.editing #tab-train2 .addlink,body.editing #tab-train2 .add-ex{display:none}
   body.editing #tab-train2 .seg{pointer-events:auto;opacity:1}
-  body.workout2-editing #tab-train2 .edit-btns{display:flex}
-  body.workout2-editing #tab-train2 .chip::after{content:"✎";margin-left:2px;color:var(--ember-soft);font-size:10px}
-  body.workout2-editing #tab-train2 .addlink{display:inline-flex}
-  body.workout2-editing #tab-train2 .add-ex{display:block}
   body.workout2-editing #tab-train2 .seg{pointer-events:none;opacity:.4}
   #tab-train2 .seg.bonus{flex:.72;border-style:dashed;border-color:rgba(103,200,181,.62);background:rgba(103,200,181,.08);position:relative}
   #tab-train2 .seg.bonus::after{content:"+";position:absolute;inset:-6px 0 auto;text-align:center;color:#67C8B5;font-family:var(--mono);font-size:8px;font-weight:900}
   #tab-train2 .seg.bonus.fill{background:#67C8B5;border-color:#67C8B5;box-shadow:0 0 7px rgba(103,200,181,.42)}
   #tab-train2 .seg.bonus.fill::after{color:#101214}
-  #tab-train2 .bonus-note{margin:7px 0 0;font-size:10.5px;line-height:1.45;color:#67C8B5}
   .fm-guide{margin-top:12px;display:flex;flex-direction:column;gap:14px}
   .fm-guide-step{display:flex;gap:11px;align-items:flex-start}
   .fm-guide-step>b{width:22px;height:22px;flex:none;display:grid;place-items:center;border-radius:50%;background:var(--accent);color:#101214;font-family:var(--mono);font-size:11px}
@@ -678,7 +514,7 @@
   .fm-spend-row b{color:var(--text);font-family:var(--mono)}
   .fm-assist-out{max-height:340px;overflow-y:auto;margin-top:10px;display:flex;flex-direction:column;gap:8px}
   .fm-assist-out .tool-result{white-space:pre-wrap;margin:0}
-  @media(max-width:430px){.w2-statgrid{grid-template-columns:1fr 1fr}.w2-volume{grid-template-columns:1fr}.jp-vocab-row{grid-template-columns:1fr;gap:5px}.jp-conj th,.jp-conj td{padding:8px 7px}.jp-form-gloss span{grid-template-columns:1fr;gap:2px}.fm-gps-actions{grid-template-columns:1fr 1fr}.fm-gps-actions .primary{grid-column:1/-1}}
+  @media(max-width:430px){.jp-vocab-row{grid-template-columns:1fr;gap:5px}.jp-conj th,.jp-conj td{padding:8px 7px}.jp-form-gloss span{grid-template-columns:1fr;gap:2px}.fm-gps-actions{grid-template-columns:1fr 1fr}.fm-gps-actions .primary{grid-column:1/-1}}
 </style>
 </head>
 <body>
@@ -2930,11 +2766,88 @@ function fm2Reservation(id){const p=foodMap.places.find(x=>x.id===id);if(!p)retu
 function fm2Priority(id){const p=foodMap.places.find(x=>x.id===id);if(!p)return;p.priority=((+p.priority||0)+1)%4;save('foodmap_v1',foodMap);renderFoodMap();}
 function fm2Yt(q){return'https://www.youtube.com/results?search_query='+encodeURIComponent(q);}
 function fmEnsureVideos(p){if(p.videos.length)return;p.videos=[{name:'자동 검색',short:fm2Yt(p.name+' 福岡 shorts'),long:fm2Yt(p.name+' 福岡 vlog review')}];save('foodmap_v1',foodMap);}
-function fmRenderSpotTools(){const el=document.getElementById('fmSpotTools');if(!el)return;const p=foodMap.places.find(x=>x.id===foodMap.selected);if(!p){el.innerHTML='';return;}fmEnsureVideos(p);el.innerHTML='<div class="xcard hot"><h3><span class="tag">SPOT</span>'+esc(p.name)+'</h3><div class="xsmall">'+esc(p.address||p.note||'장소 정보')+'</div><div class="fm-status-actions"><button class="'+(p.priority?'on':'')+'" onclick="fm2Priority(\''+p.id+'\')">우선 '+p.priority+'/3</button><button class="'+(p.reservation!=='none'?'on':'')+'" onclick="fm2Reservation(\''+p.id+'\')">'+(p.reservation==='needed'?'예약 확인':p.reservation==='booked'?'예약 완료':'예약 없음')+'</button><button class="'+(p.rain?'on':'')+'" onclick="fmToggle(\''+p.id+'\',\'rain\')">☔ 비 추천</button><button class="'+(p.excluded?'warn':'')+'" onclick="fmToggle(\''+p.id+'\',\'excluded\')">'+(p.excluded?'제외 해제':'후보 제외')+'</button><a href="'+esc(fmLink(p))+'" target="_blank" rel="noopener">지도 열기</a><a href="'+esc(fmDirectionsLink(p,'walking'))+'" target="_blank" rel="noopener">🚶 도보</a><a href="'+esc(fmDirectionsLink(p,'transit'))+'" target="_blank" rel="noopener">🚃 대중교통</a><a href="'+esc(fmDirectionsLink(p,'bicycling'))+'" target="_blank" rel="noopener">🚲 자전거</a></div>'+(fm2EtaTxt(p)?'<div class="xsmall" style="margin-top:8px">직선거리 기준 추정 · '+esc(fm2EtaTxt(p))+' · 실제 경로·환승·다음 차 시각은 위 버튼으로 구글맵에서 확인</div>':'')+'</div><div class="xcard"><h3><span class="tag">VIDEO</span>이 장소가 나오는 영상</h3><div class="xsmall">기본 검색 링크는 무료입니다. 정확한 영상 URL을 그룹으로 붙이거나 Gemini로 일본어 검색어를 확장할 수 있습니다.</div>'+p.videos.map((v,i)=>'<div class="fm-video"><div class="fm-video-head"><span>'+esc(v.name||('영상 '+(i+1)))+'</span><button onclick="fmDeleteVideo(\''+p.id+'\','+i+')">✕</button></div><div class="fm-video-links">'+(v.short?'<a class="short" href="'+esc(v.short)+'" target="_blank" rel="noopener">▶ 숏폼</a>':'')+(v.long?'<a href="'+esc(v.long)+'" target="_blank" rel="noopener">▶ 롱폼</a>':'')+'</div></div>').join('')+'<div class="xactions"><button class="xaction sub" onclick="fmAddVideo(\''+p.id+'\')">＋ 영상 그룹</button><button class="xaction sub" onclick="fmAiVideos(\''+p.id+'\')">✨ Gemini 검색어</button></div><div id="fmVideoOut"></div></div><div class="xcard"><h3><span class="tag">JAPANESE</span>이 장소에서 바로 쓸 말</h3><button class="xaction sub" onclick="fmSpotJapanese(\''+p.id+'\')">현장 일본어 카드 열기</button><div id="fmJpOut"></div></div>';}
+function fmRenderSpotTools(){const el=document.getElementById('fmSpotTools');if(!el)return;const p=foodMap.places.find(x=>x.id===foodMap.selected);if(!p){el.innerHTML='';return;}fmEnsureVideos(p);el.innerHTML='<div class="xcard hot"><h3><span class="tag">SPOT</span>'+esc(p.name)+'</h3><div class="xsmall">'+esc(p.address||p.note||'장소 정보')+'</div><div class="fm-status-actions"><button class="'+(p.priority?'on':'')+'" onclick="fm2Priority(\''+p.id+'\')">우선 '+p.priority+'/3</button><button class="'+(p.reservation!=='none'?'on':'')+'" onclick="fm2Reservation(\''+p.id+'\')">'+(p.reservation==='needed'?'예약 확인':p.reservation==='booked'?'예약 완료':'예약 없음')+'</button><button class="'+(p.rain?'on':'')+'" onclick="fmToggle(\''+p.id+'\',\'rain\')">☔ 비 추천</button><button class="'+(p.excluded?'warn':'')+'" onclick="fmToggle(\''+p.id+'\',\'excluded\')">'+(p.excluded?'제외 해제':'후보 제외')+'</button><a href="'+esc(fmLink(p))+'" target="_blank" rel="noopener">지도 열기</a><a href="'+esc(fmDirectionsLink(p,'walking'))+'" target="_blank" rel="noopener">🚶 도보</a><a href="'+esc(fmDirectionsLink(p,'transit'))+'" target="_blank" rel="noopener">🚃 대중교통</a><a href="'+esc(fmDirectionsLink(p,'bicycling'))+'" target="_blank" rel="noopener">🚲 자전거</a></div>'+(fm2EtaTxt(p)?'<div class="xsmall" style="margin-top:8px">직선거리 기준 추정 · '+esc(fm2EtaTxt(p))+' · 실제 경로·환승·다음 차 시각은 위 버튼으로 구글맵에서 확인</div>':'')+'</div><div class="xcard"><h3><span class="tag">VIDEO</span>이 장소가 나오는 영상</h3><div class="xsmall">기본 검색 링크는 무료입니다. 정확한 영상 URL을 그룹으로 붙이거나 Gemini로 일본어 검색어를 확장할 수 있습니다.</div>'+p.videos.map((v,i)=>'<div class="fm-video"><div class="fm-video-head"><span>'+esc(v.name||('영상 '+(i+1)))+'</span><button onclick="fmDeleteVideo(\''+p.id+'\','+i+')">✕</button></div><div class="fm-video-links">'+(v.short?'<a class="short" href="'+esc(v.short)+'" target="_blank" rel="noopener">▶ 숏폼</a>':'')+(v.long?'<a href="'+esc(v.long)+'" target="_blank" rel="noopener">▶ 롱폼</a>':'')+'</div></div>').join('')+'<div class="xactions"><button class="xaction sub" onclick="fmAddVideo(\''+p.id+'\')">＋ 영상 그룹</button><button class="xaction sub" onclick="fmAiVideos(\''+p.id+'\')">✨ Gemini 검색어</button></div><div id="fmVideoOut"></div></div>'+spCardHTML(p)+'<div class="xcard"><h3><span class="tag">JAPANESE</span>이 장소에서 바로 쓸 말</h3><button class="xaction sub" onclick="fmSpotJapanese(\''+p.id+'\')">현장 일본어 카드 열기</button><div id="fmJpOut"></div></div>';}
 function fmAddVideo(id){const p=foodMap.places.find(x=>x.id===id);if(!p)return;const name=prompt('영상 그룹 이름','직접 찾은 영상');if(name===null)return;const sh=prompt('숏폼 URL (비우면 자동 검색)','')||fm2Yt(p.name+' '+name+' shorts'),lo=prompt('롱폼 URL (비우면 자동 검색)','')||fm2Yt(p.name+' '+name+' vlog');p.videos.push({name:name||'추가 영상',short:sh,long:lo});save('foodmap_v1',foodMap);fmRenderSpotTools();}
 function fmDeleteVideo(id,i){const p=foodMap.places.find(x=>x.id===id);if(!p||!confirm('이 영상 그룹을 삭제할까요?'))return;p.videos.splice(i,1);save('foodmap_v1',foodMap);fmRenderSpotTools();}
 async function fmAiVideos(id){const p=foodMap.places.find(x=>x.id===id),out=document.getElementById('fmVideoOut');if(!p)return;if(out)out.innerHTML='<div class="tool-result">일본어 검색어 생성 중…</div>';try{const prompt='후쿠오카 장소의 유튜브 검색어를 만든다. 장소명: '+p.name+', 주소: '+p.address+', 종류: '+p.kind+'. 실제 영상 URL을 추측하지 말고 일본어 검색어 조합 3개를 JSON 배열로만 답해. 형식: [{"name":"관점","short":"숏폼 검색어","long":"롱폼 검색어"}]';const t=await callGemini([{text:prompt}]),m=String(t).replace(/```json|```/g,'').match(/\[[\s\S]*\]/),a=m?JSON.parse(m[0]):[];a.forEach(x=>p.videos.push({name:x.name||'AI 검색',short:fm2Yt(x.short||p.name+' shorts'),long:fm2Yt(x.long||p.name+' vlog')}));save('foodmap_v1',foodMap);fmRenderSpotTools();}catch(e){if(out)out.innerHTML='<div class="tool-result">생성 실패: '+esc(e.message||e)+'</div>';}}
 async function fmYoutubeActual(){fmSaveApi(true);const p=foodMap.places.find(x=>x.id===foodMap.selected),out=document.getElementById('fmApiOut');if(!p){alert('먼저 장소를 선택해 주세요.');return;}if(!foodMap.youtubeKey){alert('YouTube Data API 키를 입력해 주세요. 무료 검색 링크는 키 없이도 사용 가능합니다.');return;}if(out)out.innerHTML='<div class="tool-result">YouTube에서 실제 영상 검색 중…</div>';try{const get=async q=>{const u='https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=3&q='+encodeURIComponent(q)+'&key='+encodeURIComponent(foodMap.youtubeKey),r=await fetch(u),j=await r.json();if(!r.ok)throw new Error(j.error&&j.error.message||('HTTP '+r.status));return j.items||[];};const z=await Promise.all([get(p.name+' 福岡 shorts'),get(p.name+' 福岡 vlog')]);for(let i=0;i<Math.max(z[0].length,z[1].length);i++){const s=z[0][i],l=z[1][i];p.videos.push({name:(l||s).snippet.title,short:s?'https://www.youtube.com/watch?v='+s.id.videoId:'',long:l?'https://www.youtube.com/watch?v='+l.id.videoId:''});}save('foodmap_v1',foodMap);renderFoodMap();}catch(e){if(out)out.innerHTML='<div class="tool-result">영상 검색 실패: '+esc(e.message||e)+'</div>';}}
+/* ── 스팟 핵심정보 요약: 앱이 아는 것만 근거로 정리한다 ──
+   34절 "AI가 게시물에서 추출할 정보"의 구현. 지어내기를 막는 것이 이 기능의 핵심이다.
+   가격·메뉴를 환각하면 여행지에서 실제 피해가 되므로, 근거가 없으면 빈 값을 받는다.
+   결과에는 출처·확인 시각·신뢰도를 함께 저장해 사용자가 신뢰 수준을 판단할 수 있게 한다. */
+function spFacts(p){
+ const f=[];
+ f.push('이름: '+p.name);
+ if(p.cat)f.push('업종 분류: '+p.cat+(p.kind&&p.kind!=='전체 음식·술'?(' / '+p.kind):''));
+ if(p.region)f.push('지역: '+p.region);
+ if(p.address)f.push('주소: '+p.address);
+ if(p.note)f.push('사용자 메모(가장 확실한 단서): '+p.note);
+ if(p.sourcePlatform)f.push('출처 플랫폼: '+p.sourcePlatform);
+ if(p.sourceNote)f.push('저장할 때 남긴 이유: '+p.sourceNote);
+ if(p.rating)f.push('구글 평점: '+p.rating+' ('+(p.ratingCount||0)+'명)');
+ const h=fmHoursTodayTxt(p,TODAY); if(h)f.push('오늘 영업시간: '+h);
+ const c=fmClosedTxt(p); if(c)f.push('휴무: '+c+' (출처 '+fmHoursSrc(p)+')');
+ if(p.reservation==='needed')f.push('사용자가 예약 필요로 표시함');
+ if(p.visited)f.push('이미 방문한 곳');
+ return f.join('\n');
+}
+const SP_RULES=[
+ '아래 [장소 정보]에 주어진 것만 사실로 취급한다.',
+ '가격·메뉴·웨이팅을 추측해서 만들어내지 않는다. 근거가 없으면 그 항목은 빈 문자열로 둔다.',
+ '사용자 메모와 저장 이유가 가장 확실한 단서다. 그 내용을 우선 반영한다.',
+ '일반적인 업종 상식은 "가능성"으로만 쓰고 단정하지 않는다.',
+ '각 항목은 한 줄로 짧게. 인사말과 사족은 쓰지 않는다.'
+].join('\n- ');
+async function spSummarize(id){
+ const p=foodMap.places.find(x=>x.id===id);if(!p)return;
+ const out=document.getElementById('fmSumOut');
+ if(!ai.key){if(out)out.innerHTML='<div class="tool-result">Gemini 키가 없어 AI 요약은 못 합니다. 설정(⚙)에서 키를 넣으면 됩니다.\n아래는 지금 저장돼 있는 정보 그대로입니다.\n\n'+esc(spFacts(p))+'</div>';return;}
+ if(out)out.innerHTML='<div class="tool-result">정리하는 중…</div>';
+ try{
+  const q='너는 일본 여행 실행을 돕는 도구다. 아래 규칙을 지켜 장소 하나를 정리해라.\n- '+SP_RULES+
+   '\n\n[장소 정보]\n'+spFacts(p)+
+   '\n\n설명이나 코드블록 없이 JSON 한 줄만 출력한다. 모르는 항목은 빈 문자열 또는 빈 배열로 둔다.\n'+
+   '{"headline":"이 장소를 한 줄로","tips":["실행에 도움되는 팁 최대 3개"],"menu":["근거가 있을 때만 추천 메뉴"],'+
+   '"best":"방문하기 좋은 시간·요일","caution":"주의할 점(웨이팅·현금만·예약 등 근거 있는 것만)",'+
+   '"budget":"예산 힌트(근거 없으면 빈 문자열)","confidence":"낮음|보통|높음"}';
+  const t=await callGemini([{text:q}]);
+  const j=JSON.parse(String(t).replace(/```json|```/g,'').trim());
+  p.sum={
+   headline:String(j.headline||'').slice(0,120),
+   tips:(Array.isArray(j.tips)?j.tips:[]).slice(0,3).map(x=>String(x).slice(0,140)),
+   menu:(Array.isArray(j.menu)?j.menu:[]).slice(0,5).map(x=>String(x).slice(0,80)),
+   best:String(j.best||'').slice(0,120),
+   caution:String(j.caution||'').slice(0,160),
+   budget:String(j.budget||'').slice(0,80),
+   conf:String(j.confidence||'낮음').slice(0,10),
+   at:TODAY+' '+new Date().toTimeString().slice(0,5)
+  };
+  save('foodmap_v1',foodMap);renderFoodMap();
+ }catch(e){if(out)out.innerHTML='<div class="tool-result">요약 실패: '+esc((e&&e.message)||e)+'\n저장된 정보는 그대로 남아 있습니다.</div>';}
+}
+function spClear(id){const p=foodMap.places.find(x=>x.id===id);if(!p||!p.sum)return;
+ if(!confirm('이 장소의 AI 요약을 지울까요? 장소·메모는 그대로 남습니다.'))return;
+ delete p.sum;save('foodmap_v1',foodMap);renderFoodMap();}
+function spCardHTML(p){
+ const s=p.sum,rows=[];
+ if(s){
+  if(s.headline)rows.push('<div class="jp-spot-row"><b>'+esc(s.headline)+'</b></div>');
+  (s.tips||[]).forEach(x=>rows.push('<div class="jp-spot-row"><span class="tag">팁</span><i>'+esc(x)+'</i></div>'));
+  if((s.menu||[]).length)rows.push('<div class="jp-spot-row"><span class="tag">메뉴</span><i>'+esc(s.menu.join(' · '))+'</i></div>');
+  if(s.best)rows.push('<div class="jp-spot-row"><span class="tag">시간</span><i>'+esc(s.best)+'</i></div>');
+  if(s.caution)rows.push('<div class="jp-spot-row"><span class="tag">주의</span><i>'+esc(s.caution)+'</i></div>');
+  if(s.budget)rows.push('<div class="jp-spot-row"><span class="tag">예산</span><i>'+esc(s.budget)+'</i></div>');
+ }
+ /* 출처·확인 시각·신뢰도를 항상 함께 보여 준다 — AI 결과를 사실로 오인하지 않게 하는 장치다. */
+ const meta=s?('<div class="xsmall" style="margin-top:8px">신뢰도 <b>'+esc(s.conf)+'</b> · 확인 '+esc(s.at)+
+   ' · 근거는 저장된 정보와 메모뿐입니다. 가격·메뉴는 현장에서 다시 확인하세요.</div>'):'';
+ return '<div class="xcard"><h3><span class="tag">SUMMARY</span>핵심정보 요약</h3>'+
+  (s?'':'<div class="xsmall">저장한 메모·영업시간·평점만 근거로 이 장소를 한눈에 정리합니다. 없는 정보는 지어내지 않습니다.</div>')+
+  rows.join('')+meta+
+  '<div class="xactions"><button class="xaction sub" onclick="spSummarize(\''+p.id+'\')">'+(s?'다시 정리':'✨ AI로 정리')+'</button>'+
+  (s?'<button class="xaction sub" onclick="spClear(\''+p.id+'\')">요약 지우기</button>':'')+
+  '</div><div id="fmSumOut"></div></div>';
+}
 /* ── 스팟별 현장 일본어: 저장한 가게의 업종·메모·영업시간으로 문장을 고른다 ──
    규칙 기반이라 키 없이 오프라인에서 동작한다. AI는 보강용으로만 쓴다. */
 const SJ=(j,k,m)=>({j:j,k:k,m:m});
