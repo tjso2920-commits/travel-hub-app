@@ -90,6 +90,7 @@ for (const must of [
   'function renderSettings()', 'function showLanding()', 'function landingOpen(',
   'function ibDetectPlatform(u)', 'function ibParseGoogleMapsName(u)', 'function ibAdd()', 'async function ibGuess(id)',
   'function ibConfirm(id)', 'function ibHTML()',
+  'function tjVisitedAt(p)', 'function tjEntries()', 'function tjHTML()',
 ]) {
   if (!html.includes(must)) {
     console.error(`FAIL  판매용에 있어야 하는 기능 누락: ${must}`);

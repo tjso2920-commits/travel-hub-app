@@ -2,7 +2,7 @@
   "created_at": "2026-07-30",
   "personal": {
     "file": "private/personal.html",
-    "sha256_at_handoff": "3c201e42b22c7a679417fe39c5d7c4fce22a78e5ff3b8d0f90eed343b5076d0d",
+    "sha256_at_handoff": "bb90625736e6b321ad810d410c9771e2127bbf97eacc122812b7288ad44d42f6",
     "protected": {
       "root": "3f4ac4ea2e40dca01ec2f6f850ef5c3cfd64f2d8d3395976f25053394472e123"
     },
@@ -17,7 +17,7 @@
   },
   "sales": {
     "file": "src/index.html",
-    "sha256_at_handoff": "be7ab1d0c58f8d43c2ede9479c2f1af33e9ea2519276a7c8c5b6c04c13c3ab5b",
+    "sha256_at_handoff": "c5e897aaaaba3a5513de0b5ab2916d0373d75a8783b4d020ca4214475f3cf7a4",
     "protected": {
       "root": "3f4ac4ea2e40dca01ec2f6f850ef5c3cfd64f2d8d3395976f25053394472e123"
     },

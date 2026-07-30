@@ -20,7 +20,7 @@ w.eval("fmSetHotelFromSpot();bgSetTotal(80000);bgSetDays(4);foodMap.courseStart=
 
 const panels=[...w.document.querySelectorAll('details.fm-panel')].map(d=>({id:d.getAttribute('ontoggle'),open:d.hasAttribute('open'),sum:d.querySelector('summary').textContent.trim()}));
 console.log('--- 패널 ---'); panels.forEach(p=>console.log('  ',p.open?'[열림]':'[접힘]',p.sum.replace(/\s+/g,' ')));
-t('패널 8개', panels.length===8);
+t('패널 9개', panels.length===9);
 t('구역만 기본 열림', panels.filter(p=>p.open).length===1 && panels.find(p=>p.open).sum.includes('구역'));
 t('예산 요약에 잔액', panels.some(p=>p.sum.includes('80,000엔 남음')||p.sum.includes('남음')));
 t('코스 요약에 곳수·시간', panels.some(p=>/\d+곳 · \d{2}:\d{2}~/.test(p.sum)));

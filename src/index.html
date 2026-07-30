@@ -2362,7 +2362,7 @@ function phSaveSpend(){
  bgSpends().push({id:'sp'+Date.now().toString(36),d:(phState.exif&&phState.exif.date)||TODAY,
   t:(phState.exif&&phState.exif.time)||new Date().toTimeString().slice(0,5),
   amt:amt,memo:'영수증 사진',place:p?p.name:'',placeId:p?p.id:''});
- if(p&&!p.visited)p.visited=true;
+ if(p&&!p.visited){p.visited=true;p.visitedAt=((phState.exif&&phState.exif.date)||TODAY)+' '+((phState.exif&&phState.exif.time)||'');}
  save('foodmap_v1',foodMap);phState.ai=null;renderFoodMap();
 }
 function phSaveVisit(){
@@ -2370,6 +2370,7 @@ function phSaveVisit(){
  if(!p){alert('사진 위치와 가까운 저장 장소를 찾지 못했습니다.');return;}
  p.visited=true;
  const when=(phState.exif&&phState.exif.date)?(phState.exif.date+' '+(phState.exif.time||'')).trim():TODAY;
+ p.visitedAt=when;
  p.note=(p.note?p.note+' / ':'')+'방문 '+when;
  save('foodmap_v1',foodMap);renderFoodMap();
 }
@@ -2586,6 +2587,49 @@ function ibHTML(){
   '<div class="xactions"><button class="xaction" onclick="ibAdd()">＋ 인박스에 담기</button></div>'+
   (rows||'<div class="empty" style="margin-top:8px">아직 담은 링크가 없습니다.</div>'));
 }
+/* ── 여행 일지: 여행이 끝난 뒤에도 "언제 어디 갔고 얼마 썼는지" 가 남는다 ──
+   새 저장 키를 만들지 않는다. 이미 쌓이고 있는 방문 표시(p.visited/p.visitedAt)와
+   지출(foodMap.spends)을 날짜별로 다시 묶어 보여 주기만 한다. */
+function tjVisitedAt(p){
+ if(p.visitedAt)return String(p.visitedAt).trim();
+ /* 이 기능 이전에 방문 처리된 장소는 메모에 "방문 YYYY-MM-DD HH:MM" 형태로만 남아 있다. */
+ const m=String(p.note||'').match(/방문\s*(\d{4}-\d{2}-\d{2}(?:\s+\d{1,2}:\d{2})?)/);
+ return m?m[1]:'';
+}
+function tjEntries(){
+ const byDate={},put=(d,e)=>{(byDate[d]=byDate[d]||[]).push(e);};
+ bgSpends().forEach(s=>put(s.d||'날짜 미상',{k:'spend',t:s.t||'',amt:+s.amt||0,place:s.place||'',memo:s.memo||''}));
+ foodMap.places.filter(p=>p.visited).forEach(p=>{
+  const at=tjVisitedAt(p);
+  put(at?at.slice(0,10):'날짜 미상',{k:'visit',t:at.length>10?at.slice(11,16):'',place:p.name||'이름 없음',cat:p.cat||''});
+ });
+ const UNK='날짜 미상';
+ return Object.keys(byDate).sort((a,b)=>{
+  if(a===UNK)return 1;if(b===UNK)return -1;      /* 날짜 없는 묶음은 항상 맨 아래 */
+  return b.localeCompare(a);                     /* 그 외는 최신 날짜부터 */
+ }).map(d=>({d:d,items:byDate[d].sort((x,y)=>String(x.t).localeCompare(String(y.t)))}));
+}
+function tjHTML(){
+ const days=tjEntries(),spent=bgSpent(),visits=foodMap.places.filter(p=>p.visited).length;
+ const sum=days.length?(visits+'곳 방문 · '+bgBoth(spent)):'기록 없음';
+ if(!days.length)return fmPanel('journal','LOG','여행 일지',sum,
+  '<div class="xsmall">방문 표시를 하거나 지출을 기록하면 여기에 날짜별로 쌓입니다. 위의 <b>사진으로 기록</b>을 쓰면 사진에 찍힌 날짜·시각·위치가 그대로 들어갑니다.</div>');
+ const body=days.map(function(g){
+  const rows=g.items.map(function(it){
+   const left=(a)=>a.filter(Boolean).map(esc).join(' · ');
+   if(it.k==='spend')return '<div class="fm-spend-row"><span>'+left([it.t,it.place||it.memo||'지출',it.place&&it.memo?it.memo:''])+
+    '</span><b>'+bgYen(it.amt)+'</b></div>';
+   return '<div class="fm-spend-row"><span>'+left([it.t,it.place,it.cat])+'</span><b>다녀옴</b></div>';
+  }).join('');
+  const dayAmt=g.items.filter(x=>x.k==='spend').reduce((a,x)=>a+x.amt,0);
+  const wd=/^\d{4}-\d{2}-\d{2}$/.test(g.d)?(' ('+WD[new Date(g.d+'T00:00:00').getDay()]+')'):'';
+  return '<details class="fm-plan-day"><summary>'+esc(g.d)+wd+' · '+g.items.length+'건'+
+   (dayAmt?' · '+bgYen(dayAmt):'')+'</summary><div class="fm-plan-list">'+rows+'</div></details>';
+ }).join('');
+ return fmPanel('journal','LOG','여행 일지',sum,
+  '<div class="xsmall">기록한 날 '+days.length+'일 · 방문 '+visits+'곳 · 총 지출 '+bgBoth(spent)+
+  '<br>날짜를 누르면 그날 다녀온 곳과 쓴 돈이 시각 순서로 펼쳐집니다.</div>'+body);
+}
 function fmGuideHTML(){
  if(!fmGuideOpen())return '<div class="xactions" style="margin:0 0 10px"><button class="xaction sub" onclick="fmGuideToggle(true)">시작 안내 다시 보기</button></div>';
  const steps=GUIDE_STEPS.map(function(x,i){
@@ -2676,7 +2720,7 @@ function bgAdd(){
  const pid=pl?pl.value:'';
  const p=pid?foodMap.places.find(x=>x.id===pid):null;
  bgSpends().push({id:'sp'+Date.now().toString(36),d:TODAY,t:new Date().toTimeString().slice(0,5),amt:amt,memo:(m&&m.value.trim())||'',place:p?p.name:'',placeId:pid||''});
- if(p&&!p.visited)p.visited=true;
+ if(p&&!p.visited){p.visited=true;p.visitedAt=TODAY+' '+new Date().toTimeString().slice(0,5);}
  if(a)a.value='';if(m)m.value='';
  save('foodmap_v1',foodMap);renderFoodMap();
 }
@@ -2859,7 +2903,7 @@ renderFoodMap=function(){
   asHTML()+
    '<div class="xcard"><h3><span class="tag">SMART</span>오늘의 자동 선택</h3><div class="xsmall">현재 위치/호텔, 영업상태, 우선순위, 평점, 방문 여부를 함께 봅니다.</div><div class="fm-quick"><button onclick="fmDecision(\'now\')">⚡ 지금 어디 가지?</button><button onclick="fmDecision(\'crawl\')">🍶 술집 3차 코스</button><button onclick="fmDecision(\'balanced\')">🧭 균형 코스</button><button onclick="fmDecision(\'rain\')">☔ 비 오는 날</button><button onclick="fmDecision(\'region\')">📍 한 지역 공략</button><button onclick="fmDecision(\'spare\')">⏱ 빈 시간 코스</button></div><select class="xselect" style="margin-top:8px" onchange="fmSetSpare(this.value)">'+fm2Opts([[30,'빈 시간 30분'],[60,'빈 시간 60분'],[90,'빈 시간 90분'],[120,'빈 시간 120분']],+foodMap.spare)+'</select></div>'+
   fm2DecisionHTML()+
-  '<div class="fm-spot-tools" id="fmSpotTools"></div>'+phHTML();
+  '<div class="fm-spot-tools" id="fmSpotTools"></div>'+phHTML()+tjHTML();
  fxAuto();phRender();asRender();fm2RenderOverview();fmRenderList();fmRenderMap();fmRenderSpotTools();setTimeout(()=>fmCheckLinkedCsv(true),0);};
 function fmSetRegion(v){foodMap.region=v;save('foodmap_v1',foodMap);renderFoodMap();}function fmSetKind(v){foodMap.kind=v;save('foodmap_v1',foodMap);renderFoodMap();}
 function fmSetStatus(v){foodMap.status=v;save('foodmap_v1',foodMap);renderFoodMap();}function fmSetSort(v){foodMap.sort=v;save('foodmap_v1',foodMap);renderFoodMap();}function fmSetSpare(v){foodMap.spare=+v||60;save('foodmap_v1',foodMap);}
@@ -2878,7 +2922,10 @@ fmRenderList=function(){const el=document.getElementById('fmList');if(!el)return
  return'<div class="place '+(p.id===foodMap.selected?'sel ':'')+(p.visited?'visited ':'')+(p.excluded?'visited':'')+'" onclick="fmSelect(\''+p.id+'\')"><div class="place-top"><div class="place-name">'+(p.fav?'★ ':'')+esc(p.name)+'</div><span class="place-cat">'+esc(p.cat||'기타')+'</span><span class="fm-score">아쉬움 '+fm2Regret(p)+'</span></div><div class="place-note">'+esc(p.note||p.address||(fm2HasCoords(p)?p.lat+', '+p.lng:'메모 없음'))+'</div><div class="fm-badges">'+badges.map((x,i)=>'<span class="fm-badge '+(String(x).includes('영업 중')?'good':String(x).includes('아님')?'hot':'')+'">'+esc(x)+'</span>').join('')+'</div><div class="place-btns"><button class="'+(p.fav?'fav':'')+'" onclick="event.stopPropagation();fmToggle(\''+p.id+'\',\'fav\')">'+(p.fav?'★ 저장':'☆ 저장')+'</button><button onclick="event.stopPropagation();fmToggle(\''+p.id+'\',\'visited\')">'+(p.visited?'↩ 미방문':'✓ 방문')+'</button><a href="'+esc(fmDirectionsLink(p))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">길찾기</a><button onclick="event.stopPropagation();fmSelect(\''+p.id+'\')">영상·관리</button></div></div>';}).join(''):'<div class="empty">조건에 맞는 장소가 없습니다.</div>');if(a.length>250)el.innerHTML+='<div class="empty">250개만 표시 중 · 필터나 검색어로 좁혀보세요.</div>';};
 fmRenderMap=function(){const el=document.getElementById('fmMap');if(!el)return;const live=fmGpsPoint();if(live&&fmGps.follow){const q=live.lat+','+live.lng,acc=Number.isFinite(fmGps.accuracy)?'현재 위치 · ±'+Math.round(fmGps.accuracy)+'m':'현재 위치';el.classList.add('gps-live');el.innerHTML='<iframe loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="실시간 현재 위치 지도" src="https://www.google.com/maps?q='+encodeURIComponent(q)+'&z=17&output=embed"></iframe><span class="fm-gps-mapdot" aria-hidden="true"></span><span class="fm-gps-maplabel">'+esc(acc)+'</span>';return;}el.classList.remove('gps-live');const p=foodMap.places.find(x=>x.id===foodMap.selected);if(!p){el.innerHTML='목록의 ‘영상·관리’를 누르면 지도·상태·영상·현장 일본어가 열립니다.';return;}const q=fm2HasCoords(p)?p.lat+','+p.lng:(p.name+' 福岡');el.innerHTML='<iframe loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="'+esc(p.name)+' 지도" src="https://www.google.com/maps?q='+encodeURIComponent(q)+'&output=embed"></iframe>';};
 fmSelect=function(id){foodMap.selected=id;fmGps.follow=false;save('foodmap_v1',foodMap);fmRenderList();fmRenderMap();fmRenderSpotTools();const el=document.getElementById('fmMap');if(el)el.scrollIntoView({behavior:'smooth',block:'nearest'});};
-fmToggle=function(id,k){const p=foodMap.places.find(x=>x.id===id);if(!p)return;p[k]=!p[k];save('foodmap_v1',foodMap);renderFoodMap();};
+fmToggle=function(id,k){const p=foodMap.places.find(x=>x.id===id);if(!p)return;p[k]=!p[k];
+ /* 방문을 켤 때 시각을 남긴다 — 여행 일지가 날짜별로 묶으려면 필요하다. 끄면 지운다. */
+ if(k==='visited')p.visitedAt=p.visited?(TODAY+' '+new Date().toTimeString().slice(0,5)):null;
+ save('foodmap_v1',foodMap);renderFoodMap();};
 function fm2Reservation(id){const p=foodMap.places.find(x=>x.id===id);if(!p)return;p.reservation=p.reservation==='none'?'needed':p.reservation==='needed'?'booked':'none';save('foodmap_v1',foodMap);renderFoodMap();}
 function fm2Priority(id){const p=foodMap.places.find(x=>x.id===id);if(!p)return;p.priority=((+p.priority||0)+1)%4;save('foodmap_v1',foodMap);renderFoodMap();}
 function fm2Yt(q){return'https://www.youtube.com/results?search_query='+encodeURIComponent(q);}
