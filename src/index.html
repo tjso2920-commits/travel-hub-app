@@ -1941,7 +1941,7 @@ function plHTML(){
  if(P&&P.plan){
   body=P.plan.map((day,i)=>{
    const wd=WD[new Date(day.d+'T00:00:00').getDay()];
-   return '<details class="fm-plan-day"><summary>'+(i+1)+'일차 · '+esc(day.d.slice(5))+' ('+wd+') · '+esc(day.area||'미배정')+' · '+day.list.length+'곳</summary>'+
+   return '<details class="fm-plan-day"><summary>'+(i+1)+'일차 · '+esc(day.d.slice(5))+' ('+wd+') · '+esc(day.area||'미배정')+' · '+day.list.length+'곳'+(wxTxt(day.d)?' · '+esc(wxTxt(day.d)):'')+'</summary>'+
     (day.list.length?'<div class="fm-plan-list">'+day.list.map((x,n)=>
       '<div class="fm-course-row"><b>'+(n+1)+'</b><span>'+esc(x.name)+'<i>'+esc(x.area)+(x.cat?' · '+esc(x.cat):'')+(x.closed?' · '+esc(x.closed):'')+'</i></span>'+
       '<button class="xaction sub" onclick="fmSelect(\''+x.id+'\')">보기</button></div>').join('')+'</div>'+
@@ -2252,6 +2252,105 @@ function phHTML(){
 }
 /* ── 환율: 현지 통화 감각이 없는 사용자를 위해 자국 통화를 함께 보여준다 ──
    무료 공개 API 를 쓰고 키가 필요 없다. 받아 온 값은 저장해 두고 오프라인에서도 그대로 쓴다. */
+/* ── 날씨: 비 오는 날 계획을 미리 갈아탈 수 있게 한다 ──
+   34절 "날씨·현지 상황을 일정 화면에 결합" 요청의 구현.
+   Open-Meteo 를 쓰는 이유는 32절에서 환율에 frankfurter 를 고른 이유와 같다 —
+   API 키가 필요 없고 CORS 가 열려 있어 구매자에게 문턱을 만들지 않는다.
+   받아 온 값은 foodMap.wx 에 캐시해 여행지에서 데이터가 끊겨도 계속 보인다.
+   응답이 예상과 다르면 아무것도 표시하지 않고 조용히 넘어간다 — 앱이 죽지 않는 것이 우선이다. */
+function wxCode(c){c=+c;
+ if(c===0)return'맑음'; if(c===1)return'대체로 맑음'; if(c===2)return'구름 조금'; if(c===3)return'흐림';
+ if(c===45||c===48)return'안개';
+ if(c>=51&&c<=57)return'이슬비';
+ if(c===61)return'약한 비'; if(c===63)return'비'; if(c===65)return'강한 비';
+ if(c===66||c===67)return'얼어붙는 비';
+ if(c>=71&&c<=77)return'눈';
+ if(c>=80&&c<=82)return'소나기'; if(c===85||c===86)return'눈 소나기';
+ if(c===95)return'뇌우'; if(c===96||c===99)return'우박 뇌우';
+ return'';
+}
+function wxPoint(){
+ const h=foodMap.hotel||{};
+ if(fm2Coord(h.lat,90)!==null&&fm2Coord(h.lng,180)!==null)return{lat:+h.lat,lng:+h.lng,src:'숙소'};
+ const g=fmGpsPoint(); if(g)return{lat:g.lat,lng:g.lng,src:'현재 위치'};
+ const p=foodMap.places.find(fm2HasCoords);
+ return p?{lat:+p.lat,lng:+p.lng,src:'저장 장소'}:null;
+}
+function wxDays(){const a=(foodMap.wx||{}).days;return Array.isArray(a)?a:[];}
+function wxAt(){return (foodMap.wx||{}).at||'';}
+function wxFor(date){return wxDays().find(x=>x.d===date)||null;}
+function wxTxt(date){
+ const w=wxFor(date); if(!w)return'';
+ const bits=[];
+ if(w.code!=='')bits.push(w.code);
+ if(w.tmax!==null&&w.tmin!==null)bits.push(Math.round(w.tmax)+'/'+Math.round(w.tmin)+'도');
+ if(w.pop!==null)bits.push('강수 '+w.pop+'%');
+ return bits.join(' · ');
+}
+/* 강수확률이 이 값 이상이면 실내 대안을 권한다. */
+const WX_RAIN=60;
+function wxRainy(date){const w=wxFor(date);return !!w&&w.pop!==null&&w.pop>=WX_RAIN;}
+let wxAutoTried=false;
+async function wxAuto(){
+ if(wxAutoTried)return;
+ wxAutoTried=true;
+ if(wxAt()===TODAY)return;                                    /* 오늘 이미 받았으면 그만 */
+ if(typeof navigator!=='undefined'&&navigator.onLine===false)return;
+ try{await wxFetch(true);}catch(e){}
+}
+async function wxFetch(quiet){
+ const pt=wxPoint();
+ const el=quiet?null:document.getElementById('wxOut');
+ if(!pt){if(el)el.innerHTML='<div class="tool-result">기준 좌표가 없습니다. 숙소를 지정하거나 좌표가 있는 장소를 먼저 넣어 주세요.</div>';return;}
+ if(el)el.innerHTML='<div class="tool-result">날씨를 가져오는 중…</div>';
+ try{
+  const u='https://api.open-meteo.com/v1/forecast?latitude='+encodeURIComponent(pt.lat.toFixed(4))+
+   '&longitude='+encodeURIComponent(pt.lng.toFixed(4))+
+   '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max'+
+   '&timezone=auto&forecast_days=7';
+  const r=await fetch(u);
+  const j=await r.json();
+  if(!r.ok)throw new Error((j&&j.reason)||('HTTP '+r.status));
+  const dd=j&&j.daily;
+  if(!dd||!Array.isArray(dd.time)||!dd.time.length)throw new Error('예보 형식을 알 수 없습니다');
+  const num=(a,i)=>{const v=a&&a[i];return Number.isFinite(+v)?+v:null;};
+  const days=dd.time.map((d,i)=>({
+   d:String(d),
+   code:wxCode(num(dd.weather_code,i)),
+   tmax:num(dd.temperature_2m_max,i),
+   tmin:num(dd.temperature_2m_min,i),
+   pop:num(dd.precipitation_probability_max,i)
+  })).filter(x=>/^\d{4}-\d{2}-\d{2}$/.test(x.d));
+  if(!days.length)throw new Error('예보 날짜를 읽지 못했습니다');
+  foodMap.wx={lat:pt.lat,lng:pt.lng,src:pt.src,at:TODAY,days:days};
+  save('foodmap_v1',foodMap);
+  if(!quiet)renderFoodMap(); else if(document.getElementById('fmNow'))renderFoodMap();
+ }catch(e){
+  if(el)el.innerHTML='<div class="tool-result">날씨 조회 실패: '+esc((e&&e.message)||e)+'\n이전에 받아 둔 값이 있으면 그대로 씁니다.</div>';
+  if(quiet)throw e;
+ }
+}
+function wxHTML(){
+ const days=wxDays(),today=wxFor(TODAY),src=(foodMap.wx||{}).src||'';
+ const sum=today?(wxTxt(TODAY)):(days.length?'오늘 예보 없음':'미조회');
+ const rows=days.slice(0,7).map(function(w){
+  const wd=/^\d{4}-\d{2}-\d{2}$/.test(w.d)?WD[new Date(w.d+'T00:00:00').getDay()]:'';
+  const rainy=w.pop!==null&&w.pop>=WX_RAIN;
+  return '<div class="fm-spend-row"><span>'+esc(w.d.slice(5))+(wd?' ('+wd+')':'')+' · '+esc(wxTxt(w.d)||'정보 없음')+'</span>'+
+   '<b>'+(rainy?'실내 권장':(w.d===TODAY?'오늘':''))+'</b></div>';
+ }).join('');
+ const rainHint=wxRainy(TODAY)
+  ? '<div class="xsmall" style="margin-top:8px">오늘 강수확률이 '+wxFor(TODAY).pop+'%입니다. 실내 비중이 높은 후보로 바꿔 보세요.</div>'+
+    '<div class="xactions"><button class="xaction" onclick="fmDecision(\'rain\')">☔ 비 오는 날 후보 보기</button></div>'
+  : '';
+ return fmPanel('wx','WEATHER','날씨',sum,
+  '<div class="xsmall">'+(days.length
+    ? ('기준 '+esc(src||'좌표')+' · 받은 날 '+esc(wxAt())+' · 한 번 받아 두면 오프라인에서도 그대로 씁니다.')
+    : 'API 키가 필요 없는 무료 예보를 씁니다. 숙소나 좌표가 있는 장소가 있어야 조회됩니다.')+'</div>'+
+  rows+rainHint+
+  '<div class="xactions"><button class="xaction sub" onclick="wxFetch(false)">'+(days.length?'날씨 다시 가져오기':'날씨 가져오기')+'</button></div>'+
+  '<div id="wxOut"></div>');
+}
 const FX_DEFAULT={cur:'JPY',home:'KRW',sym:'엔',homeSym:'원'};
 function fxCur(){return String(foodMap.fxCur||FX_DEFAULT.cur).toUpperCase();}
 function fxHome(){return String(foodMap.fxHome||FX_DEFAULT.home).toUpperCase();}
@@ -2625,6 +2724,7 @@ function asContext(){
  const lines=[];
  lines.push('[현재] '+TODAY+' ('+n.wd+') '+n.hm);
  lines.push('[여행 D-day] '+ddayTxt());
+ if(wxTxt(TODAY))lines.push('[오늘 날씨] '+wxTxt(TODAY)+(wxRainy(TODAY)?' · 비 가능성 높음':''));
  lines.push('[거리 기준점] '+(foodMap.originMode==='hotel'?('숙소 '+(hotel.name||'미설정')):(fmGpsPoint()?'실시간 GPS':(foodMap.current?'저장된 현재 위치':'없음'))));
  if(!o)lines.push('※ 기준점 좌표가 없어 거리 정보는 신뢰할 수 없음');
  if(bgTotal()){
@@ -2740,11 +2840,11 @@ renderFoodMap=function(){
   plHTML()+csHTML()+bgHTML()+fxHTML()+affHTML();
  /* 지금 여행 — 현장에서 다음 행동을 정하는 곳 */
  nRoot.innerHTML='<div id="fmGpsPanel">'+fmGpsPanelHTML()+'</div>'+
-  asHTML()+
+  asHTML()+wxHTML()+
    '<div class="xcard"><h3><span class="tag">SMART</span>오늘의 자동 선택</h3><div class="xsmall">현재 위치/호텔, 영업상태, 우선순위, 평점, 방문 여부를 함께 봅니다.</div><div class="fm-quick"><button onclick="fmDecision(\'now\')">⚡ 지금 어디 가지?</button><button onclick="fmDecision(\'crawl\')">🍶 술집 3차 코스</button><button onclick="fmDecision(\'balanced\')">🧭 균형 코스</button><button onclick="fmDecision(\'rain\')">☔ 비 오는 날</button><button onclick="fmDecision(\'region\')">📍 한 지역 공략</button><button onclick="fmDecision(\'spare\')">⏱ 빈 시간 코스</button></div><select class="xselect" style="margin-top:8px" onchange="fmSetSpare(this.value)">'+fm2Opts([[30,'빈 시간 30분'],[60,'빈 시간 60분'],[90,'빈 시간 90분'],[120,'빈 시간 120분']],+foodMap.spare)+'</select></div>'+
   fm2DecisionHTML()+
   '<div class="fm-spot-tools" id="fmSpotTools"></div>'+phHTML()+tjHTML();
- fxAuto();phRender();asRender();fm2RenderOverview();fmRenderList();fmRenderMap();fmRenderSpotTools();setTimeout(()=>fmCheckLinkedCsv(true),0);};
+ fxAuto();wxAuto();phRender();asRender();fm2RenderOverview();fmRenderList();fmRenderMap();fmRenderSpotTools();setTimeout(()=>fmCheckLinkedCsv(true),0);};
 function fmSetRegion(v){foodMap.region=v;save('foodmap_v1',foodMap);renderFoodMap();}function fmSetKind(v){foodMap.kind=v;save('foodmap_v1',foodMap);renderFoodMap();}
 function fmSetStatus(v){foodMap.status=v;save('foodmap_v1',foodMap);renderFoodMap();}function fmSetSort(v){foodMap.sort=v;save('foodmap_v1',foodMap);renderFoodMap();}function fmSetSpare(v){foodMap.spare=+v||60;save('foodmap_v1',foodMap);}
 function fmSetOriginMode(v){foodMap.originMode=v;save('foodmap_v1',foodMap);renderFoodMap();}
