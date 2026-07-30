@@ -39,12 +39,17 @@ t('숙소 좌표를 기준으로 삼음', pt&&pt.src==='숙소');
 
 // 조회 성공
 let url=null;
-const mk=(pop)=>({ok:true,json:async()=>({daily:{
+const pad=n=>String(n).padStart(2,'0');
+const hourAt=(offset)=>{const t=new Date(Date.now()+offset*3600*1000);
+  return t.getFullYear()+'-'+pad(t.getMonth()+1)+'-'+pad(t.getDate())+'T'+pad(t.getHours())+':00';};
+const mk=(pop,soonPop)=>({ok:true,json:async()=>({daily:{
   time:[T,'2026-07-31','2026-08-01'],
   weather_code:[3,61,0],
   temperature_2m_max:[31.2,28.4,33.0],
   temperature_2m_min:[24.1,23.0,25.5],
-  precipitation_probability_max:[pop,80,5]}})});
+  precipitation_probability_max:[pop,80,5]},
+  hourly:{time:[hourAt(0),hourAt(1),hourAt(2),hourAt(6)],
+   precipitation_probability:[10,10,(soonPop===undefined?10:soonPop),95]}})});
 w.fetch=async(u)=>{url=u;return mk(15);};
 await w.eval('wxFetch(false)');
 await new Promise(r=>setTimeout(r,250));
@@ -109,6 +114,29 @@ t('오래된 값이면 자동 갱신', autoCalls===1);
 await w.eval('wxAuto()');
 await new Promise(r=>setTimeout(r,150));
 t('세션당 한 번만', autoCalls===1);
+
+// 시간별 예보 — 지금 나가도 되는지 판단하는 근거
+t('URL 에 시간별 항목 요청', url.includes('hourly=precipitation_probability'));
+t('시간별 저장됨', w.eval('wxHours().length')===4);
+t('3시간 안 최대 강수 집계', (w.eval('wxSoon(3)')||{}).pop===10);
+t('6시간 뒤 값은 3시간 창 밖', w.eval('wxSoonTxt(3)').includes('10%'));
+w.fetch=async(u)=>{url=u;return mk(85,90);};
+await w.eval('wxFetch(false)');
+await new Promise(r=>setTimeout(r,250));
+t('곧 비 오면 최대값 반영', (w.eval('wxSoon(3)')||{}).pop===90);
+t('곧 비 오면 경고 문구', panel().textContent.includes('지금 나가면 비를 만날 수 있습니다'));
+t('컨텍스트에 단기 예보', w.eval('asContext()').includes('[단기 예보]'));
+/* 시간별이 빠진 응답이 와도 일별만으로 완결되어야 한다 */
+w.fetch=async()=>({ok:true,json:async()=>({daily:{time:[T],weather_code:[0],
+  temperature_2m_max:[30],temperature_2m_min:[22],precipitation_probability_max:[5]}})});
+await w.eval('wxFetch(false)');
+await new Promise(r=>setTimeout(r,250));
+t('시간별 없어도 일별 동작', w.eval('wxTxt(TODAY)')==='맑음 · 30/22도 · 강수 5%');
+t('시간별 없으면 단기 문구 빈값', w.eval('wxSoonTxt(3)')==='');
+/* 뒤 검사를 위해 3일치 예보로 되돌린다 */
+w.fetch=async(u)=>{url=u;return mk(85);};
+await w.eval('wxFetch(false)');
+await new Promise(r=>setTimeout(r,250));
 
 // 지금부터 다시 짜기 — 현장에서 계획이 밀렸을 때
 /* 앞선 검사들이 방문·일정 상태를 여러 번 바꿔 놓았다. 이 블록은 자기 상태를 직접 세운다. */

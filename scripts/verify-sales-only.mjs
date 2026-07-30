@@ -38,7 +38,7 @@ const REQUIRED = [
   'function csBuild()', 'function csOrder(', 'function plBuild()',
   'function bgAdd()', 'function asContext()', 'function asAsk()',
   'const SJ_BANK=', 'function fmPanel(', 'function affUrl(k)', 'function fmGuideHTML()', 'async function fxFetch(quiet)', 'function phRead(buf)',
-  "o['제목']", 'function ibDetectPlatform(u)', 'function ibAdd()', 'function ibConfirm(id)', 'function tjHTML()', 'function spSummarize(id)', 'function spCardHTML(p)', 'function wxHTML()', 'async function wxFetch(quiet)',
+  "o['제목']", 'function ibDetectPlatform(u)', 'function ibAdd()', 'function ibConfirm(id)', 'function tjHTML()', 'function spSummarize(id)', 'function spCardHTML(p)', 'function wxHTML()', 'async function wxFetch(quiet)', 'function shHandle()',
 ];
 REQUIRED.forEach((token) => check(html.includes(token), `필수 기능 누락: ${token}`));
 
@@ -47,6 +47,12 @@ REQUIRED.forEach((token) => check(html.includes(token), `필수 기능 누락: $
 });
 check(html.includes('serviceWorker'), '서비스 워커 등록 코드 누락');
 check(html.includes('manifest.webmanifest'), '매니페스트 링크 누락');
+try {
+  const mf = JSON.parse(fs.readFileSync(path.join(ROOT, 'src/manifest.webmanifest'), 'utf8'));
+  check(!!(mf.share_target && mf.share_target.params && mf.share_target.params.url), '매니페스트 공유 대상 선언 누락');
+} catch (e) {
+  check(false, `매니페스트 파싱 실패 — ${e.message}`);
+}
 
 try {
   [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)].forEach(([, code]) => {

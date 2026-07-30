@@ -93,6 +93,7 @@ for (const must of [
   'function tjVisitedAt(p)', 'function tjEntries()', 'function tjHTML()',
   'function spFacts(p)', 'const SP_RULES=', 'async function spSummarize(id)', 'function spCardHTML(p)',
   'function wxCode(c)', 'function wxPoint()', 'async function wxFetch(quiet)', 'function wxHTML()', 'const WX_RAIN=', 'function csReplanNow()',
+  'function wxSoon(h)', 'function shGrabUrl(s)', 'function shHandle()',
 ]) {
   if (!html.includes(must)) {
     console.error(`FAIL  판매용에 있어야 하는 기능 누락: ${must}`);

@@ -633,10 +633,12 @@ function startApp(){
  document.getElementById('gateWrap').style.display='none';
  document.getElementById('app').style.display='block';
  renderHeader();
+ const shared=shHandle();
  /* 운동 탭 제거 때 class="tab on" 이 붙어 있던 섹션이 함께 사라져 첫 화면이 비어 있었다.
     기본 탭(담기)은 마크업에서 이미 활성이므로 내용만 채우면 된다.
     showTab 을 부르지 않는 이유: 그 안의 window.scrollTo 는 부팅 시점에 의미가 없다. */
  renderFoodMap();
+ if(shared)showTab('collect');
 }
 let landingReturnTab='collect';
 function showLanding(){
@@ -2295,6 +2297,22 @@ function wxTxt(date){
 }
 /* 강수확률이 이 값 이상이면 실내 대안을 권한다. */
 const WX_RAIN=60;
+function wxHours(){const a=(foodMap.wx||{}).hours;return Array.isArray(a)?a:[];}
+/* 지금부터 h시간 안에서 가장 높은 강수확률과 그 시각. 나갈지 말지 판단하는 근거다. */
+function wxSoon(h){
+ const now=new Date(),from=now.getTime(),to=from+(h||3)*3600*1000;
+ let best=null;
+ wxHours().forEach(function(x){
+  const t=new Date(x.t).getTime();
+  if(!Number.isFinite(t)||t<from||t>to)return;
+  if(!best||x.pop>best.pop)best={t:x.t,pop:x.pop};
+ });
+ return best;
+}
+function wxSoonTxt(h){
+ const b=wxSoon(h); if(!b)return'';
+ return '앞으로 '+(h||3)+'시간 최대 강수 '+b.pop+'% ('+b.t.slice(11,16)+')';
+}
 function wxRainy(date){const w=wxFor(date);return !!w&&w.pop!==null&&w.pop>=WX_RAIN;}
 let wxAutoTried=false;
 async function wxAuto(){
@@ -2313,6 +2331,7 @@ async function wxFetch(quiet){
   const u='https://api.open-meteo.com/v1/forecast?latitude='+encodeURIComponent(pt.lat.toFixed(4))+
    '&longitude='+encodeURIComponent(pt.lng.toFixed(4))+
    '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max'+
+   '&hourly=precipitation_probability'+
    '&timezone=auto&forecast_days=7';
   const r=await fetch(u);
   const j=await r.json();
@@ -2328,7 +2347,12 @@ async function wxFetch(quiet){
    pop:num(dd.precipitation_probability_max,i)
   })).filter(x=>/^\d{4}-\d{2}-\d{2}$/.test(x.d));
   if(!days.length)throw new Error('예보 날짜를 읽지 못했습니다');
-  foodMap.wx={lat:pt.lat,lng:pt.lng,src:pt.src,at:TODAY,days:days};
+  /* 시간별은 있으면 쓰고 없으면 그냥 넘어간다 — 일별만으로도 기능이 완결된다. */
+  const hh=j&&j.hourly,hours=(hh&&Array.isArray(hh.time))
+   ? hh.time.map((t2,i)=>({t:String(t2),pop:Number.isFinite(+((hh.precipitation_probability||[])[i]))?+hh.precipitation_probability[i]:null}))
+     .filter(x=>/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(x.t)&&x.pop!==null)
+   : [];
+  foodMap.wx={lat:pt.lat,lng:pt.lng,src:pt.src,at:TODAY,days:days,hours:hours};
   save('foodmap_v1',foodMap);
   if(!quiet)renderFoodMap(); else if(document.getElementById('fmNow'))renderFoodMap();
  }catch(e){
@@ -2345,6 +2369,8 @@ function wxHTML(){
   return '<div class="fm-spend-row"><span>'+esc(w.d.slice(5))+(wd?' ('+wd+')':'')+' · '+esc(wxTxt(w.d)||'정보 없음')+'</span>'+
    '<b>'+(rainy?'실내 권장':(w.d===TODAY?'오늘':''))+'</b></div>';
  }).join('');
+ const soon=wxSoonTxt(3);
+ const soonRow=soon?('<div class="xsmall" style="margin-top:8px">'+esc(soon)+((wxSoon(3)||{}).pop>=WX_RAIN?' — 지금 나가면 비를 만날 수 있습니다.':' — 지금은 나가도 괜찮아 보입니다.')+'</div>'):'';
  const rainHint=wxRainy(TODAY)
   ? '<div class="xsmall" style="margin-top:8px">오늘 강수확률이 '+wxFor(TODAY).pop+'%입니다. 실내 비중이 높은 후보로 바꿔 보세요.</div>'+
     '<div class="xactions"><button class="xaction" onclick="fmDecision(\'rain\')">☔ 비 오는 날 후보 보기</button></div>'
@@ -2353,7 +2379,7 @@ function wxHTML(){
   '<div class="xsmall">'+(days.length
     ? ('기준 '+esc(src||'좌표')+' · 받은 날 '+esc(wxAt())+' · 한 번 받아 두면 오프라인에서도 그대로 씁니다.')
     : 'API 키가 필요 없는 무료 예보를 씁니다. 숙소나 좌표가 있는 장소가 있어야 조회됩니다.')+'</div>'+
-  rows+rainHint+
+  rows+soonRow+rainHint+
   '<div class="xactions"><button class="xaction sub" onclick="wxFetch(false)">'+(days.length?'날씨 다시 가져오기':'날씨 가져오기')+'</button></div>'+
   '<div id="wxOut"></div>');
 }
@@ -2510,6 +2536,39 @@ function ibConfirm(id){
  save('foodmap_v1',foodMap);renderFoodMap();
  alert('장소로 추가했습니다. 좌표는 아래 "선택 기능 · Places / YouTube API"에서 보강할 수 있습니다.');
 }
+/* ── 공유로 들어온 링크를 인박스에 담는다 (34절 우선순위 4번) ──
+   PWA share_target 은 공유 내용을 쿼리 파라미터로 넘긴다. 안드로이드 크롬은 OS 공유 시트에
+   이 앱을 띄워 주고, iOS Safari 는 share_target 을 지원하지 않는다. 다만 파라미터로 여는
+   방식은 어디서나 통하므로 단축어·북마클릿으로도 같은 흐름을 쓸 수 있다.
+   ?url=... 또는 ?text=(링크가 섞인 문장) 형태를 모두 받는다. */
+function shGrabUrl(s){const m=String(s||'').match(/https?:\/\/[^\s"'<>]+/);return m?m[0]:'';}
+function shParams(){
+ try{return new URLSearchParams(location.search);}catch(e){return null;}
+}
+function shConsume(){
+ const q=shParams(); if(!q)return null;
+ const rawUrl=q.get('url')||'', text=q.get('text')||'', title=q.get('title')||'';
+ const url=shGrabUrl(rawUrl)||shGrabUrl(text);
+ if(!url)return null;
+ /* 링크를 뺀 나머지 글을 메모로 쓴다 — 공유 시트가 캡션을 함께 넘겨 줄 때가 있다. */
+ const note=[title, String(text).replace(url,'').trim()].filter(Boolean).join(' · ').slice(0,300);
+ return {url:url,note:note};
+}
+let shJustAdded=false;   /* 공유로 막 담긴 것이 있으면 인박스에 한 번 알린다 */
+function shHandle(){
+ const got=shConsume(); if(!got)return false;
+ const item={id:'ib'+Date.now()+Math.floor(Math.random()*99),url:got.url,
+  platform:ibDetectPlatform(got.url),note:got.note,addedAt:TODAY,guess:null};
+ if(item.platform==='구글맵'){const nm=ibParseGoogleMapsName(got.url);
+  if(nm)item.guess={name:nm,city:'',country:'',confidence:'높음',src:'url'};}
+ ibList().unshift(item);
+ foodMap.panels=Object.assign({},foodMap.panels,{inbox:true});   /* 담긴 것이 바로 보이게 */
+ save('foodmap_v1',foodMap);
+ /* 새로고침해도 같은 링크가 다시 담기지 않게 주소에서 파라미터를 지운다. */
+ try{history.replaceState(null,'',location.pathname);}catch(e){}
+ shJustAdded=true;
+ return true;
+}
 function ibHTML(){
  const items=ibList();
  const rows=items.map(function(it){
@@ -2530,6 +2589,7 @@ function ibHTML(){
   '<div class="xsmall">인스타그램·틱톡·유튜브·블로그 등에서 본 장소를 링크로 붙여넣으세요. 저장한 이유나 기억나는 정보를 메모에 적으면 AI 추정 정확도가 올라갑니다. 게시물 내용을 앱이 직접 읽어오지는 못하므로 메모가 곧 원본 정보입니다.</div>'+
   '<div class="fm-grid" style="margin-top:8px"><input class="xinput wide" id="ibUrl" placeholder="인스타그램·틱톡·유튜브·구글맵 링크"><textarea class="xta wide" id="ibNote" placeholder="왜 저장했는지 · 가게 이름·메뉴 등 기억나는 정보"></textarea></div>'+
   '<div class="xactions"><button class="xaction" onclick="ibAdd()">＋ 인박스에 담기</button></div>'+
+  (shJustAdded?'<div class="tool-result">공유한 링크를 담았습니다. 아래에서 장소 이름을 확인하고 확정하세요.</div>':'')+
   (rows||'<div class="empty" style="margin-top:8px">아직 담은 링크가 없습니다.</div>'));
 }
 /* ── 여행 일지: 여행이 끝난 뒤에도 "언제 어디 갔고 얼마 썼는지" 가 남는다 ──
@@ -2731,6 +2791,7 @@ function asContext(){
  lines.push('[현재] '+TODAY+' ('+n.wd+') '+n.hm);
  lines.push('[여행 D-day] '+ddayTxt());
  if(wxTxt(TODAY))lines.push('[오늘 날씨] '+wxTxt(TODAY)+(wxRainy(TODAY)?' · 비 가능성 높음':''));
+ if(wxSoonTxt(3))lines.push('[단기 예보] '+wxSoonTxt(3));
  lines.push('[거리 기준점] '+(foodMap.originMode==='hotel'?('숙소 '+(hotel.name||'미설정')):(fmGpsPoint()?'실시간 GPS':(foodMap.current?'저장된 현재 위치':'없음'))));
  if(!o)lines.push('※ 기준점 좌표가 없어 거리 정보는 신뢰할 수 없음');
  if(bgTotal()){
