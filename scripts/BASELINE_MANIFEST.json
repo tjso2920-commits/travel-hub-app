@@ -1,0 +1,66 @@
+{
+  "created_at": "2026-07-27",
+  "personal": {
+    "file": "private/personal.html",
+    "sha256_at_handoff": "58105009dda7c96be89c1e918203501ccae082552d58de63a8a4aec30dec7697",
+    "protected": {
+      "root": "3f4ac4ea2e40dca01ec2f6f850ef5c3cfd64f2d8d3395976f25053394472e123",
+      "V": "5d16a9ec2951fde5687486cb76c4483687880c62b548822e37edda5f79fa153e",
+      "personalDays": "b2638f79d5e233185ad9c54f897146c532c5596075f6ca1d1292dc3f90d604a0"
+    },
+    "required_storage_keys": [
+      "ai",
+      "att",
+      "burn",
+      "data",
+      "first",
+      "food",
+      "foodhide",
+      "foodmap_v1",
+      "foodpin",
+      "fooduse",
+      "hideg",
+      "jp_chat_v1",
+      "jp_packs_v1",
+      "jp_state_v1",
+      "myfoods",
+      "prof",
+      "sets",
+      "workout2_data_v1",
+      "workout2_sets_v1",
+      "workout2_snap_v1",
+      "wsnap",
+      "wt"
+    ]
+  },
+  "sales": {
+    "file": "src/index.html",
+    "sha256_at_handoff": "37fbce46482fce0bcf8dd3468879daa051066aae9cdc5de301ab8d03ba0a717b",
+    "protected": {
+      "root": "3f4ac4ea2e40dca01ec2f6f850ef5c3cfd64f2d8d3395976f25053394472e123",
+      "V": "5d16a9ec2951fde5687486cb76c4483687880c62b548822e37edda5f79fa153e",
+      "personalDays": "b2638f79d5e233185ad9c54f897146c532c5596075f6ca1d1292dc3f90d604a0"
+    },
+    "required_storage_keys": [
+      "ai",
+      "att",
+      "burn",
+      "data",
+      "first",
+      "food",
+      "foodhide",
+      "foodmap_v1",
+      "foodpin",
+      "fooduse",
+      "hideg",
+      "jp_chat_v1",
+      "jp_packs_v1",
+      "jp_state_v1",
+      "myfoods",
+      "prof",
+      "sets",
+      "wsnap",
+      "wt"
+    ]
+  }
+}

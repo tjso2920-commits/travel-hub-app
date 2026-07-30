@@ -1,0 +1,17 @@
+{
+  "name": "travel-hub-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "여행 통합 허브 앱 — 구글맵 저장목록을 동선으로 바꾸고 현지 언어까지 함께 다루는 단일 HTML 웹앱",
+  "type": "module",
+  "scripts": {
+    "verify": "node scripts/verify.mjs",
+    "build": "node scripts/build-sales.mjs",
+    "test": "node scripts/test/run-all.mjs",
+    "check": "npm run build && npm run verify && npm run test",
+    "preview": "node scripts/serve.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^24.1.3"
+  }
+}

@@ -1,0 +1,16 @@
+# 개인 데이터 — 절대 커밋하지 않는다
+private/
+*.backup.json
+*_백업*.json
+전체데이터*.json
+후쿠오카_개인지도*.json
+
+# 의존성·부산물
+node_modules/
+dist/
+.DS_Store
+*.log
+
+# 편집기
+.vscode/
+.idea/
