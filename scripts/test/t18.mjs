@@ -83,6 +83,21 @@ t('이름 없으면 확정 거부', alerts.length===1 && FM().inbox.length===1);
 w.eval(`ibDelete('${id2}')`);
 t('삭제됨', FM().inbox.length===0);
 
+// 구글맵 링크는 URL 자체에서 이름을 읽는다 (AI 호출 없이)
+w.document.getElementById('ibUrl').value='https://www.google.com/maps/place/%E4%B8%80%E6%A5%BD+%E5%A4%A9%E7%A5%9E%E5%BA%97/@33.5902,130.4017,17z';
+w.eval('ibAdd()');
+const gmGuess=FM().inbox[0].guess;
+t('구글맵 링크 이름 자동 추출', gmGuess && gmGuess.name==='一楽 天神店');
+t('구글맵 추출은 URL 출처로 표시', gmGuess && gmGuess.src==='url');
+w.eval(`ibDelete('${FM().inbox[0].id}')`);
+
+// 단축 구글맵 링크는 이름을 못 읽으므로 guess 없이 담긴다(AI 추정으로 넘어가야 함)
+w.document.getElementById('ibUrl').value='https://maps.app.goo.gl/abcXYZ';
+w.eval('ibAdd()');
+t('단축 링크는 자동 추출 없음', FM().inbox[0].guess===null);
+t('단축 링크도 구글맵으로 분류', FM().inbox[0].platform==='구글맵');
+w.eval(`ibDelete('${FM().inbox[0].id}')`);
+
 // 백업 포함 확인
 w.document.getElementById('ibUrl').value='https://youtu.be/zzz';
 w.eval('ibAdd()');

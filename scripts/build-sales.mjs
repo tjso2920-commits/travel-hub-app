@@ -88,7 +88,7 @@ for (const must of [
   'function phRead(buf)', 'function phNearest(', 'function phAnalyze(kind)',
   "o['제목']", 'function fmAddVideo(', 'function fmDeleteVideo(',
   'function renderSettings()', 'function showLanding()', 'function landingOpen(',
-  'function ibDetectPlatform(u)', 'function ibAdd()', 'async function ibGuess(id)',
+  'function ibDetectPlatform(u)', 'function ibParseGoogleMapsName(u)', 'function ibAdd()', 'async function ibGuess(id)',
   'function ibConfirm(id)', 'function ibHTML()',
 ]) {
   if (!html.includes(must)) {

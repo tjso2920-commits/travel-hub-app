@@ -2498,11 +2498,23 @@ function ibDetectPlatform(u){u=String(u||'');
  if(/google\.[a-z.]+\/maps|maps\.app\.goo\.gl/i.test(u))return'구글맵';
  return'웹';}
 function ibList(){if(!Array.isArray(foodMap.inbox))foodMap.inbox=[];return foodMap.inbox;}
+/* 구글맵 링크는 AI 추측 없이도 URL 자체에 장소명이 들어 있는 경우가 많다(예: .../maps/place/장소명/@위도,경도).
+   단축 링크(maps.app.goo.gl)는 리다이렉트라 이 경로로 못 읽는다 — 그럴 땐 그대로 두고 AI 추정으로 넘어간다. */
+function ibParseGoogleMapsName(u){
+ try{const m=String(u).match(/\/maps\/place\/([^/@?]+)/);if(m)return decodeURIComponent(m[1].replace(/\+/g,' '));}catch(e){}
+ return '';
+}
 function ibAdd(){
  const u=document.getElementById('ibUrl'),n=document.getElementById('ibNote');
  const url=(u&&u.value||'').trim();
  if(!url){alert('링크를 붙여넣어 주세요.');return;}
- ibList().unshift({id:'ib'+Date.now()+Math.floor(Math.random()*99),url:url,platform:ibDetectPlatform(url),note:(n&&n.value||'').trim(),addedAt:TODAY,guess:null});
+ const platform=ibDetectPlatform(url);
+ const item={id:'ib'+Date.now()+Math.floor(Math.random()*99),url:url,platform:platform,note:(n&&n.value||'').trim(),addedAt:TODAY,guess:null};
+ if(platform==='구글맵'){
+  const nm=ibParseGoogleMapsName(url);
+  if(nm)item.guess={name:nm,city:'',country:'',confidence:'높음',src:'url'};
+ }
+ ibList().unshift(item);
  if(u)u.value='';if(n)n.value='';
  save('foodmap_v1',foodMap);renderFoodMap();
 }
@@ -2541,7 +2553,7 @@ function ibHTML(){
  const rows=items.map(function(it){
   const g=it.guess;
   const guessHTML=it.guessing?'<div class="xsmall">AI로 추정하는 중…</div>'
-   :g?('<div class="xsmall">AI 추정: '+esc(g.name||'추정 실패')+(g.city||g.country?' · '+esc([g.city,g.country].filter(Boolean).join(', ')):'')+' · 신뢰도 '+esc(g.confidence||'낮음')+(g.err?' · '+esc(g.err):'')+'</div>')
+   :g?('<div class="xsmall">'+(g.src==='url'?'구글맵 링크에서 읽음: ':'AI 추정: ')+esc(g.name||'추정 실패')+(g.city||g.country?' · '+esc([g.city,g.country].filter(Boolean).join(', ')):'')+(g.src==='url'?'':' · 신뢰도 '+esc(g.confidence||'낮음'))+(g.err?' · '+esc(g.err):'')+'</div>')
    :'';
   return '<div class="jp-spot-row"><span class="tag">'+esc(it.platform)+'</span>'+
    '<i>'+esc(it.url)+'</i>'+(it.note?'<em>'+esc(it.note)+'</em>':'')+

@@ -177,6 +177,7 @@ requireTokens(sales, '판매용', [
   'function sjPick(p,limit)',
   "o['제목']",
   'function ibDetectPlatform(u)',
+  'function ibParseGoogleMapsName(u)',
   'function ibAdd()',
   'async function ibGuess(id)',
   'function ibConfirm(id)',
