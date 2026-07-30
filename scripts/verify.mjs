@@ -206,7 +206,8 @@ requireTokens(sales, '판매용', [
   'function wxPoint()',
   'async function wxFetch(quiet)',
   'function wxHTML()',
-  'const WX_RAIN='
+  'const WX_RAIN=',
+  'function csReplanNow()'
 ]);
 for (const personalToken of ['스태프밀', '윤식', '96 → 80', 'F&B 경력자', '十年以上']) {
   check(!sales.includes(personalToken), `판매용: 개인 신상 문자열 제외 ${personalToken}`);

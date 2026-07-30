@@ -1983,6 +1983,10 @@ function csMax(){return Math.max(2,Math.min(6,+foodMap.courseMax||4));}
 function csSetMax(v){foodMap.courseMax=Math.max(2,Math.min(6,+v||4));save('foodmap_v1',foodMap);renderFoodMap();}
 function csStartHour(){const h=foodMap.courseStart;return h===undefined||h===null||h===''?new Date().getHours():Math.max(0,Math.min(23,+h));}
 function csSetStart(v){foodMap.courseStart=(v===''?null:Math.max(0,Math.min(23,+v||0)));save('foodmap_v1',foodMap);renderFoodMap();}
+/* 현장에서 계획이 밀렸을 때 지금 시각부터 남은 하루를 다시 짠다.
+   csStartHour() 가 값이 비면 현재 시각을 쓰므로 시작 시각을 비우고 다시 짜면 된다.
+   이미 방문한 곳은 csBuild 가 원래 후보에서 제외하므로 자연히 빠진다. */
+function csReplanNow(){foodMap.courseStart=null;save('foodmap_v1',foodMap);csBuild();}
 /* 시간대 적합도: 낮/밤 창에 들어오면 가산, 완전히 벗어나면 제외 */
 function csFits(goal,hour){
  const win=[goal.day,goal.night].filter(Boolean);
@@ -2062,7 +2066,9 @@ function csHTML(){
    '<div class="xsmall" style="margin-top:8px">종료 예상 '+csHM(c.endAt)+' · 총 도보 '+c.walkTotal+'분'+
    (bgPerDay()!==null?' · 오늘 권장 예산 '+bgYen(bgPerDay()):'')+
    '<br>직선거리 기준 추정입니다. 실제 경로는 아래 버튼으로 구글 지도에서 확인하세요.</div>'+
+   (wxRainy(TODAY)?'<div class="xsmall" style="margin-top:8px">오늘 강수확률 '+wxFor(TODAY).pop+'% — 실내 비중이 높은 후보로 갈아타려면 아래 날씨 카드의 버튼을 쓰세요.</div>':'')+
    '<div class="xactions"><a class="xaction" href="'+esc(fmRouteLink(csPlaces()))+'" target="_blank" rel="noopener">구글 지도로 코스 열기</a>'+
+   '<button class="xaction sub" onclick="csReplanNow()">지금부터 다시</button>'+
    '<button class="xaction sub" onclick="csBuild()">다시 짜기</button>'+
    '<button class="xaction sub" onclick="csClear()">지우기</button></div>';
  }else{

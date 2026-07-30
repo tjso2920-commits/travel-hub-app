@@ -110,6 +110,28 @@ await w.eval('wxAuto()');
 await new Promise(r=>setTimeout(r,150));
 t('세션당 한 번만', autoCalls===1);
 
+// 지금부터 다시 짜기 — 현장에서 계획이 밀렸을 때
+/* 앞선 검사들이 방문·일정 상태를 여러 번 바꿔 놓았다. 이 블록은 자기 상태를 직접 세운다. */
+FM().places.forEach(x=>{x.visited=false;delete x.visitedAt;x.excluded=false;});
+w.eval("foodMap.course=null;foodMap.plan=null;csSetStart(8);csBuild();");
+t('사전 조건: 코스 생성됨', (FM().course&&FM().course.stops||[]).length>0);
+t('시작 시각 8시 반영', FM().course.startHour===8);
+t('courseStart 저장', FM().courseStart===8);
+w.eval('csReplanNow()');
+t('지금부터: courseStart 비움', FM().courseStart===null);
+t('지금부터: 현재 시각으로 다시 짬', FM().course.startHour===new Date().getHours());
+const firstId=FM().course.stops[0].id;
+FM().places.find(x=>x.id===firstId).visited=true;
+w.eval('csReplanNow()');
+t('지금부터: 방문한 곳 제외', !FM().course.stops.some(x=>x.id===firstId));
+w.eval('renderFoodMap()');
+const csPanel=()=>[...w.document.querySelectorAll('#fmPlan details.fm-panel')].find(x=>x.textContent.includes('오늘 동선'));
+t('지금부터 다시 버튼 노출', csPanel().textContent.includes('지금부터 다시'));
+w.eval("foodMap.wx={lat:33.59,lng:130.4,src:'숙소',at:TODAY,days:[{d:TODAY,code:'비',tmax:28,tmin:23,pop:90}]};renderFoodMap();");
+t('비 예보면 코스에 안내', csPanel().textContent.includes('강수확률 90%'));
+w.eval("foodMap.wx.days[0].pop=10;renderFoodMap();");
+t('맑으면 안내 없음', !csPanel().textContent.includes('강수확률'));
+
 // 새 저장 키 없음 / 백업 포함
 t('새 localStorage 키 없음', !html.includes("load('wx") && !html.includes("save('wx"));
 w.eval("save('foodmap_v1',foodMap)");
@@ -117,7 +139,7 @@ let cap=null;
 w.Blob=function(a){this.a=a;};
 w.URL.createObjectURL=(b)=>{cap=JSON.parse(b.a[0]);return 'blob:x';};
 w.eval('exportData()');
-t('백업에 날씨 캐시 포함', cap.foodMap.wx&&Array.isArray(cap.foodMap.wx.days)&&cap.foodMap.wx.days.length===3);
+t('백업에 날씨 캐시 포함', cap.foodMap.wx&&Array.isArray(cap.foodMap.wx.days)&&cap.foodMap.wx.days.length>=1);
 
 t('최종 런타임 오류 0', errs.length===0);
 console.log(fail?('\n실패 '+fail+'건'):'\n전체 통과');
