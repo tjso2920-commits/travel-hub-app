@@ -1850,7 +1850,7 @@ function fmGpsForget(){fmGpsStop();fmGps.lat=null;fmGps.lng=null;fmGps.accuracy=
 function fmGpsRecenter(){if(!fmGpsPoint())return;fmGps.follow=true;foodMap.originMode='current';fmRenderMap();const el=document.getElementById('fmMap');if(el)el.scrollIntoView({behavior:'smooth',block:'nearest'});}
 function fmGpsNearest(){if(!fmGpsPoint())return;foodMap.originMode='current';foodMap.sort='distance';save('foodmap_v1',foodMap);renderFoodMap();}
 window.addEventListener('pagehide',()=>{if(fmGps.watchId!==null&&navigator.geolocation)navigator.geolocation.clearWatch(fmGps.watchId);fmGps.watchId=null;fmGps.active=false;});
-function fm2Init(){const d={region:'전체 지역',kind:'전체 음식·술',status:'기본 상태',sort:'smart',originMode:'current',current:null,hotel:{name:'',address:'',url:'',lat:null,lng:null},spare:60,decision:null,youtubeKey:''};
+function fm2Init(){const d={region:'전체 지역',kind:'전체 음식·술',status:'기본 상태',sort:'smart',originMode:'current',current:null,hotel:{name:'',address:'',url:'',lat:null,lng:null},spare:60,decision:null,youtubeKey:'',inbox:[]};
  Object.keys(d).forEach(k=>{if(foodMap[k]===undefined)foodMap[k]=d[k];});foodMap.places=foodMap.places.map(fm2Normalize);save('foodmap_v1',foodMap);}
 fm2Init();
 function fm2Opts(a,v){return a.map(x=>{const z=Array.isArray(x)?x:[x,x];return'<option value="'+esc(z[0])+'" '+(z[0]===v?'selected':'')+'>'+esc(z[1])+'</option>';}).join('');}
@@ -2490,6 +2490,74 @@ function fmGuideSettings(){
  const d=el.closest('details');if(d)d.open=true;
  el.scrollIntoView({behavior:'smooth',block:'center'});
 }
+/* ── 여행 인박스: SNS·링크 붙여넣기로 장소 담기 (2026-07-30, 34절 1순위 기능) ── */
+function ibDetectPlatform(u){u=String(u||'');
+ if(/youtube\.com|youtu\.be/i.test(u))return'유튜브';
+ if(/tiktok\.com/i.test(u))return'틱톡';
+ if(/instagram\.com/i.test(u))return'인스타그램';
+ if(/google\.[a-z.]+\/maps|maps\.app\.goo\.gl/i.test(u))return'구글맵';
+ return'웹';}
+function ibList(){if(!Array.isArray(foodMap.inbox))foodMap.inbox=[];return foodMap.inbox;}
+function ibAdd(){
+ const u=document.getElementById('ibUrl'),n=document.getElementById('ibNote');
+ const url=(u&&u.value||'').trim();
+ if(!url){alert('링크를 붙여넣어 주세요.');return;}
+ ibList().unshift({id:'ib'+Date.now()+Math.floor(Math.random()*99),url:url,platform:ibDetectPlatform(url),note:(n&&n.value||'').trim(),addedAt:TODAY,guess:null});
+ if(u)u.value='';if(n)n.value='';
+ save('foodmap_v1',foodMap);renderFoodMap();
+}
+function ibDelete(id){const a=ibList(),i=a.findIndex(x=>x.id===id);if(i<0)return;
+ a.splice(i,1);save('foodmap_v1',foodMap);renderFoodMap();}
+async function ibGuess(id){
+ const it=ibList().find(x=>x.id===id);if(!it)return;
+ if(!ai.key){alert('장소 추정에는 Gemini 키가 필요합니다.\n설정(⚙)에서 키를 저장한 뒤 다시 시도해 주세요. 키 없이도 이름을 직접 입력해 확정할 수 있습니다.');return;}
+ it.guessing=true;renderFoodMap();
+ try{
+  const q='아래는 사용자가 여행 인박스에 저장한 링크와 메모다. 실제 방문할 만한 장소 후보 하나를 추정해라.\n'+
+   '플랫폼: '+it.platform+'\n링크: '+it.url+'\n메모: '+(it.note||'(메모 없음)')+'\n'+
+   '메모에 적힌 정보가 가장 확실한 단서이고, 앱은 이 링크의 실제 게시물 내용을 읽어오지 못한다. '+
+   '근거가 부족하면 이름을 비워 두고 신뢰도를 낮게 잡아라. 설명 없이 JSON 한 줄만 출력: '+
+   '{"name":"장소 후보명(모르면 빈 문자열)","city":"도시(모르면 빈 문자열)","country":"국가(모르면 빈 문자열)","confidence":"낮음|보통|높음"}';
+  const t=await callGemini([{text:q}]);
+  const clean=String(t).replace(/```json|```/g,'').trim();
+  const j=JSON.parse(clean);
+  it.guess={name:String(j.name||'').slice(0,60),city:String(j.city||'').slice(0,40),country:String(j.country||'').slice(0,40),confidence:String(j.confidence||'낮음')};
+ }catch(e){it.guess={name:'',city:'',country:'',confidence:'낮음',err:(e&&e.message)||'분석 실패'};}
+ it.guessing=false;save('foodmap_v1',foodMap);renderFoodMap();
+}
+function ibConfirm(id){
+ const it=ibList().find(x=>x.id===id);if(!it)return;
+ const el=document.getElementById('ibName_'+id);
+ const name=(el?el.value:((it.guess&&it.guess.name)||'')).trim();
+ if(!name){alert('장소 이름을 입력하거나 먼저 AI로 추정해 주세요.');return;}
+ const note=[it.note,('원본: '+it.url)].filter(Boolean).join(' / ');
+ foodMap.places.unshift({id:'fm'+Date.now()+Math.floor(Math.random()*99),name:name,cat:fmInfer(name+' '+(it.note||'')),region:'기타 지역',note:note,address:'',url:it.url,lat:null,lng:null,fav:false,visited:false,sourceUrl:it.url,sourcePlatform:it.platform,sourceNote:it.note||''});
+ ibList().splice(ibList().indexOf(it),1);
+ save('foodmap_v1',foodMap);renderFoodMap();
+ alert('장소로 추가했습니다. 좌표는 아래 "선택 기능 · Places / YouTube API"에서 보강할 수 있습니다.');
+}
+function ibHTML(){
+ const items=ibList();
+ const rows=items.map(function(it){
+  const g=it.guess;
+  const guessHTML=it.guessing?'<div class="xsmall">AI로 추정하는 중…</div>'
+   :g?('<div class="xsmall">AI 추정: '+esc(g.name||'추정 실패')+(g.city||g.country?' · '+esc([g.city,g.country].filter(Boolean).join(', ')):'')+' · 신뢰도 '+esc(g.confidence||'낮음')+(g.err?' · '+esc(g.err):'')+'</div>')
+   :'';
+  return '<div class="jp-spot-row"><span class="tag">'+esc(it.platform)+'</span>'+
+   '<i>'+esc(it.url)+'</i>'+(it.note?'<em>'+esc(it.note)+'</em>':'')+
+   guessHTML+
+   '<input class="xinput wide" id="ibName_'+it.id+'" value="'+esc((g&&g.name)||'')+'" placeholder="장소 이름 (직접 입력 또는 AI 추정 결과 수정)" style="margin-top:6px">'+
+   '<div class="xactions" style="margin-top:6px"><button class="xaction sub" onclick="ibGuess(\''+it.id+'\')">✨ AI로 장소 추정</button>'+
+   '<button class="xaction" onclick="ibConfirm(\''+it.id+'\')">이 이름으로 확정</button>'+
+   '<button class="xaction sub" onclick="ibDelete(\''+it.id+'\')">삭제</button></div></div>';
+ }).join('');
+ const sum=items.length?items.length+'개 대기':'비어 있음';
+ return fmPanel('inbox','INBOX','여행 인박스 · 링크로 담기',sum,
+  '<div class="xsmall">인스타그램·틱톡·유튜브·블로그 등에서 본 장소를 링크로 붙여넣으세요. 저장한 이유나 기억나는 정보를 메모에 적으면 AI 추정 정확도가 올라갑니다. 게시물 내용을 앱이 직접 읽어오지는 못하므로 메모가 곧 원본 정보입니다.</div>'+
+  '<div class="fm-grid" style="margin-top:8px"><input class="xinput wide" id="ibUrl" placeholder="인스타그램·틱톡·유튜브·구글맵 링크"><textarea class="xta wide" id="ibNote" placeholder="왜 저장했는지 · 가게 이름·메뉴 등 기억나는 정보"></textarea></div>'+
+  '<div class="xactions"><button class="xaction" onclick="ibAdd()">＋ 인박스에 담기</button></div>'+
+  (rows||'<div class="empty" style="margin-top:8px">아직 담은 링크가 없습니다.</div>'));
+}
 function fmGuideHTML(){
  if(!fmGuideOpen())return '<div class="xactions" style="margin:0 0 10px"><button class="xaction sub" onclick="fmGuideToggle(true)">시작 안내 다시 보기</button></div>';
  const steps=GUIDE_STEPS.map(function(x,i){
@@ -2746,7 +2814,7 @@ renderFoodMap=function(){const root=document.getElementById('fmRoot');if(!root)r
  '<div class="fm-toolbar"><input class="xinput" id="fmSearch" value="'+esc(foodMap.q||'')+'" placeholder="가게명·지역·음식·메모 검색" oninput="fmSearch(this.value)"><button class="btn" onclick="fmToggleAdd()">＋ 추가</button></div><div class="fm-cats">'+FM_CATS.map(x=>'<button class="'+((foodMap.filter||'전체')===x?'on':'')+'" onclick="fmSetFilter(\''+x+'\')">'+x+'</button>').join('')+'</div>'+
  '<div class="fm-filter-grid"><select class="xselect" onchange="fmSetRegion(this.value)">'+fm2Opts(FM_REGIONS,foodMap.region)+'</select><select class="xselect" onchange="fmSetKind(this.value)">'+fm2Opts(FM_KINDS,foodMap.kind)+'</select><select class="xselect" onchange="fmSetStatus(this.value)">'+fm2Opts(FM_STATUS,foodMap.status)+'</select><select class="xselect" onchange="fmSetSort(this.value)">'+fm2Opts(FM_SORTS,foodMap.sort)+'</select></div>'+
  '<div id="fmAddBox" style="display:none" class="xcard"><h3><span class="tag">NEW</span>장소 직접 추가</h3><div class="fm-grid"><input class="xinput wide" id="fmName" placeholder="장소 이름"><select class="xselect" id="fmCat">'+opts+'</select><select class="xselect" id="fmRegion">'+fm2Opts(FM_REGIONS.slice(1),'기타 지역')+'</select><input class="xinput wide" id="fmUrl" placeholder="구글맵 공유 URL"><input class="xinput" id="fmLat" type="number" step="any" placeholder="위도 (선택)"><input class="xinput" id="fmLng" type="number" step="any" placeholder="경도 (선택)"><textarea class="xta wide" id="fmNote" placeholder="먹을 메뉴·메모"></textarea></div><div class="xactions"><button class="xaction" onclick="fmAdd()">저장</button></div></div>'+
- fmGuideHTML()+asHTML()+csHTML()+plHTML()+phHTML()+bgHTML()+fxHTML()+affHTML()+'<div id="fmOverview"></div><div class="fm-map" id="fmMap"></div><div class="fm-spot-tools" id="fmSpotTools"></div><div id="fmList"></div>'+
+ fmGuideHTML()+ibHTML()+asHTML()+csHTML()+plHTML()+phHTML()+bgHTML()+fxHTML()+affHTML()+'<div id="fmOverview"></div><div class="fm-map" id="fmMap"></div><div class="fm-spot-tools" id="fmSpotTools"></div><div id="fmList"></div>'+
  '<details class="xcard" style="margin-top:12px"><summary style="font-size:13px;font-weight:800;cursor:pointer">선택 기능 · Places / YouTube API</summary><div class="xsmall" style="margin-top:10px">목록·거리·검색 링크는 API 키 없이 작동합니다. 키는 이 브라우저에만 저장되며 판매용 스팟팩에는 포함되지 않습니다.</div><input class="xinput" id="fmApiKey" type="password" value="'+esc(foodMap.apiKey||'')+'" placeholder="Google Maps Platform API key" style="margin-top:10px"><input class="xinput" id="fmYoutubeKey" type="password" value="'+esc(foodMap.youtubeKey||'')+'" placeholder="YouTube Data API key (선택)" style="margin-top:8px"><div class="xactions"><button class="xaction sub" onclick="fmSaveApi()">키 저장</button><button class="xaction" onclick="fmEnrichSelected()">선택 장소 보강</button><button class="xaction sub" onclick="fmYoutubeActual()">실제 영상 검색</button></div><div id="fmApiOut"></div>'+
   '<div class="xsmall" style="margin-top:14px"><b style="color:var(--text)">좌표 일괄 채우기</b><br>구글 저장목록 CSV에는 위경도가 없습니다. 좌표가 빈 장소를 한 번에 조회해 거리·정렬·지도를 쓸 수 있게 만듭니다. 실패한 곳은 목록으로 알려 줍니다.</div>'+
   '<div class="xactions"><button class="xaction" onclick="fmEnrichAll()">좌표 일괄 채우기 (남은 '+fmNoCoordCount()+'개)</button><button class="xaction" onclick="fmFillHours()">영업시간 채우기 (남은 '+fmNoHoursCount()+'개)</button><button class="xaction sub" onclick="fmBulkCancel()">중지</button></div><div id="fmBulkOut">'+fmBulkLast+'</div></details>';

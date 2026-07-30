@@ -88,6 +88,8 @@ for (const must of [
   'function phRead(buf)', 'function phNearest(', 'function phAnalyze(kind)',
   "o['제목']", 'function fmAddVideo(', 'function fmDeleteVideo(',
   'function renderSettings()', 'function showLanding()', 'function landingOpen(',
+  'function ibDetectPlatform(u)', 'function ibAdd()', 'async function ibGuess(id)',
+  'function ibConfirm(id)', 'function ibHTML()',
 ]) {
   if (!html.includes(must)) {
     console.error(`FAIL  판매용에 있어야 하는 기능 누락: ${must}`);

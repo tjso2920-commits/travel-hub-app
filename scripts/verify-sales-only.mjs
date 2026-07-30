@@ -38,7 +38,7 @@ const REQUIRED = [
   'function csBuild()', 'function csOrder(', 'function plBuild()',
   'function bgAdd()', 'function asContext()', 'function asAsk()',
   'const SJ_BANK=', 'function fmPanel(', 'function affUrl(k)', 'function fmGuideHTML()', 'async function fxFetch(quiet)', 'function phRead(buf)',
-  "o['제목']"
+  "o['제목']", 'function ibDetectPlatform(u)', 'function ibAdd()', 'function ibConfirm(id)',
 ];
 REQUIRED.forEach((token) => check(html.includes(token), `필수 기능 누락: ${token}`));
 
