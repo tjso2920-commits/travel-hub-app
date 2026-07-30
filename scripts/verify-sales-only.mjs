@@ -31,7 +31,7 @@ check(!/AIza[0-9A-Za-z_-]{25,}/.test(html), '하드코딩된 Google API 키 패�
 
 const REQUIRED = [
   'const SALE_MODE=true;',
-  'id="tab-train"', 'id="tab-log"', 'id="tab-cal"', 'id="tab-jp"', 'id="tab-map"', 'id="tab-guide"',
+  'id="tab-jp"', 'id="tab-map"', 'id="ovSet"',
   'const JP_LIMIT=90', 'function jpRuby(', 'function jpGrammarBookHTML(',
   'function fm2Clusters()', 'function fm2RenderOverview()', 'function fmEnrichAll()',
   'function fmFillHours()', 'function fmOpenAt(', 'function fmClosedDays(p)',

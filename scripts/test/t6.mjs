@@ -17,7 +17,7 @@ t('저장소 접두어 분리', w.eval('PFX')==='cs1_');
 const tabs=[...w.document.querySelectorAll('.tab')].map(x=>x.id);
 console.log('   탭:',tabs.join(','));
 t('운동2 탭 없음', !tabs.includes('tab-train2'));
-t('필수 탭 유지', ['tab-train','tab-log','tab-cal','tab-jp','tab-map','tab-guide'].every(x=>tabs.includes(x)));
+t('필수 탭 유지', ['tab-jp','tab-map'].every(x=>tabs.includes(x)));
 t('내비에 운동2 버튼 없음', !w.document.body.innerHTML.includes('>운동2<'));
 
 // 오늘 만든 기능이 전부 넘어왔는지

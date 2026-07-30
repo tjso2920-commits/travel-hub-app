@@ -38,19 +38,6 @@ function extractRoot(source) {
   return match ? match[0] : '';
 }
 
-function extractV(source) {
-  const start = source.indexOf('const V=');
-  if (start < 0) return '';
-  const end = source.indexOf('\n};', start);
-  return end < 0 ? '' : source.slice(start, end + 3);
-}
-
-function extractPersonalDays(source) {
-  const start = source.indexOf('function personalDays()');
-  const end = source.indexOf('function genericDays()', start);
-  return start < 0 || end < 0 ? '' : source.slice(start, end);
-}
-
 function storageKeys(source) {
   return new Set(
     [...source.matchAll(/\b(?:load|save)\(\s*[`"']([^`"']+)[`"']/g)].map((match) => match[1])
@@ -91,9 +78,7 @@ function countTopRows(source, declaration, nextDeclaration) {
 
 function verifyProtected(source, label, spec) {
   const blocks = {
-    root: extractRoot(source),
-    V: extractV(source),
-    personalDays: extractPersonalDays(source)
+    root: extractRoot(source)
   };
   for (const [name, expected] of Object.entries(spec.protected)) {
     check(Boolean(blocks[name]), `${label}: 보호 블록 ${name} 추출`);
@@ -125,20 +110,13 @@ verifyStorage(sales, '판매용', manifest.sales.required_storage_keys);
 requireTokens(personal, '개인용', [
   'const SALE_MODE=false;',
   "const PFX=SALE_MODE?'cs1_':'cp1_';",
-  'id="tab-train"',
-  'id="tab-train2"',
   'id="tab-jp"',
   'id="tab-map"',
-  'id="tab-guide"',
-  '운동가이드',
+  'id="ovSet"',
+  "const TRIP_DATE='2026-10-25';",
   'function showLanding()',
   'function showTab(t)',
-  'function autoVid(name)',
-  'function editVid(',
-  'function addVid(',
-  'async function aiVidFor(',
-  'function addVG(',
-  'function delVG(',
+  'function renderSettings()',
   'function fmAddVideo(',
   'function fmDeleteVideo(',
   'const JP_LIMIT=90',
@@ -149,7 +127,6 @@ requireTokens(personal, '개인용', [
   'function jpRuby(',
   'function jpKoSound(',
   'const JP_CHAINS=[',
-  'workout2_snap_v1',
   'navigator.geolocation.watchPosition',
   'enableHighAccuracy:true,maximumAge:0,timeout:15000'
 ]);
@@ -157,20 +134,22 @@ requireTokens(personal, '개인용', [
 requireTokens(sales, '판매용', [
   'const SALE_MODE=true;',
   "const PFX=SALE_MODE?'cs1_':'cp1_';",
-  'id="tab-train"',
   'id="tab-jp"',
   'id="tab-map"',
-  'id="tab-guide"',
-  '운동가이드',
-  'function autoVid(name)',
-  'async function aiVidFor(',
+  'id="ovSet"',
   'function fmAddVideo(',
   'function fmDeleteVideo(',
   'const JP_LIMIT=90'
 ]);
 
-check(!sales.includes('id="tab-train2"'), '판매용: 운동2 탭 제외');
-check(!sales.includes('workout2_snap_v1'), '판매용: 운동2 스냅 키 제외');
+// 2026-07-30 운동/운동2 탭을 개인용 마스터에서 완전히 제거했다 — 회귀 방지 가드.
+for (const workoutToken of [
+  'id="tab-train"', 'id="tab-train2"', 'id="tab-guide"', '운동가이드', 'workout2_snap_v1',
+  'function autoVid(name)', 'function personalDays()', 'const V={'
+]) {
+  check(!personal.includes(workoutToken), `개인용: 운동 탭 잔재 없음 ${workoutToken}`);
+  check(!sales.includes(workoutToken), `판매용: 운동 탭 잔재 없음 ${workoutToken}`);
+}
 // 2026-07-29 사양 변경: 판매용이 본체가 되면서 실시간 GPS·문법 교재·후리가나를 유지한다.
 requireTokens(sales, '판매용', [
   'navigator.geolocation.watchPosition',

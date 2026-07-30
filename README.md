@@ -53,15 +53,18 @@ npm run check        # build + verify + test 한 번에
 
 ## 새 작업자에게
 
-`docs/HANDOFF.md` 를 먼저 읽는다. 30개 절에 걸쳐 무엇을 왜 그렇게 만들었는지,
+`docs/HANDOFF.md` 를 먼저 읽는다. 35개 절에 걸쳐 무엇을 왜 그렇게 만들었는지,
 어떤 결함을 어떻게 잡았는지, 무엇을 건드리면 안 되는지가 전부 적혀 있다.
+
+**2026-07-30 부로 운동/운동2 탭과 관련 코드(`V`, `personalDays()`, 달력, 칼로리·단백질
+계산, 체중 프로필)는 이 앱에서 완전히 삭제됐다.** (HANDOFF 35절 참고) 이 앱은 이제
+여행(일본어 학습 + 후쿠오카 지도) 전용이다.
 
 특히 다음은 건드리지 않는다.
 
-- 운동 영상 상수 `V` 와 관련 함수들
 - 최초 `:root` 블록
-- 기존 localStorage 키 이름과 구조
-- `personalDays()`, 탭 전환, D-day, 달력, 칼로리·단백질 계산
+- 기존 localStorage 키 이름과 구조 (`ai`, `as_chat_v1`, `foodmap_v1`, `jp_chat_v1`, `jp_packs_v1`, `jp_state_v1`)
+- 탭 전환, 여행 D-day(`TRIP_DATE`)
 
 ## 다른 나라·다른 언어로 넓힐 때
 

@@ -1452,3 +1452,65 @@ AI가 장소를 틀리게 인식할 수 있으므로, 낮은 신뢰도의 결과
 - 구현 전에 이 우선순위를 사용자와 다시 확인한다.
 - Plotline UI를 디자인 레퍼런스로 그대로 재현하지 않는다. 정보 구조·카피·비주얼은 이 제품만의 독립 시안으로 만든다.
 - 운동 기능은 여행 앱의 신규 작업 범위에서 제외한다.
+
+---
+
+## 35. 2026-07-30 운동/운동2 탭 완전 제거 — 여행 전용 앱 전환
+
+### 배경
+
+34절 결정에 따라 운동 관련 기능을 여행 앱에서 완전히 분리했다. 별도 운동 앱으로 옮기는 작업이 아니라 **이 저장소에서 삭제**하는 작업이다. 개인용 마스터(`private/personal.html`)에서 운동·운동2·기록(식단)·달력·운동가이드 탭과 그 아래 기능을 전부 제거했다.
+
+### 제거한 것
+
+- 탭 4개: `tab-train`(운동), `tab-train2`(운동2), `tab-log`(기록·식단), `tab-cal`(달력), `tab-guide`(운동가이드).
+- 모달 3개: `#ov`(운동 추가), `#ov2`(운동2 추가), `#ovF`(음식 직접 입력). 달력 상세 모달 `#ovD`도 달력 탭과 함께 제거했다.
+- JS: `personalDays`, `genericDays`, `V`(영상 URL 맵), `WORKOUT2_V`, `workout2VG`, `workout2Days`, `PF_PERSONAL`, `PF_GENERIC`, 운동/운동2 렌더링·편집·영상 함수 전체(`renderDays`, `autoVid`, `editVid`, `addVid`, `addVG`, `delVG`, `renderWorkout2` 계열 전부), 식단 로그 함수 전체(`renderLog`, `aiText`, `aiPhoto`, `addFood` 등), 달력 렌더(`renderCal`, `openDaySheet`, `setAtt`, `setW`, `setB`), 목표 칼로리 계산(`formulaGoal`, `aiGoal`, `saveGoal`, `renderGuidePrefs`), 게이트/체크인(`renderGate`, `checkIn`, `snapshotToday`), 온보딩(`renderOnboard`, `saveOnboard`).
+- localStorage 키: `prof`, `data`, `sets`, `wsnap`, `att`, `food`, `wt`, `burn`, `myfoods`, `fooduse`, `foodpin`, `foodhide`, `hideg`, `first`, `workout2_data_v1`, `workout2_sets_v1`, `workout2_snap_v1`. 남은 키는 `ai`, `as_chat_v1`, `foodmap_v1`, `jp_chat_v1`, `jp_packs_v1`, `jp_state_v1` 여섯 개뿐이다.
+
+### 유지·대체한 것
+
+- **여행 D-day는 그대로 유지**했다. 기존 `dday()`는 체중 목표 프로필(`prof.target`)에 걸려 있었는데, 이제 `const TRIP_DATE='2026-10-25'` 상수에서 직접 계산한다. 헤더의 D-day 배지는 계속 뜨고, `asContext()`의 `[여행 D-day]` 줄도 조건 없이 항상 실린다.
+- **Gemini API 키 설정 UI**는 `#tab-guide` 안에 있었는데(`#aiSetup`), 탭째 삭제하면 키를 입력할 곳이 사라진다. 그래서 헤더에 새 **⚙ 설정** 버튼과 `#ovSet` 모달을 만들어 그 안에 키 입력 카드와 전체 백업(내보내기·가져오기·초기화)을 옮겼다. `renderGuidePrefs()`(목표 칼로리 폼까지 같이 그리던 함수)는 지우고, AI 키만 채우는 `renderSettings()`로 교체했다.
+- **게이트/체크인 화면 삭제** — 앱을 열면 매일 출석 체크(`💪 오늘 운동한다` 등)를 먼저 눌러야 본화면이 열리던 구조를 없앴다. 이제 `boot()`가 바로 `startApp()`을 호출해 앱으로 들어간다. `showLanding()`(⌂ 홈 버튼으로 여는 요약 화면)은 운동웹 카드만 빼고 일본어·후쿠오카 두 카드만 남겼다.
+- 내비게이션: 7열(운동·운동2·기록·달력·일본어·후쿠오카·운동가이드) → 2열(일본어·후쿠오카).
+- `exportData`/`importData`/`wipeAll`은 운동·식단 필드를 뺀 여행 전용 백업(`jpState`, `jpChat`, `jpPacks`, `asChat`, `foodMap`)만 다루도록 다시 썼다.
+- 문서 제목·홈 화면 아이콘 이름을 "커팅 루틴 · 트래커"/"커팅루틴"에서 "여행 통합 허브"/"여행허브"로 바꿨다.
+
+### 제거 과정에서 실제로 잡은 버그 2건
+
+기계적으로 안 쓰는 코드를 지우는 작업이 아니라, 삭제 후 `grep`으로 남은 참조를 전수 확인하는 과정에서 실제로 죽어 있었을 참조 두 개를 찾았다. 둘 다 방치했으면 실기기에서 바로 오류가 났을 것들이다.
+
+1. `asContext()`(여행 어시스턴트가 AI에 보내는 상황 요약) 안에 `if(prof&&typeof prof==='object')lines.push('[여행 D-day] '+ddayTxt());`가 남아 있었다. `prof`를 지웠으니 어시스턴트에게 아무 질문이나 하면 즉시 `ReferenceError`로 죽는 구조였다. 조건을 없애고 항상 D-day를 넣도록 고쳤다.
+2. 후쿠오카 탭의 사진 분석 기능(`phAnalyze('food')`)이 "식단에 추가" 버튼을 눌렀을 때 실행하는 `phSaveFood()`가 삭제된 `todayFood()`/`food`/`prof`를 그대로 참조하고 있었다. 사진으로 음식을 분석해 보여주는 부분(이름·추정 칼로리 표시)은 그대로 두고, 존재하지 않는 식단에 저장하려던 `phSaveFood()` 함수와 그 버튼만 제거했다.
+
+두 버그 모두 정적 검색만으로는 안 보였다 — 첫 번째는 `if(prof&&...)`처럼 안전해 보이는 가드 뒤에 숨어 있었고, 두 번째는 파일 전체 삭제 범위 바깥(후쿠오카 모듈)에서 삭제 대상 함수를 호출하고 있었다. **삭제 후 반드시 jsdom으로 실제 부팅·주요 함수 호출까지 해 봐야 이런 유형이 잡힌다.**
+
+### 빌드 파이프라인도 함께 다시 썼다
+
+개인용 마스터가 크게 바뀌었으므로 생성기·검증기·테스트도 전부 갱신하지 않으면 다음 빌드가 조용히 깨진다.
+
+- `scripts/build-sales.mjs`: 운동2 제거용 변환 20여 건을 전부 삭제했다(잘라낼 대상이 이제 소스에 없다). 남은 변환은 `SALE_MODE` 플립과 개인 경력이 드러나는 일본어 문장·화자 이름·AI 프롬프트 5건뿐이다.
+- `scripts/verify.mjs`: 보호 블록에서 `V`(영상 URL 맵)·`personalDays`를 뺐다(둘 다 삭제 대상이었으므로). `:root` CSS는 그대로라 해시도 그대로다. 필수 토큰 목록에서 운동 관련 항목을 빼고 `id="ovSet"`·`TRIP_DATE`·`renderSettings()`를 추가했다. 대신 "운동 탭 잔재 없음" 회귀 가드를 새로 넣어 앞으로 운동 관련 문자열이 실수로 다시 들어오면 바로 잡히게 했다.
+- `scripts/verify-sales-only.mjs`(CI 전용): 필수 탭 목록에서 `tab-train`/`tab-log`/`tab-cal`/`tab-guide`를 빼고 `tab-jp`/`tab-map`/`ovSet`만 남겼다. 이걸 안 고쳤으면 다음 푸시에서 GitHub Pages 배포가 막혔을 것이다.
+- `scripts/BASELINE_MANIFEST.json`: 보호 블록에서 `V`/`personalDays` 제거, `required_storage_keys`를 여섯 개(`ai`,`as_chat_v1`,`foodmap_v1`,`jp_chat_v1`,`jp_packs_v1`,`jp_state_v1`)로 축소, 두 파일의 `sha256_at_handoff`를 이번 결과물 기준으로 갱신.
+- `scripts/test/t3.mjs`, `t7.mjs`: `prof.target`/`!!prof` 참조를 `TRIP_DATE`/무조건 참으로 교체.
+- `scripts/test/t6.mjs`: "필수 탭 유지" 검사를 6탭 목록에서 `['tab-jp','tab-map']`로 축소.
+- `scripts/test/t17.mjs`: 삭제된 `phSaveFood`/`todayFood`를 검사하던 부분을 "식단 저장 함수가 실제로 없다"는 회귀 가드로 바꾸고, `phAnalyze('food')`가 여전히 분석 결과를 보여주는지만 확인하도록 남겼다.
+- `src/sw.js`: `CACHE` 버전을 `travel-hub-v1` → `travel-hub-v2`로 올렸다(README 규칙 — 안 올리면 기존 사용자가 캐시된 옛 UI를 계속 봄).
+
+### CSS는 일부러 정리하지 않았다
+
+`.day`, `.seg`, `.w2-*`, `.rule`, `.kv`, `.ptable`, `.formula`, `.tl`/`.slot`, `.aistat`(재사용), `.gate`류(재사용) 등 운동·식단 전용 CSS 규칙은 이번에 지우지 않았다. HTML·JS가 사라졌으니 죽은 CSS일 뿐 동작에는 영향이 없고, 지금은 기능 제거의 정확성이 우선이었다. **CSS 전체 정리는 별도 후속 작업으로 남겨 둔다** — 특히 나중에 34절 SNS 인박스·[담기/일정짜기/지금여행] 3탭 UX 개편을 시작할 때 화면을 다시 그리게 되므로 그때 함께 정리하는 편이 효율적이다.
+
+### 검증
+
+- `npm run check` 전체 통과(개인용 15종·판매용 13종 — `phSaveFood` 삭제로 검사 항목 수만 조정, 신규 실패 0).
+- jsdom으로 실제 부팅 확인: 게이트 없이 바로 앱 진입, D-day 정상 표시(`D-87`), 내비 2개(`일본어`/`후쿠오카`)만 존재, `renderJapanese()`/`renderFoodMap()`/`showLanding()`/`landingOpen()`/설정 모달 열기·닫기/`asContext()` 전부 런타임 오류 0건으로 확인.
+- `exportData()`는 jsdom에 `URL.createObjectURL`이 없어 테스트 환경에서만 실패한다(기존에도 같은 제약이었음, 실브라우저 문제 아님).
+
+### 다음 작업자에게
+
+- 운동/운동2는 **삭제**됐다. 되살리려면 git 이력에서 이번 커밋 이전 버전을 참고해야 한다(운동 앱을 다시 만들 계획이면 완전히 새로 설계하는 편을 권장 — 34절 방향과도 맞다).
+- 34절에서 합의된 다음 단계(SNS 링크 인박스 → 담기/일정짜기/지금여행 3탭 개편)를 시작하기 전에 CSS 정리를 먼저 하거나 같이 하는 걸 고려할 것.
+- 이번 변경은 **개인용·판매용 모두**에 적용됐다(23절 이후 "개인용 마스터 → `npm run build`로 판매용 생성" 체제 그대로 따름).

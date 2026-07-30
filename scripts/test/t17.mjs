@@ -74,15 +74,12 @@ t('장소 연결', sp[0].placeId===FM().places[0].id);
 t('방문 자동 처리', FM().places[0].visited===true);
 t('잔액 반영', w.eval('bgLeft()')===75200);
 
-// 음식 분석 → 식단
+// 음식 분석 (정보 표시용 — 식단 기록 기능은 여행 전용 앱 전환 때 함께 제거됨)
 w.fetch=async()=>({ok:true,json:async()=>({candidates:[{content:{parts:[{text:'{"name":"모츠나베","kcal":720,"protein":38,"note":"1인분 기준"}'}]}}]})});
 await w.eval("phAnalyze('food')");
 await new Promise(r=>setTimeout(r,300));
 t('음식 분석 결과', w.eval("phState.ai.data.name")==='모츠나베');
-const before=w.eval('todayFood().length');
-w.eval('phSaveFood()');
-t('식단에 추가', w.eval('todayFood().length')===before+1);
-t('칼로리 반영', w.eval('todayFood()[todayFood().length-1].k')===720);
+t('식단 저장 함수 제거됨', typeof w.phSaveFood==='undefined');
 
 // 키 없으면 안내만
 alerts=[];

@@ -25,7 +25,7 @@ const ctx=w.eval('asContext()');
 console.log('--- 컨텍스트 미리보기 ---');
 console.log(ctx.split('\n').slice(0,9).join('\n'));
 t('컨텍스트에 시각', ctx.includes('[현재]'));
-t('컨텍스트에 D-day (프로필 있을 때만)', w.eval('!!prof')? ctx.includes('[여행 D-day]') : !ctx.includes('[여행 D-day]'));
+t('컨텍스트에 D-day', ctx.includes('[여행 D-day]'));
 t('컨텍스트에 기준점', ctx.includes('[거리 기준점]'));
 t('컨텍스트에 예산', ctx.includes('12,000엔'));
 t('컨텍스트에 장소 목록', ctx.includes('[가까운 저장 장소 목록]'));

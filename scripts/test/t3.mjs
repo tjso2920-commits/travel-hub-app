@@ -13,7 +13,7 @@ w.alert=m=>alerts.push(m);
 t('런타임 오류 0',errs.length===0);
 
 // D-day 기본값
-t('D-day 목표일 기본 2026-10-25', w.eval("(prof.target||'2026-10-25')")==='2026-10-25');
+t('D-day 목표일 기본 2026-10-25', w.eval("TRIP_DATE")==='2026-10-25');
 t('D-day 계산 동작', typeof w.eval('ddayTxt()')==='string' && w.eval('ddayTxt()').startsWith('D-'));
 console.log('   현재 표시:', w.eval('ddayTxt()'));
 
