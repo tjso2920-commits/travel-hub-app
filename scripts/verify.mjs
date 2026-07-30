@@ -163,6 +163,13 @@ check(personal.includes('.xstats.bgstats{'), '개인용: 예산 통계 배치 �
 check(personal.includes('.xstat.over b{'), '개인용: 예산 초과 표시 규칙 존재');
 check(personal.includes('word-break:keep-all'), '개인용: 한국어 어절 줄바꿈 규칙 존재');
 
+// 2026-07-30 구매자 첫 실행 점검 — 판매용 화면에 판매자 용어·삭제된 기능이 남으면 안 된다.
+for (const jargon of ['운동웹', '판매용 스팟팩에 저장', '판매용 스팟팩에는 포함']) {
+  check(!sales.includes(jargon), `판매용: 구매자에게 보일 판매자 용어 없음 ${jargon}`);
+}
+check(sales.includes("SALE_MODE?'':'<button class=\"xaction sub\" onclick=\"fmExportSale()\">"), '판매용: 스팟팩 내보내기는 판매자 전용');
+check(!sales.includes('FUKUOKA · SAVED PLACES'), '판매용: 히어로에 도시 하드코딩 없음');
+
 // 2026-07-29 사양 변경: 판매용이 본체가 되면서 실시간 GPS·문법 교재·후리가나를 유지한다.
 requireTokens(sales, '판매용', [
   'navigator.geolocation.watchPosition',
