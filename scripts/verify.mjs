@@ -154,6 +154,15 @@ for (const workoutToken of [
   check(!personal.includes(workoutToken), `개인용: 운동 탭 잔재 없음 ${workoutToken}`);
   check(!sales.includes(workoutToken), `판매용: 운동 탭 잔재 없음 ${workoutToken}`);
 }
+// 2026-07-30 CSS 가 없던 오타 클래스(w-stats/w-stat)를 .xstats/.xstat 로 고쳤다 — 되돌아오지 않게 가드.
+for (const typo of ['class="w-stats"', 'class="w-stat"']) {
+  check(!personal.includes(typo), `개인용: 스타일 없는 오타 클래스 없음 ${typo}`);
+  check(!sales.includes(typo), `판매용: 스타일 없는 오타 클래스 없음 ${typo}`);
+}
+check(personal.includes('.xstats.bgstats{'), '개인용: 예산 통계 배치 규칙 존재');
+check(personal.includes('.xstat.over b{'), '개인용: 예산 초과 표시 규칙 존재');
+check(personal.includes('word-break:keep-all'), '개인용: 한국어 어절 줄바꿈 규칙 존재');
+
 // 2026-07-29 사양 변경: 판매용이 본체가 되면서 실시간 GPS·문법 교재·후리가나를 유지한다.
 requireTokens(sales, '판매용', [
   'navigator.geolocation.watchPosition',

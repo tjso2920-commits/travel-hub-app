@@ -208,6 +208,9 @@
   .xstat{background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:10px 6px;text-align:center}
   .xstat b{display:block;font-family:var(--mono);font-size:17px;color:var(--wasabi)}
   .xstat span{font-size:10.5px;color:var(--muted)}
+  /* 예산 통계는 3~4칸이라 3열 고정이 어색하다. 폭에 맞춰 자동 배치한다. */
+  .xstats.bgstats{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}
+  .xstat.over b{color:#EB5757}
   .xmode{display:flex;gap:7px;overflow-x:auto;padding:1px 0 11px;scrollbar-width:none}
   .xmode::-webkit-scrollbar{display:none}
   .xmode button{flex:0 0 auto;border:1px solid var(--line2);background:var(--surface);color:var(--muted);
@@ -266,6 +269,7 @@
   .jp-book-note{padding:11px 12px;font-size:11px;line-height:1.55;color:var(--muted)}
   .xactions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
   .xaction{flex:1;min-width:105px;border:none;border-radius:11px;padding:12px 10px;background:var(--wasabi);
+    word-break:keep-all;
     color:#1a1710;font-size:13px;font-weight:850;cursor:pointer}
   .xaction.sub{background:var(--surface2);color:var(--text);border:1px solid var(--line2)}
   .xaction.ember{background:var(--ember);color:#1a1710}
@@ -2575,11 +2579,11 @@ function bgHTML(){
  return fmPanel('budget','BUDGET','예산 · 지출',sum,
   '<div class="fm-grid"><input class="xinput" id="bgTotal" type="number" inputmode="numeric" value="'+(total||'')+'" placeholder="총예산 (엔)" onchange="bgSetTotal(this.value)">'+
   '<input class="xinput" id="bgDays" type="number" inputmode="numeric" value="'+(d||'')+'" placeholder="남은 일수" onchange="bgSetDays(this.value)"></div>'+
-  (total?'<div class="w-stats" style="margin-top:8px">'+
-    '<div class="w-stat"><b>'+bgYen(total)+'</b><span>총예산</span></div>'+
-    '<div class="w-stat"><b>'+bgYen(spent)+'</b><span>쓴 돈</span></div>'+
-    '<div class="w-stat"'+(over?' style="color:#EB5757"':'')+'><b>'+bgYen(left)+'</b><span>'+(over?'초과':'남은 돈')+(fxHomeTxt(left)?' · '+fxHomeTxt(left):'')+'</span></div>'+
-    (per!==null?'<div class="w-stat"><b>'+bgYen(per)+'</b><span>하루 권장</span></div>':'')+
+  (total?'<div class="xstats bgstats" style="margin-top:8px">'+
+    '<div class="xstat"><b>'+bgYen(total)+'</b><span>총예산</span></div>'+
+    '<div class="xstat"><b>'+bgYen(spent)+'</b><span>쓴 돈</span></div>'+
+    '<div class="xstat'+(over?' over':'')+'"><b>'+bgYen(left)+'</b><span>'+(over?'초과':'남은 돈')+(fxHomeTxt(left)?' · '+fxHomeTxt(left):'')+'</span></div>'+
+    (per!==null?'<div class="xstat"><b>'+bgYen(per)+'</b><span>하루 권장</span></div>':'')+
    '</div>':'<div class="xsmall" style="margin-top:8px">총예산을 넣으면 잔액과 하루 권장 금액이 계산되고, 어시스턴트가 그 숫자를 근거로 답합니다.</div>')+
   '<div class="fm-grid" style="margin-top:10px"><input class="xinput" id="bgAmt" type="number" inputmode="numeric" placeholder="금액 (엔)">'+
   '<input class="xinput" id="bgMemo" placeholder="무엇에 썼는지"></div>'+
