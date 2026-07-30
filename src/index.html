@@ -71,7 +71,7 @@
   .h-goal .cur b{color:var(--wasabi);font-size:15px}
   nav{position:sticky;top:0;z-index:50;background:rgba(22,19,15,.9);backdrop-filter:blur(14px);
     -webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--line);display:grid;
-    grid-template-columns:repeat(2,max-content);justify-content:center;column-gap:16px;padding:0 16px;
+    grid-template-columns:repeat(4,max-content);justify-content:center;column-gap:16px;padding:0 16px;
     overflow-x:auto;scrollbar-width:none}
   nav::-webkit-scrollbar{display:none}
   nav button{text-align:center;padding:15px 0 13px;font-size:13px;font-weight:700;color:var(--muted);
@@ -696,15 +696,25 @@
     <div class="h-top"><button class="homebtn" onclick="showLanding()" aria-label="첫 화면으로">⌂ 홈</button><span class="h-date" id="hDate"></span><span class="h-dday" id="hDday"></span><button class="homebtn" onclick="showOv('ovSet');renderSettings()" aria-label="설정">⚙</button></div>
   </header>
   <nav id="nav">
-    <button data-t="jp" class="on" onclick="showTab('jp');renderJapanese()">일본어</button>
-    <button data-t="map" onclick="showTab('map');renderFoodMap()">후쿠오카</button>
+    <button data-t="collect" class="on" onclick="showTab('collect');renderFoodMap()">담기</button>
+    <button data-t="plan" onclick="showTab('plan');renderFoodMap()">일정</button>
+    <button data-t="now" onclick="showTab('now');renderFoodMap()">지금 여행</button>
+    <button data-t="jp" onclick="showTab('jp');renderJapanese()">일본어</button>
   </nav>
-  <section class="tab" id="tab-jp">
-    <div id="jpRoot"><div class="empty">일본어 학습을 불러오는 중…</div></div>
+  <section class="tab on" id="tab-collect">
+    <div id="fmCollect"><div class="empty">불러오는 중…</div></div>
   </section>
 
-  <section class="tab" id="tab-map">
-    <div id="fmRoot"><div class="empty">맛집지도를 불러오는 중…</div></div>
+  <section class="tab" id="tab-plan">
+    <div id="fmPlan"><div class="empty">불러오는 중…</div></div>
+  </section>
+
+  <section class="tab" id="tab-now">
+    <div id="fmNow"><div class="empty">불러오는 중…</div></div>
+  </section>
+
+  <section class="tab" id="tab-jp">
+    <div id="jpRoot"><div class="empty">일본어 학습을 불러오는 중…</div></div>
   </section>
 
 </div>
@@ -783,22 +793,28 @@ function startApp(){
  document.getElementById('gateWrap').style.display='none';
  document.getElementById('app').style.display='block';
  renderHeader();
+ /* 운동 탭 제거 때 class="tab on" 이 붙어 있던 섹션이 함께 사라져 첫 화면이 비어 있었다.
+    기본 탭(담기)은 마크업에서 이미 활성이므로 내용만 채우면 된다.
+    showTab 을 부르지 않는 이유: 그 안의 window.scrollTo 는 부팅 시점에 의미가 없다. */
+ renderFoodMap();
 }
-let landingReturnTab='jp';
+let landingReturnTab='collect';
 function showLanding(){
- const on=document.querySelector('.tab.on');landingReturnTab=on?on.id.replace('tab-',''):'jp';
+ const on=document.querySelector('.tab.on');landingReturnTab=on?on.id.replace('tab-',''):'collect';
  const g=document.getElementById('gateWrap'),now=new Date();
  const js=load('jp_state_v1',{pointer:0,done:{}}),fm=load('foodmap_v1',{places:[]}),jpToday=Object.values(js.done||{}).filter(x=>x===TODAY).length;
  g.innerHTML=`<div class="gate"><div class="g-date">${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')} · APP HOME</div>
   <div class="g-dday">${ddayTxt()}<span class="u"> · 후쿠오카 여행까지</span></div>
-  <div class="g-goal">일본어공부 · 후쿠오카를 한곳에서 관리합니다.</div>
+  <div class="g-goal">담기 → 일정 짜기 → 지금 여행 순서로 씁니다.</div>
   <div class="landing-grid">
+   <button class="landing-card" onclick="landingOpen('collect')"><b>담기</b><span>저장 장소 ${Array.isArray(fm.places)?fm.places.length:0}개 · 인박스·가져오기</span></button>
+   <button class="landing-card" onclick="landingOpen('plan')"><b>일정 짜기</b><span>일정 배분 · 오늘 동선 · 예산</span></button>
+   <button class="landing-card" onclick="landingOpen('now')"><b>지금 여행</b><span>어시스턴트 · 추천 · 현장 기록</span></button>
    <button class="landing-card" onclick="landingOpen('jp')"><b>일본어공부</b><span>90팩 진도 ${Math.min(90,+js.pointer||0)}/90 · 오늘 ${jpToday}팩 완료</span></button>
-   <button class="landing-card" onclick="landingOpen('map')"><b>후쿠오카</b><span>저장 장소 ${Array.isArray(fm.places)?fm.places.length:0}개 · 거리·코스·영상</span></button>
   </div><div class="g-btns"><button class="g-btn r" onclick="landingOpen(landingReturnTab)">방금 보던 화면으로</button></div></div>`;
  g.style.display='block';document.getElementById('app').style.display='none';
 }
-function landingOpen(t){startApp();showTab(t);if(t==='jp')renderJapanese();if(t==='map')renderFoodMap();}
+function landingOpen(t){startApp();showTab(t);if(t==='jp')renderJapanese();else renderFoodMap();}
 
 function renderHeader(){
  const now=new Date();
@@ -2817,19 +2833,33 @@ function fmDecision(mode){let a=fm2Candidates(),title='',sub='';if(!a.length){al
  if(mode==='region'){const g={};a.forEach(p=>{const k=p.region||'기타 지역';if(!g[k])g[k]={n:0,s:0,a:[]};g[k].n++;g[k].s+=fm2Score(p);g[k].a.push(p);});const k=Object.keys(g).sort((x,y)=>(g[y].s/g[y].n)-(g[x].s/g[x].n))[0];a=(g[k]&&g[k].a||[]).slice(0,4);title=k+' 집중 공략';sub='한 지역에서 우선순위가 높은 장소를 묶었습니다.';}
  foodMap.decision={title:title,sub:sub,ids:a.map(p=>p.id)};save('foodmap_v1',foodMap);renderFoodMap();}
 function fmClearDecision(){foodMap.decision=null;save('foodmap_v1',foodMap);renderFoodMap();}
-renderFoodMap=function(){const root=document.getElementById('fmRoot');if(!root)return;fm2Init();const total=foodMap.places.length,fav=foodMap.places.filter(x=>x.fav).length,visited=foodMap.places.filter(x=>x.visited).length,origin=fmOrigin(),hotel=foodMap.hotel||{};
- const opts=FM_CATS.slice(4).map(x=>'<option value="'+x+'">'+x+'</option>').join('');root.innerHTML='<div class="xhero"><div class="xhero-top"><div><div class="xeyebrow">FUKUOKA · SAVED PLACES</div><div class="xtitle">'+esc(foodMap.listName||'여행계획')+'</div></div><div class="xmeta">'+total+' PLACES<br>후쿠오카 여행지도</div></div><div class="xsmall" style="margin-top:12px">운동웹·90일 일본어와 분리된 여행 모듈입니다. 장소별 일본어는 현장에서 꺼내 쓰는 보조 카드입니다.</div></div>'+
- '<div class="xstats"><div class="xstat"><b>'+total+'</b><span>전체</span></div><div class="xstat"><b>'+fav+'</b><span>즐겨찾기</span></div><div class="xstat"><b>'+visited+'</b><span>방문 완료</span></div></div><div id="fmGpsPanel">'+fmGpsPanelHTML()+'</div>'+
- '<div class="importbox" style="margin-bottom:12px"><div class="xeyebrow">GOOGLE TAKEOUT · 무료</div><div class="xsmall" style="margin:7px 0 10px">Takeout의 저장됨(Saved)에서 ZIP을 풀고 <b style="color:var(--wasabi)">여행 계획.csv</b>를 불러오세요. 같은 파일을 연결해 두면 수정본을 열 때 자동 확인합니다.</div><input type="file" id="fmImp" accept=".csv,text/csv,.json,.geojson,.kml,application/json,application/geo+json,application/vnd.google-earth.kml+xml" style="display:none" onchange="fmImport(this)"><div class="xactions"><button class="xaction" onclick="document.getElementById(\'fmImp\').click()">📥 CSV·백업 불러오기</button><button class="xaction sub" onclick="fmLinkCsv()">🔗 CSV 파일 연결</button><button class="xaction sub" onclick="fmCheckLinkedCsv(false)">↻ 연결 파일 확인</button><button class="xaction sub" onclick="fmExport()">📤 개인 백업</button><button class="xaction sub" onclick="fmExportSale()">🛡 판매용 스팟팩</button></div><div class="xsmall" style="margin-top:8px">'+(foodMap.linkedCsvName?'연결됨: <b style="color:var(--text)">'+esc(foodMap.linkedCsvName)+'</b> · 마지막 반영 '+esc(foodMap.linkedCsvAt||'확인 전'):'연결 없음 · 크롬 계열 지원, 그 외 브라우저는 수동 재가져오기')+'</div></div>'+
- '<div class="xcard"><h3><span class="tag">SMART</span>오늘의 자동 선택</h3><div class="xsmall">현재 위치/호텔, 영업상태, 우선순위, 평점, 방문 여부를 함께 봅니다.</div><div class="fm-quick"><button onclick="fmDecision(\'now\')">⚡ 지금 어디 가지?</button><button onclick="fmDecision(\'crawl\')">🍶 술집 3차 코스</button><button onclick="fmDecision(\'balanced\')">🧭 균형 코스</button><button onclick="fmDecision(\'rain\')">☔ 비 오는 날</button><button onclick="fmDecision(\'region\')">📍 한 지역 공략</button><button onclick="fmDecision(\'spare\')">⏱ 빈 시간 코스</button></div><select class="xselect" style="margin-top:8px" onchange="fmSetSpare(this.value)">'+fm2Opts([[30,'빈 시간 30분'],[60,'빈 시간 60분'],[90,'빈 시간 90분'],[120,'빈 시간 120분']],+foodMap.spare)+'</select></div>'+
- '<details class="xcard"><summary style="font-size:13px;font-weight:800;cursor:pointer">거리 기준 · '+esc(foodMap.originMode==='hotel'?(hotel.name||'호텔 미설정'):(fmGpsPoint()?'실시간 GPS 연결됨':origin?'현재 위치 저장됨':'현재 위치 미설정'))+'</summary><div class="fm-origin"><select class="xselect" onchange="fmSetOriginMode(this.value)">'+fm2Opts([['current','현재 위치 기준'],['hotel','호텔 기준']],foodMap.originMode)+'</select><button class="xaction" onclick="fmUseCurrent()">현재 위치 가져오기</button><input class="xinput wide" id="fmHotelName" value="'+esc(hotel.name||'')+'" placeholder="호텔 이름 (나중에 입력)"><input class="xinput wide" id="fmHotelAddress" value="'+esc(hotel.address||'')+'" placeholder="호텔 주소"><input class="xinput wide" id="fmHotelUrl" value="'+esc(hotel.url||'')+'" placeholder="호텔 구글맵 URL"><input class="xinput" id="fmHotelLat" type="number" step="any" value="'+esc(hotel.lat??'')+'" placeholder="호텔 위도"><input class="xinput" id="fmHotelLng" type="number" step="any" value="'+esc(hotel.lng??'')+'" placeholder="호텔 경도"><button class="xaction wide" onclick="fmSaveHotel()">호텔 기준 저장</button><button class="xaction wide sub" onclick="fmSetHotelFromSpot()">선택한 장소를 숙소로 지정</button></div></details>'+fm2DecisionHTML()+
- '<div class="fm-toolbar"><input class="xinput" id="fmSearch" value="'+esc(foodMap.q||'')+'" placeholder="가게명·지역·음식·메모 검색" oninput="fmSearch(this.value)"><button class="btn" onclick="fmToggleAdd()">＋ 추가</button></div><div class="fm-cats">'+FM_CATS.map(x=>'<button class="'+((foodMap.filter||'전체')===x?'on':'')+'" onclick="fmSetFilter(\''+x+'\')">'+x+'</button>').join('')+'</div>'+
- '<div class="fm-filter-grid"><select class="xselect" onchange="fmSetRegion(this.value)">'+fm2Opts(FM_REGIONS,foodMap.region)+'</select><select class="xselect" onchange="fmSetKind(this.value)">'+fm2Opts(FM_KINDS,foodMap.kind)+'</select><select class="xselect" onchange="fmSetStatus(this.value)">'+fm2Opts(FM_STATUS,foodMap.status)+'</select><select class="xselect" onchange="fmSetSort(this.value)">'+fm2Opts(FM_SORTS,foodMap.sort)+'</select></div>'+
- '<div id="fmAddBox" style="display:none" class="xcard"><h3><span class="tag">NEW</span>장소 직접 추가</h3><div class="fm-grid"><input class="xinput wide" id="fmName" placeholder="장소 이름"><select class="xselect" id="fmCat">'+opts+'</select><select class="xselect" id="fmRegion">'+fm2Opts(FM_REGIONS.slice(1),'기타 지역')+'</select><input class="xinput wide" id="fmUrl" placeholder="구글맵 공유 URL"><input class="xinput" id="fmLat" type="number" step="any" placeholder="위도 (선택)"><input class="xinput" id="fmLng" type="number" step="any" placeholder="경도 (선택)"><textarea class="xta wide" id="fmNote" placeholder="먹을 메뉴·메모"></textarea></div><div class="xactions"><button class="xaction" onclick="fmAdd()">저장</button></div></div>'+
- fmGuideHTML()+ibHTML()+asHTML()+csHTML()+plHTML()+phHTML()+bgHTML()+fxHTML()+affHTML()+'<div id="fmOverview"></div><div class="fm-map" id="fmMap"></div><div class="fm-spot-tools" id="fmSpotTools"></div><div id="fmList"></div>'+
- '<details class="xcard" style="margin-top:12px"><summary style="font-size:13px;font-weight:800;cursor:pointer">선택 기능 · Places / YouTube API</summary><div class="xsmall" style="margin-top:10px">목록·거리·검색 링크는 API 키 없이 작동합니다. 키는 이 브라우저에만 저장되며 판매용 스팟팩에는 포함되지 않습니다.</div><input class="xinput" id="fmApiKey" type="password" value="'+esc(foodMap.apiKey||'')+'" placeholder="Google Maps Platform API key" style="margin-top:10px"><input class="xinput" id="fmYoutubeKey" type="password" value="'+esc(foodMap.youtubeKey||'')+'" placeholder="YouTube Data API key (선택)" style="margin-top:8px"><div class="xactions"><button class="xaction sub" onclick="fmSaveApi()">키 저장</button><button class="xaction" onclick="fmEnrichSelected()">선택 장소 보강</button><button class="xaction sub" onclick="fmYoutubeActual()">실제 영상 검색</button></div><div id="fmApiOut"></div>'+
-  '<div class="xsmall" style="margin-top:14px"><b style="color:var(--text)">좌표 일괄 채우기</b><br>구글 저장목록 CSV에는 위경도가 없습니다. 좌표가 빈 장소를 한 번에 조회해 거리·정렬·지도를 쓸 수 있게 만듭니다. 실패한 곳은 목록으로 알려 줍니다.</div>'+
-  '<div class="xactions"><button class="xaction" onclick="fmEnrichAll()">좌표 일괄 채우기 (남은 '+fmNoCoordCount()+'개)</button><button class="xaction" onclick="fmFillHours()">영업시간 채우기 (남은 '+fmNoHoursCount()+'개)</button><button class="xaction sub" onclick="fmBulkCancel()">중지</button></div><div id="fmBulkOut">'+fmBulkLast+'</div></details>';
+renderFoodMap=function(){
+ const cRoot=document.getElementById('fmCollect'),pRoot=document.getElementById('fmPlan'),nRoot=document.getElementById('fmNow');
+ if(!cRoot||!pRoot||!nRoot)return;
+ fm2Init();
+ const total=foodMap.places.length,fav=foodMap.places.filter(x=>x.fav).length,visited=foodMap.places.filter(x=>x.visited).length,origin=fmOrigin(),hotel=foodMap.hotel||{};
+ const opts=FM_CATS.slice(4).map(x=>'<option value="'+x+'">'+x+'</option>').join('');
+ /* 담기 — 장소를 모으고 확인하는 곳 */
+ cRoot.innerHTML='<div class="xhero"><div class="xhero-top"><div><div class="xeyebrow">FUKUOKA · SAVED PLACES</div><div class="xtitle">'+esc(foodMap.listName||'여행계획')+'</div></div><div class="xmeta">'+total+' PLACES<br>후쿠오카 여행지도</div></div><div class="xsmall" style="margin-top:12px">운동웹·90일 일본어와 분리된 여행 모듈입니다. 장소별 일본어는 현장에서 꺼내 쓰는 보조 카드입니다.</div></div>'+
+  '<div class="xstats"><div class="xstat"><b>'+total+'</b><span>전체</span></div><div class="xstat"><b>'+fav+'</b><span>즐겨찾기</span></div><div class="xstat"><b>'+visited+'</b><span>방문 완료</span></div></div>'+
+   '<div class="importbox" style="margin-bottom:12px"><div class="xeyebrow">GOOGLE TAKEOUT · 무료</div><div class="xsmall" style="margin:7px 0 10px">Takeout의 저장됨(Saved)에서 ZIP을 풀고 <b style="color:var(--wasabi)">여행 계획.csv</b>를 불러오세요. 같은 파일을 연결해 두면 수정본을 열 때 자동 확인합니다.</div><input type="file" id="fmImp" accept=".csv,text/csv,.json,.geojson,.kml,application/json,application/geo+json,application/vnd.google-earth.kml+xml" style="display:none" onchange="fmImport(this)"><div class="xactions"><button class="xaction" onclick="document.getElementById(\'fmImp\').click()">📥 CSV·백업 불러오기</button><button class="xaction sub" onclick="fmLinkCsv()">🔗 CSV 파일 연결</button><button class="xaction sub" onclick="fmCheckLinkedCsv(false)">↻ 연결 파일 확인</button><button class="xaction sub" onclick="fmExport()">📤 개인 백업</button><button class="xaction sub" onclick="fmExportSale()">🛡 판매용 스팟팩</button></div><div class="xsmall" style="margin-top:8px">'+(foodMap.linkedCsvName?'연결됨: <b style="color:var(--text)">'+esc(foodMap.linkedCsvName)+'</b> · 마지막 반영 '+esc(foodMap.linkedCsvAt||'확인 전'):'연결 없음 · 크롬 계열 지원, 그 외 브라우저는 수동 재가져오기')+'</div></div>'+
+  fmGuideHTML()+ibHTML()+
+   '<div class="fm-toolbar"><input class="xinput" id="fmSearch" value="'+esc(foodMap.q||'')+'" placeholder="가게명·지역·음식·메모 검색" oninput="fmSearch(this.value)"><button class="btn" onclick="fmToggleAdd()">＋ 추가</button></div><div class="fm-cats">'+FM_CATS.map(x=>'<button class="'+((foodMap.filter||'전체')===x?'on':'')+'" onclick="fmSetFilter(\''+x+'\')">'+x+'</button>').join('')+'</div>'+
+   '<div class="fm-filter-grid"><select class="xselect" onchange="fmSetRegion(this.value)">'+fm2Opts(FM_REGIONS,foodMap.region)+'</select><select class="xselect" onchange="fmSetKind(this.value)">'+fm2Opts(FM_KINDS,foodMap.kind)+'</select><select class="xselect" onchange="fmSetStatus(this.value)">'+fm2Opts(FM_STATUS,foodMap.status)+'</select><select class="xselect" onchange="fmSetSort(this.value)">'+fm2Opts(FM_SORTS,foodMap.sort)+'</select></div>'+
+   '<div id="fmAddBox" style="display:none" class="xcard"><h3><span class="tag">NEW</span>장소 직접 추가</h3><div class="fm-grid"><input class="xinput wide" id="fmName" placeholder="장소 이름"><select class="xselect" id="fmCat">'+opts+'</select><select class="xselect" id="fmRegion">'+fm2Opts(FM_REGIONS.slice(1),'기타 지역')+'</select><input class="xinput wide" id="fmUrl" placeholder="구글맵 공유 URL"><input class="xinput" id="fmLat" type="number" step="any" placeholder="위도 (선택)"><input class="xinput" id="fmLng" type="number" step="any" placeholder="경도 (선택)"><textarea class="xta wide" id="fmNote" placeholder="먹을 메뉴·메모"></textarea></div><div class="xactions"><button class="xaction" onclick="fmAdd()">저장</button></div></div>'+
+  '<div id="fmOverview"></div><div class="fm-map" id="fmMap"></div><div id="fmList"></div>'+
+   '<details class="xcard" style="margin-top:12px"><summary style="font-size:13px;font-weight:800;cursor:pointer">선택 기능 · Places / YouTube API</summary><div class="xsmall" style="margin-top:10px">목록·거리·검색 링크는 API 키 없이 작동합니다. 키는 이 브라우저에만 저장되며 판매용 스팟팩에는 포함되지 않습니다.</div><input class="xinput" id="fmApiKey" type="password" value="'+esc(foodMap.apiKey||'')+'" placeholder="Google Maps Platform API key" style="margin-top:10px"><input class="xinput" id="fmYoutubeKey" type="password" value="'+esc(foodMap.youtubeKey||'')+'" placeholder="YouTube Data API key (선택)" style="margin-top:8px"><div class="xactions"><button class="xaction sub" onclick="fmSaveApi()">키 저장</button><button class="xaction" onclick="fmEnrichSelected()">선택 장소 보강</button><button class="xaction sub" onclick="fmYoutubeActual()">실제 영상 검색</button></div><div id="fmApiOut"></div>'+
+    '<div class="xsmall" style="margin-top:14px"><b style="color:var(--text)">좌표 일괄 채우기</b><br>구글 저장목록 CSV에는 위경도가 없습니다. 좌표가 빈 장소를 한 번에 조회해 거리·정렬·지도를 쓸 수 있게 만듭니다. 실패한 곳은 목록으로 알려 줍니다.</div>'+
+    '<div class="xactions"><button class="xaction" onclick="fmEnrichAll()">좌표 일괄 채우기 (남은 '+fmNoCoordCount()+'개)</button><button class="xaction" onclick="fmFillHours()">영업시간 채우기 (남은 '+fmNoHoursCount()+'개)</button><button class="xaction sub" onclick="fmBulkCancel()">중지</button></div><div id="fmBulkOut">'+fmBulkLast+'</div></details>';
+ /* 일정 — 숙소·날짜·예산에 맞춰 실행 가능한 일정으로 바꾸는 곳 */
+ pRoot.innerHTML='<details class="xcard"><summary style="font-size:13px;font-weight:800;cursor:pointer">거리 기준 · '+esc(foodMap.originMode==='hotel'?(hotel.name||'호텔 미설정'):(fmGpsPoint()?'실시간 GPS 연결됨':origin?'현재 위치 저장됨':'현재 위치 미설정'))+'</summary><div class="fm-origin"><select class="xselect" onchange="fmSetOriginMode(this.value)">'+fm2Opts([['current','현재 위치 기준'],['hotel','호텔 기준']],foodMap.originMode)+'</select><button class="xaction" onclick="fmUseCurrent()">현재 위치 가져오기</button><input class="xinput wide" id="fmHotelName" value="'+esc(hotel.name||'')+'" placeholder="호텔 이름 (나중에 입력)"><input class="xinput wide" id="fmHotelAddress" value="'+esc(hotel.address||'')+'" placeholder="호텔 주소"><input class="xinput wide" id="fmHotelUrl" value="'+esc(hotel.url||'')+'" placeholder="호텔 구글맵 URL"><input class="xinput" id="fmHotelLat" type="number" step="any" value="'+esc(hotel.lat??'')+'" placeholder="호텔 위도"><input class="xinput" id="fmHotelLng" type="number" step="any" value="'+esc(hotel.lng??'')+'" placeholder="호텔 경도"><button class="xaction wide" onclick="fmSaveHotel()">호텔 기준 저장</button><button class="xaction wide sub" onclick="fmSetHotelFromSpot()">선택한 장소를 숙소로 지정</button></div></details>'+
+  plHTML()+csHTML()+bgHTML()+fxHTML()+affHTML();
+ /* 지금 여행 — 현장에서 다음 행동을 정하는 곳 */
+ nRoot.innerHTML='<div id="fmGpsPanel">'+fmGpsPanelHTML()+'</div>'+
+  asHTML()+
+   '<div class="xcard"><h3><span class="tag">SMART</span>오늘의 자동 선택</h3><div class="xsmall">현재 위치/호텔, 영업상태, 우선순위, 평점, 방문 여부를 함께 봅니다.</div><div class="fm-quick"><button onclick="fmDecision(\'now\')">⚡ 지금 어디 가지?</button><button onclick="fmDecision(\'crawl\')">🍶 술집 3차 코스</button><button onclick="fmDecision(\'balanced\')">🧭 균형 코스</button><button onclick="fmDecision(\'rain\')">☔ 비 오는 날</button><button onclick="fmDecision(\'region\')">📍 한 지역 공략</button><button onclick="fmDecision(\'spare\')">⏱ 빈 시간 코스</button></div><select class="xselect" style="margin-top:8px" onchange="fmSetSpare(this.value)">'+fm2Opts([[30,'빈 시간 30분'],[60,'빈 시간 60분'],[90,'빈 시간 90분'],[120,'빈 시간 120분']],+foodMap.spare)+'</select></div>'+
+  fm2DecisionHTML()+
+  '<div class="fm-spot-tools" id="fmSpotTools"></div>'+phHTML();
  fxAuto();phRender();asRender();fm2RenderOverview();fmRenderList();fmRenderMap();fmRenderSpotTools();setTimeout(()=>fmCheckLinkedCsv(true),0);};
 function fmSetRegion(v){foodMap.region=v;save('foodmap_v1',foodMap);renderFoodMap();}function fmSetKind(v){foodMap.kind=v;save('foodmap_v1',foodMap);renderFoodMap();}
 function fmSetStatus(v){foodMap.status=v;save('foodmap_v1',foodMap);renderFoodMap();}function fmSetSort(v){foodMap.sort=v;save('foodmap_v1',foodMap);renderFoodMap();}function fmSetSpare(v){foodMap.spare=+v||60;save('foodmap_v1',foodMap);}

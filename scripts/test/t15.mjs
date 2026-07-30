@@ -14,7 +14,8 @@ t('런타임 오류 0',errs.length===0); if(errs.length)console.log('  ',errs.sl
 // 장소 0곳 = 첫 실행
 w.eval('foodMap.places=[];foodMap.guideOpen=false;renderFoodMap();');
 const guideTxt=()=>{const g=w.document.getElementById('fmGuide');return g?g.textContent:'';};
-const mapTxt=()=>{const m=w.document.getElementById('tab-map');return m?m.textContent:'';};
+/* 여행 화면은 담기·일정·지금여행 3탭으로 나뉘어 있으므로 셋을 합쳐 본다 */
+const mapTxt=()=>['tab-collect','tab-plan','tab-now'].map(i=>{const e=w.document.getElementById(i);return e?e.textContent:'';}).join(' ');
 let body=guideTxt();
 t('장소 없으면 안내 자동 표시', w.document.getElementById('fmGuide')!==null);
 t('Takeout 주소 안내', body.includes('takeout.google.com'));

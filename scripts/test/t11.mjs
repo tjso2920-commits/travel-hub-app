@@ -44,6 +44,11 @@ t('출처 표기 메모', w.eval("fmHoursSrc({note:'월요일 휴무'})")==='메
 w.fmMerge(w.fmCsv(csv));
 FM().places.forEach((p,i)=>{p.lat=33.59+i*0.0004;p.lng=130.40+i*0.0004;p.placeId='PL'+i;});
 FM().apiKey='TESTKEY';
+/* 앱이 부팅 시 렌더하므로 #fmApiKey 입력칸이 이미 존재한다.
+   fmEnrichAll 은 내부에서 fmSaveApi 로 그 입력칸 값을 다시 읽으므로,
+   객체에만 키를 넣으면 빈 입력칸 값으로 덮여 호출이 0건이 된다. 입력칸도 함께 채운다. */
+w.eval('renderFoodMap()');
+{const k=w.document.getElementById('fmApiKey');if(k)k.value='TESTKEY';}
 t('영업시간 없는 곳 137', w.eval('fmNoHoursCount()')===137);
 let calls=0,urls=[],masks=[];
 w.fetch=async(url,opt)=>{calls++;urls.push(url);masks.push(opt.headers['X-Goog-FieldMask']);

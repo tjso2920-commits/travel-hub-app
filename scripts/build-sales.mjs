@@ -72,7 +72,7 @@ if (/AIza[0-9A-Za-z_-]{25,}/.test(html)) {
   bad += 1;
 }
 for (const must of [
-  'const SALE_MODE=true;', 'id="tab-jp"', 'id="tab-map"', 'id="ovSet"',
+  'const SALE_MODE=true;', 'id="tab-jp"', 'id="tab-collect"', 'id="tab-plan"', 'id="tab-now"', 'id="ovSet"',
   'const JP_LIMIT=90', 'function jpRuby(', 'function jpGrammarBookHTML(',
   'function fm2Clusters()', 'function fm2RenderOverview()', 'function fmEnrichAll()',
   'function asContext()', 'function asAsk()', 'const AS_RULES=',

@@ -34,6 +34,11 @@ t('재수입 중복 0', z.added===0&&z.updated===137&&FM().places.length===137);
 // 4. 일괄 좌표 보강 (fetch 모킹, 3건만)
 const sample=FM().places.slice(0,3);
 FM().places=sample; FM().apiKey='TEST_KEY';
+/* 앱이 부팅 시 렌더하므로 #fmApiKey 입력칸이 이미 존재한다.
+   fmEnrichAll 은 내부에서 fmSaveApi 로 그 입력칸 값을 다시 읽으므로,
+   객체에만 키를 넣으면 빈 입력칸 값으로 덮여 호출이 0건이 된다. 입력칸도 함께 채운다. */
+w.eval('renderFoodMap()');
+{const k=w.document.getElementById('fmApiKey');if(k)k.value='TEST_KEY';}
 let calls=0, sentKeys=new Set();
 w.fetch=async(url,opt)=>{
   calls++; sentKeys.add(opt.headers['X-Goog-Api-Key']);

@@ -32,7 +32,9 @@ t('양쪽 표기', w.eval('fxBoth(10000)')==='10,000엔 (약 93,500원)');
 
 // 예산에 반영
 w.eval('renderFoodMap()');
-const txt=w.document.getElementById('tab-map').textContent;
+/* 여행 화면은 담기·일정·지금여행 3탭으로 나뉘어 있으므로 셋을 합쳐 본다 */
+const travelTxt=()=>['tab-collect','tab-plan','tab-now'].map(i=>{const e=w.document.getElementById(i);return e?e.textContent:'';}).join(' ');
+const txt=travelTxt();
 t('예산 요약에 원화 환산', txt.includes('원'));
 const ctx=w.eval('asContext()');
 t('컨텍스트에 환율', ctx.includes('[환율] 1JPY'));
@@ -55,9 +57,9 @@ t('숫자 아니면 해제', w.eval('fxRate()')===null);
 
 // 오래된 환율 경고
 w.eval("foodMap.fx={rate:9.3,at:'2026-07-01',src:'api'};renderFoodMap();");
-t('7일 지난 값 경고', w.document.getElementById('tab-map').textContent.includes('7일 이상 지난 값'));
+t('7일 지난 값 경고', travelTxt().includes('7일 이상 지난 값'));
 w.eval("foodMap.fx={rate:9.3,at:TODAY,src:'api'};renderFoodMap();");
-t('오늘 값은 경고 없음', !w.document.getElementById('tab-map').textContent.includes('7일 이상 지난 값'));
+t('오늘 값은 경고 없음', !travelTxt().includes('7일 이상 지난 값'));
 
 // 통화 변경
 w.eval("fxSetCur('EUR');fxSetHome('USD');");
