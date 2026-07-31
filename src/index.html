@@ -517,6 +517,15 @@
   .fm-resetup{display:flex;justify-content:flex-end;margin:0 0 10px}
   .fm-resetup button{min-height:44px;padding:0 15px;border-radius:var(--pill,999px);
     border:1px solid var(--line2);background:transparent;color:var(--muted);font-size:12.5px;font-weight:800}
+  /* 산 사람 이름. 늘 보이되 방해되지 않게. */
+  #licBar{text-align:center;padding:18px 16px 26px;font-size:11.5px;line-height:1.6;color:var(--faint)}
+  #licBar b{color:var(--muted);font-weight:800}
+  #licBar .free{display:inline-block;border:1px solid var(--line2);border-radius:999px;
+    padding:7px 14px;min-height:34px;color:var(--muted);font-weight:800}
+  #licBar button{min-height:44px;padding:0 16px;margin-top:8px;border:1px solid var(--line2);
+    border-radius:999px;background:transparent;color:var(--wasabi);font-size:12.5px;font-weight:800}
+  .lic-out{font-family:var(--mono);font-size:12px;word-break:break-all;background:var(--surface2);
+    border-radius:10px;padding:11px;margin-top:9px;color:var(--text);min-height:44px}
   footer{text-align:center;padding:24px;font-family:var(--mono);font-size:10.5px;color:var(--faint);letter-spacing:.1em}
 
   /* DAYLIGHT · 밝은 테마
@@ -754,6 +763,7 @@
     <div id="jpRoot"><div class="empty">일본어 학습을 불러오는 중…</div></div>
   </section>
 
+  <div id="licBar"></div>
 </div>
 </div>
 
@@ -761,6 +771,7 @@
 
 <div class="overlay" id="ovSet"><div class="modal">
   <h4>설정</h4>
+  <div class="rule" id="licSetup"></div>
   <div class="rule" id="aiSetup">
     <h3><span class="k">AI</span> AI 기능 켜기 <span style="color:var(--faint);font-weight:400;font-size:12px">(회화·번역·사진 분석)</span></h3>
     <div id="aiStatus" class="aistat"></div>
@@ -1005,14 +1016,42 @@ async function callGemini(parts,cfg){
 function jpDoneFor(k){const st=load('jp_state_v1',{done:{}}),done=st&&st.done||{};return Object.keys(done).filter(n=>done[n]===k).map(Number).sort((a,b)=>a-b);}
 
 function renderSettings(){
+ renderLicSetup();
  document.getElementById('gemKey').value=ai.key||'';
  document.getElementById('gemModel').value=ai.model||'gemini-flash-latest';
  renderAiStatus();
 }
+function renderLicSetup(){
+ const el=document.getElementById('licSetup');if(!el)return;
+ const gen=SALE_MODE?'':(
+  '<div class="sethint" style="margin-top:14px">— 판매자 전용 —</div>'+
+  '<input class="set-in" id="licGenName" type="text" placeholder="구매자 이름">'+
+  '<input class="set-in" id="licGenDate" type="date" value="'+esc(TODAY)+'" style="margin-top:8px">'+
+  '<div style="display:flex;gap:8px;margin-top:9px">'+
+   '<button class="sbtn" style="margin:0;flex:1" onclick="licGen()">코드 만들기</button>'+
+   '<button class="sbtn" style="margin:0;flex:1" onclick="licGenCopy()">복사</button></div>'+
+  '<div class="lic-out" id="licGenOut"></div>');
+ if(licOn()){
+  el.innerHTML='<h3><span class="k">LICENSE</span> 정품 등록됨</h3>'+
+   '<div class="aistat ok">🟢 '+esc(licStamp())+'</div>'+
+   '<div class="sethint">이 이름은 앱 화면 아래·공유 카드·백업 파일에 함께 표시됩니다. '+
+   '구매하신 분 본인의 기기에는 몇 대든 넣으셔도 됩니다.</div>'+gen;
+  return;
+ }
+ el.innerHTML='<h3><span class="k">LICENSE</span> 정품 코드 넣기</h3>'+
+  (SALE_MODE?'<div class="aistat no">⚪ 무료판 · 장소 '+FREE_LIMIT+'곳까지 담을 수 있습니다</div>':'')+
+  '<div class="sd">구매하실 때 받은 코드를 그대로 붙여넣으세요. 기능은 전부 열려 있고, 담을 수 있는 장소 개수만 늘어납니다.</div>'+
+  '<input class="set-in" id="licIn" type="text" placeholder="받으신 코드를 붙여넣기" style="margin-top:9px">'+
+  '<button class="sbtn" onclick="licSave()">등록하기</button>'+
+  '<div class="sethint">코드는 이 기기에만 저장되고 어디로도 전송되지 않습니다.</div>'+gen;
+}
 function bkGet(k){try{const r=localStorage.getItem(PFX+k);return r?JSON.parse(r):null;}catch(e){return null;}}
 function bkFoodMap(){const o=bkGet('foodmap_v1');if(!o||typeof o!=='object')return null;
  let c;try{c=JSON.parse(JSON.stringify(o));}catch(e){return null;}
- delete c.apiKey;delete c.youtubeKey;delete c.current;return c;}
+ delete c.apiKey;delete c.youtubeKey;delete c.current;
+ /* 백업 파일을 남에게 넘겨도 잠금이 풀리면 안 된다. 코드는 빼고 이름만 남긴다. */
+ if(c.lic){c.licensedTo=(c.lic.name||'')+(c.lic.date?(' / '+c.lic.date):'');delete c.lic;}
+ return c;}
 function bkRestoreMods(j){
  if(j.jpState)save('jp_state_v1',j.jpState);if(j.jpChat)save('jp_chat_v1',j.jpChat);if(j.jpPacks)save('jp_packs_v1',j.jpPacks);if(j.asChat)save('as_chat_v1',j.asChat);
  if(j.foodMap&&Array.isArray(j.foodMap.places)){const cur=bkGet('foodmap_v1')||{},nx=Object.assign({},j.foodMap);
@@ -1021,7 +1060,7 @@ function bkRestoreMods(j){
 function exportData(){
  const all={jpState:bkGet('jp_state_v1'),jpChat:bkGet('jp_chat_v1'),jpPacks:bkGet('jp_packs_v1'),asChat:bkGet('as_chat_v1'),foodMap:bkFoodMap(),v:1};
  const b=new Blob([JSON.stringify(all)],{type:'application/json'});
- const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='여행허브_백업_'+TODAY+'.json';a.click();
+ const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='여행허브_백업_'+(licOn()?licName()+'_':'')+TODAY+'.json';a.click();
 }
 function importData(inp){
  const f=inp.files&&inp.files[0];inp.value='';if(!f)return;
@@ -2006,8 +2045,109 @@ function fmRenderMap(){const el=document.getElementById('fmMap');if(!el)return;c
 function fmSelect(id){foodMap.selected=id;save('foodmap_v1',foodMap);fmRenderList();fmRenderMap();const el=document.getElementById('fmMap');if(el)el.scrollIntoView({behavior:'smooth',block:'nearest'});}
 function fmToggle(id,k){const p=foodMap.places.find(x=>x.id===id);if(!p)return;p[k]=!p[k];save('foodmap_v1',foodMap);renderFoodMap();}
 function fmDelete(id){const p=foodMap.places.find(x=>x.id===id);if(!p||!confirm('“'+p.name+'”을 맛집지도에서 삭제할까요?'))return;foodMap.places=foodMap.places.filter(x=>x.id!==id);if(foodMap.selected===id)foodMap.selected=null;save('foodmap_v1',foodMap);renderFoodMap();}
+/* ── 정품 등록 ───────────────────────────────────────────────────────────
+   코드 = base64(이름|날짜) + '.' + 서명 12자.
+   서명 재료가 이 파일 안에 있으므로 아는 사람은 코드를 만들 수 있다. 그건 못 막는다.
+   대신 남의 코드를 받아 쓰면 **그 사람 이름이 내 화면에 계속 뜬다.** 그게 이 장치의 전부다. */
+const FREE_LIMIT=30;
+const LIC_SALT='tj-2026-fk-\u00b7-hub-\u00b7-v1';
+
+/* 외부 라이브러리 없이 도는 짧은 해시. 암호학적으로 강하지 않다 — 그럴 필요가 없다. */
+function licHash(t){
+ let a=0x811c9dc5,b=0x9e3779b9;
+ for(let i=0;i<t.length;i++){
+  const c=t.charCodeAt(i);
+  a=Math.imul(a^c,16777619)>>>0;
+  b=(Math.imul(b+c,2654435761)^(b>>>7))>>>0;
+ }
+ return ('0000000'+a.toString(16)).slice(-8)+('000'+(b>>>20).toString(16)).slice(-4);
+}
+/* 한글을 바이트로. TextEncoder 는 구형 사파리·검사 환경에 없을 수 있어 안 쓴다. */
+function licEnc(t){
+ const u=encodeURIComponent(String(t));let r='';
+ for(let i=0;i<u.length;i++){
+  if(u.charAt(i)==='%'){r+=String.fromCharCode(parseInt(u.substr(i+1,2),16));i+=2;}
+  else r+=u.charAt(i);
+ }
+ return btoa(r).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function licDec(t){
+ const raw=atob(t.replace(/-/g,'+').replace(/_/g,'/'));let u='';
+ for(let i=0;i<raw.length;i++)u+='%'+('0'+raw.charCodeAt(i).toString(16)).slice(-2);
+ return decodeURIComponent(u);
+}
+/* 판매자만 쓴다. 이름과 날짜로 코드 한 줄을 만든다. */
+function licMake(name,date){
+ const d=String(date||TODAY).replace(/[^0-9]/g,'').slice(0,8);
+ if(d.length!==8)return '';
+ const body=licEnc(String(name||'').trim()+'|'+d);
+ return body+'.'+licHash(body+LIC_SALT);
+}
+/* 코드가 진짜면 {name,date}, 아니면 null. */
+function licParse(code){
+ const c=String(code||'').trim().replace(/\s+/g,'');
+ const i=c.lastIndexOf('.');if(i<8)return null;
+ const body=c.slice(0,i),sig=c.slice(i+1);
+ if(licHash(body+LIC_SALT)!==sig)return null;
+ let t;try{t=licDec(body);}catch(e){return null;}
+ const j=t.lastIndexOf('|');if(j<1)return null;
+ const name=t.slice(0,j).trim(),d=t.slice(j+1);
+ if(!name||!/^[0-9]{8}$/.test(d))return null;
+ return {name:name,date:d.slice(0,4)+'-'+d.slice(4,6)+'-'+d.slice(6)};
+}
+function licOn(){return !!(foodMap.lic&&foodMap.lic.name);}
+function licName(){return licOn()?foodMap.lic.name:'';}
+function licDate(){return licOn()?(foodMap.lic.date||''):'';}
+/* 개인용(판매자)은 제한이 없다. 판매용에서 등록 전에만 30곳이다. */
+function licLimited(){return SALE_MODE&&!licOn();}
+function licRoom(){return licLimited()?Math.max(0,FREE_LIMIT-foodMap.places.length):Infinity;}
+function renderLicBar(){
+ const el=document.getElementById('licBar');if(!el)return;
+ if(licOn()){
+  el.innerHTML='<b>'+esc(licStamp())+'</b><br>이 표시는 구매하신 분 것입니다. 다른 사람에게 파일이나 코드를 넘기지 말아 주세요.';
+  return;
+ }
+ if(!SALE_MODE){el.innerHTML='';return;}
+ const left=licRoom();
+ el.innerHTML='<span class="free">무료판 · 장소 '+foodMap.places.length+' / '+FREE_LIMIT+'곳</span><br>'+
+  (left>0?('앞으로 '+left+'곳 더 담을 수 있습니다.'):('한도를 다 쓰셨습니다. 담아 둔 곳은 그대로 쓰실 수 있습니다.'))+
+  '<br><button onclick="showOv(\'ovSet\');renderSettings();licFocus()">정품 코드 넣기</button>';
+}
+function licFocus(){
+ const el=document.getElementById('licSetup');
+ if(el)setTimeout(function(){el.scrollIntoView({block:'start'});},60);
+}
+function licStamp(){return licOn()?('정품 · '+licName()+' 님'+(licDate()?(' ('+licDate()+' 구매)'):'')):'';}
+
+function licSave(){
+ const el=document.getElementById('licIn');if(!el)return;
+ const v=licParse(el.value);
+ if(!v){alert('코드가 맞지 않습니다.\n앞뒤 공백까지 그대로 붙여넣었는지 확인해 주세요.');return;}
+ foodMap.lic={name:v.name,date:v.date,code:String(el.value).trim()};
+ save('foodmap_v1',foodMap);
+ alert(v.name+'님, 등록되었습니다.\n이제 장소를 제한 없이 담을 수 있습니다.');
+ renderSettings();renderFoodMap();
+}
+function licClear(){
+ if(!confirm('정품 등록을 지울까요?\n담아 둔 장소는 그대로 남고, 새로 담는 것만 '+FREE_LIMIT+'곳으로 제한됩니다.'))return;
+ delete foodMap.lic;save('foodmap_v1',foodMap);renderSettings();renderFoodMap();
+}
+/* 판매자용 코드 생성기 — 판매용 빌드에서는 화면에 안 나온다. */
+function licGen(){
+ const n=document.getElementById('licGenName'),d=document.getElementById('licGenDate'),o=document.getElementById('licGenOut');
+ if(!n||!o)return;
+ const code=licMake(n.value,d&&d.value?d.value:TODAY);
+ o.textContent=code||'이름과 날짜를 확인해 주세요.';
+}
+function licGenCopy(){
+ const o=document.getElementById('licGenOut');if(!o||!o.textContent)return;
+ if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(o.textContent);
+ alert('복사했습니다.');
+}
 function fmAdd(){
- const name=document.getElementById('fmName').value.trim();if(!name){alert('가게 이름을 입력해 주세요.');return;}const note=document.getElementById('fmNote').value.trim(),cat=document.getElementById('fmCat').value||fmInfer(name+' '+note);
+ const name=document.getElementById('fmName').value.trim();if(!name){alert('가게 이름을 입력해 주세요.');return;}
+ if(licRoom()<1){alert('무료판은 장소 '+FREE_LIMIT+'곳까지 담을 수 있습니다.\n설정(⚙)에서 정품 코드를 넣으면 제한이 풀립니다.');return;}
+ const note=document.getElementById('fmNote').value.trim(),cat=document.getElementById('fmCat').value||fmInfer(name+' '+note);
  foodMap.places.unshift({id:'fm'+Date.now()+Math.floor(Math.random()*99),name:name,cat:cat,note:note,address:'',url:document.getElementById('fmUrl').value.trim(),lat:+document.getElementById('fmLat').value||null,lng:+document.getElementById('fmLng').value||null,fav:false,visited:false});
  save('foodmap_v1',foodMap);renderFoodMap();
 }
@@ -2019,12 +2159,14 @@ function fmObj(o){if(!o||typeof o!=='object')return null;const p=o.properties||o
 function fmJson(j){const out=[],seen=new Set();function walk(x){if(!x||typeof x!=='object')return;const v=fmObj(x);if(v){const k=v.url||v.name+'|'+v.lat+'|'+v.lng;if(!seen.has(k)){seen.add(k);out.push(v);}}if(Array.isArray(x))x.forEach(walk);else Object.keys(x).forEach(k=>{if(typeof x[k]==='object')walk(x[k]);});}walk(j);return out;}
 function fmCsvRows(txt){const rows=[],row=[];let cur='',q=false;for(let i=0;i<txt.length;i++){const c=txt[i];if(c==='"'){if(q&&txt[i+1]==='"'){cur+='"';i++;}else q=!q;}else if(c===','&&!q){row.push(cur);cur='';}else if((c==='\n'||c==='\r')&&!q){if(c==='\r'&&txt[i+1]==='\n')i++;row.push(cur);if(row.some(x=>x.trim()))rows.push(row.splice(0));else row.length=0;cur='';}else cur+=c;}row.push(cur);if(row.some(x=>x.trim()))rows.push(row);return rows;}
 function fmCsv(txt){const rows=fmCsvRows(txt);if(rows.length<2)return[];const h=rows[0].map(x=>x.trim().toLowerCase().replace(/^\ufeff/,''));return rows.slice(1).map(r=>{const o={};h.forEach((k,i)=>o[k]=r[i]||'');return{name:o.title||o.name||o['business name']||o['제목']||o['이름']||o['장소']||'',url:o.url||o['google maps url']||o.google_maps_url||o['링크']||'',note:o.note||o.comments||o.description||o['메모']||o['설명']||o['댓글']||'',address:o.address||o['주소']||'',lat:+(o.latitude||o.lat||o['위도'])||null,lng:+(o.longitude||o.lng||o['경도'])||null};}).filter(x=>x.name);}
-function fmMerge(arr){let added=0,updated=0,skipped=0;const byKey=new Map();foodMap.places.forEach(p=>byKey.set(p.url||((p.name||'').toLowerCase()+'|'+p.lat+'|'+p.lng),p));
+function fmMerge(arr){let added=0,updated=0,skipped=0,blocked=0;const byKey=new Map();foodMap.places.forEach(p=>byKey.set(p.url||((p.name||'').toLowerCase()+'|'+p.lat+'|'+p.lng),p));
  arr.forEach(x=>{const key=x.url||((x.name||'').toLowerCase()+'|'+x.lat+'|'+x.lng);if(!x.name){skipped++;return;}const old=byKey.get(key);if(old){old.name=x.name||old.name;old.note=x.note||old.note;old.address=x.address||old.address;old.lat=x.lat||old.lat;old.lng=x.lng||old.lng;old.cat=fmInfer(old.name+' '+old.note+' '+old.address);updated++;return;}
+  /* 이미 담아 둔 것은 건드리지 않는다. 넘치는 만큼만 안 담는다. */
+  if(licRoom()<1){blocked++;return;}
   const p={id:'fm'+Date.now()+added+Math.floor(Math.random()*99),name:x.name,cat:fmInfer(x.name+' '+x.note+' '+x.address),note:x.note||'',address:x.address||'',url:x.url||'',lat:x.lat||null,lng:x.lng||null,fav:false,visited:false};foodMap.places.push(p);byKey.set(key,p);added++;});
- save('foodmap_v1',foodMap);return{added:added,updated:updated,skipped:skipped};}
+ save('foodmap_v1',foodMap);return{added:added,updated:updated,skipped:skipped,blocked:blocked};}
 function fmImport(inp){const f=inp.files&&inp.files[0];inp.value='';if(!f)return;const r=new FileReader();r.onload=()=>{try{const txt=String(r.result);let arr;if(/\.csv$/i.test(f.name))arr=fmCsv(txt);else if(/\.kml$/i.test(f.name)||/^\s*</.test(txt))arr=fmKml(txt);else arr=fmJson(JSON.parse(txt));
-  if(/\.csv$/i.test(f.name))foodMap.listName=f.name.replace(/\.csv$/i,'')||'여행계획';const z=fmMerge(arr);save('foodmap_v1',foodMap);alert('“'+foodMap.listName+'” 불러오기 완료\n새 장소 '+z.added+'개 · 기존 장소 갱신 '+z.updated+'개'+(z.skipped?' · 제외 '+z.skipped+'개':''));
+  if(/\.csv$/i.test(f.name))foodMap.listName=f.name.replace(/\.csv$/i,'')||'여행계획';const z=fmMerge(arr);save('foodmap_v1',foodMap);alert('“'+foodMap.listName+'” 불러오기 완료\n새 장소 '+z.added+'개 · 기존 장소 갱신 '+z.updated+'개'+(z.skipped?' · 제외 '+z.skipped+'개':'')+(z.blocked?('\n\n무료판 한도('+FREE_LIMIT+'곳)를 넘어 '+z.blocked+'곳은 담기지 않았습니다.\n설정(⚙)에서 정품 코드를 넣으면 전부 들어옵니다.'):''));
   renderFoodMap();}catch(e){alert('가져오기 실패: 여행계획.csv 형식을 확인해 주세요.\n'+(e.message||e));}};r.readAsText(f);}
 /* 처음 설정 화면에도 열쇠 칸을 둔다. 앱 안쪽 칸과 저장 위치가 같다. */
 function fmSaveKeysHere(){
@@ -2505,6 +2647,9 @@ async function scDraw(){
  x.fillStyle='#5C666E';x.font=F(700,30);x.fillText(foot,64,SC_H-76);
  if(pts.length){x.fillStyle='#98A2AA';x.font=F(600,20);
   x.textAlign='right';x.fillText('지도 © OpenStreetMap',SC_W-64,SC_H-76);x.textAlign='left';}
+ /* 산 사람 이름. 이 그림이 SNS 로 나가므로 여기 찍히는 게 가장 효과가 크다. */
+ if(licOn()){x.fillStyle='#98A2AA';x.font=F(600,20);
+  x.fillText(licStamp(),64,SC_H-40);}
  return cv;
 }
 async function scShare(){
@@ -3903,6 +4048,7 @@ function fmDecision(mode){let a=fm2Candidates(),title='',sub='';if(!a.length){al
  foodMap.decision={title:title,sub:sub,ids:a.map(p=>p.id)};save('foodmap_v1',foodMap);renderFoodMap();}
 function fmClearDecision(){foodMap.decision=null;save('foodmap_v1',foodMap);renderFoodMap();}
 renderFoodMap=function(){
+ renderLicBar();
  const cRoot=document.getElementById('fmCollect'),pRoot=document.getElementById('fmPlan'),nRoot=document.getElementById('fmNow');
  if(!cRoot||!pRoot||!nRoot)return;
 
@@ -4274,10 +4420,15 @@ function sjAskAI(id){
  const el=document.getElementById('asIn');
  if(el){el.value=q;asAsk();el.scrollIntoView({behavior:'smooth',block:'center'});}
 }
-fmAdd=function(){const name=document.getElementById('fmName').value.trim();if(!name){alert('장소 이름을 입력해 주세요.');return;}const note=document.getElementById('fmNote').value.trim(),cat=document.getElementById('fmCat').value||fmInfer(name+' '+note),region=document.getElementById('fmRegion').value||fm2Region(name+' '+note);foodMap.places.unshift(fm2Normalize({id:'fm'+Date.now()+Math.floor(Math.random()*99),name:name,cat:cat,region:region,note:note,address:'',url:document.getElementById('fmUrl').value.trim(),lat:+document.getElementById('fmLat').value||null,lng:+document.getElementById('fmLng').value||null}));save('foodmap_v1',foodMap);renderFoodMap();};
+fmAdd=function(){const name=document.getElementById('fmName').value.trim();if(!name){alert('장소 이름을 입력해 주세요.');return;}
+ if(licRoom()<1){alert('무료판은 장소 '+FREE_LIMIT+'곳까지 담을 수 있습니다.\n설정(⚙)에서 정품 코드를 넣으면 제한이 풀립니다.');return;}
+ const note=document.getElementById('fmNote').value.trim(),cat=document.getElementById('fmCat').value||fmInfer(name+' '+note),region=document.getElementById('fmRegion').value||fm2Region(name+' '+note);foodMap.places.unshift(fm2Normalize({id:'fm'+Date.now()+Math.floor(Math.random()*99),name:name,cat:cat,region:region,note:note,address:'',url:document.getElementById('fmUrl').value.trim(),lat:+document.getElementById('fmLat').value||null,lng:+document.getElementById('fmLng').value||null}));save('foodmap_v1',foodMap);renderFoodMap();};
 fmObj=function(o){if(!o||typeof o!=='object')return null;const p=o.properties||o,raw=p.Location||p.location||o.Location||{},loc=Array.isArray(raw)?(raw[0]||{}):raw,geo=loc['Geo Coordinates']||loc.geoCoordinates||p.geoCoordinates||{},co=o.geometry&&Array.isArray(o.geometry.coordinates)?o.geometry.coordinates:[];const name=p.name||p.Name||p.title||p.Title||p['Business Name']||loc['Business Name']||loc.name||'';if(!name)return null;return{name:String(name),note:String(p.note||p.Note||p.comments||p.Comments||p.description||p.Description||''),address:String(p.address||p.Address||loc.address||''),url:String(p.google_maps_url||p['Google Maps URL']||p.googleMapsUrl||p.URL||p.url||loc['Google Maps URL']||''),lat:+(p.lat||geo.Latitude||geo.latitude||p.latitude||co[1])||null,lng:+(p.lng||geo.Longitude||geo.longitude||p.longitude||co[0])||null,cat:p.cat||'',kind:p.kind||'',region:p.region||'',placeId:p.placeId||'',rating:+p.rating||null,ratingCount:+p.ratingCount||0,videos:Array.isArray(p.videos)?p.videos:[]};};
 fmJson=function(j){const direct=j&&(j.places||j.spots);if(Array.isArray(direct))return direct.map(fmObj).filter(Boolean);const out=[],seen=new Set();function walk(x){if(!x||typeof x!=='object')return;const v=fmObj(x);if(v){const k=v.placeId||v.url||v.name+'|'+v.lat+'|'+v.lng;if(!seen.has(k)){seen.add(k);out.push(v);return;}}if(Array.isArray(x))x.forEach(walk);else Object.keys(x).forEach(k=>{if(typeof x[k]==='object')walk(x[k]);});}walk(j);return out;};
-fmMerge=function(arr){let added=0,updated=0,skipped=0;const byKey=new Map();const kName=p=>(p.name||'').toLowerCase()+'|'+p.lat+'|'+p.lng;foodMap.places.forEach(p=>{fm2Normalize(p);[p.placeId,p.url,kName(p)].forEach(k=>{if(k)byKey.set(k,p);});});arr.forEach(x=>{if(!x||!x.name){skipped++;return;}const key=x.placeId||x.url||kName(x),old=byKey.get(x.placeId)||byKey.get(x.url)||byKey.get(kName(x));if(old){['name','note','address','url','placeId','rating','ratingCount'].forEach(k=>{if(x[k]!==undefined&&x[k]!==null&&x[k]!=='')old[k]=x[k];});if(x.lat!==null&&x.lat!==undefined)old.lat=x.lat;if(x.lng!==null&&x.lng!==undefined)old.lng=x.lng;if(x.videos&&x.videos.length)old.videos=x.videos;old.cat=x.cat||old.cat||fmInfer(old.name+' '+old.note+' '+old.address);old.kind=x.kind||old.kind||fm2Kind(old.name+' '+old.note,old.cat);old.region=x.region||old.region||fm2Region(old.address+' '+old.name);updated++;return;}const p=fm2Normalize(Object.assign({id:'fm'+Date.now()+added+Math.floor(Math.random()*99)},x));foodMap.places.push(p);byKey.set(key,p);added++;});save('foodmap_v1',foodMap);return{added:added,updated:updated,skipped:skipped};};
+fmMerge=function(arr){let added=0,updated=0,skipped=0,blocked=0;const byKey=new Map();const kName=p=>(p.name||'').toLowerCase()+'|'+p.lat+'|'+p.lng;foodMap.places.forEach(p=>{fm2Normalize(p);[p.placeId,p.url,kName(p)].forEach(k=>{if(k)byKey.set(k,p);});});arr.forEach(x=>{if(!x||!x.name){skipped++;return;}const key=x.placeId||x.url||kName(x),old=byKey.get(x.placeId)||byKey.get(x.url)||byKey.get(kName(x));if(old){['name','note','address','url','placeId','rating','ratingCount'].forEach(k=>{if(x[k]!==undefined&&x[k]!==null&&x[k]!=='')old[k]=x[k];});if(x.lat!==null&&x.lat!==undefined)old.lat=x.lat;if(x.lng!==null&&x.lng!==undefined)old.lng=x.lng;if(x.videos&&x.videos.length)old.videos=x.videos;old.cat=x.cat||old.cat||fmInfer(old.name+' '+old.note+' '+old.address);old.kind=x.kind||old.kind||fm2Kind(old.name+' '+old.note,old.cat);old.region=x.region||old.region||fm2Region(old.address+' '+old.name);updated++;return;}
+ /* 이미 담아 둔 것은 건드리지 않는다. 넘치는 만큼만 안 담는다. */
+ if(licRoom()<1){blocked++;return;}
+ const p=fm2Normalize(Object.assign({id:'fm'+Date.now()+added+Math.floor(Math.random()*99)},x));foodMap.places.push(p);byKey.set(key,p);added++;});save('foodmap_v1',foodMap);return{added:added,updated:updated,skipped:skipped,blocked:blocked};};
 fmSaveApi=function(silent){const a=document.getElementById('fmApiKey'),y=document.getElementById('fmYoutubeKey');if(a)foodMap.apiKey=a.value.trim();if(y)foodMap.youtubeKey=y.value.trim();save('foodmap_v1',foodMap);if(!silent)alert('API 키를 이 기기에만 저장했습니다.');};
 let fmBulk={running:false,cancel:false,done:0,total:0,ok:0,fail:[]};
 let fmBulkLast='';
@@ -4378,7 +4529,7 @@ let fmSyncChecking=false;
 function fmSyncDb(){return new Promise((res,rej)=>{const r=indexedDB.open('fukuoka_csv_sync_v1',1);r.onupgradeneeded=()=>r.result.createObjectStore('files');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});}
 async function fmSyncSet(k,v){const db=await fmSyncDb();return new Promise((res,rej)=>{const tx=db.transaction('files','readwrite');tx.objectStore('files').put(v,k);tx.oncomplete=()=>{db.close();res();};tx.onerror=()=>{db.close();rej(tx.error);};});}
 async function fmSyncGet(k){const db=await fmSyncDb();return new Promise((res,rej)=>{const tx=db.transaction('files','readonly'),r=tx.objectStore('files').get(k);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);tx.oncomplete=()=>db.close();});}
-async function fm2ImportFile(f,quiet){const txt=await f.text();let arr;if(/\.csv$/i.test(f.name))arr=fmCsv(txt);else if(/\.kml$/i.test(f.name)||/^\s*</.test(txt))arr=fmKml(txt);else arr=fmJson(JSON.parse(txt));if(/\.csv$/i.test(f.name))foodMap.listName=f.name.replace(/\.csv$/i,'')||'여행계획';const z=fmMerge(arr);if(!quiet)alert('“'+foodMap.listName+'” 반영 완료\n새 장소 '+z.added+'개 · 기존 장소 갱신 '+z.updated+'개'+(z.skipped?' · 제외 '+z.skipped+'개':''));return z;}
+async function fm2ImportFile(f,quiet){const txt=await f.text();let arr;if(/\.csv$/i.test(f.name))arr=fmCsv(txt);else if(/\.kml$/i.test(f.name)||/^\s*</.test(txt))arr=fmKml(txt);else arr=fmJson(JSON.parse(txt));if(/\.csv$/i.test(f.name))foodMap.listName=f.name.replace(/\.csv$/i,'')||'여행계획';const z=fmMerge(arr);if(!quiet)alert('“'+foodMap.listName+'” 반영 완료\n새 장소 '+z.added+'개 · 기존 장소 갱신 '+z.updated+'개'+(z.skipped?' · 제외 '+z.skipped+'개':'')+(z.blocked?('\n\n무료판 한도('+FREE_LIMIT+'곳)를 넘어 '+z.blocked+'곳은 담기지 않았습니다.\n설정(⚙)에서 정품 코드를 넣으면 전부 들어옵니다.'):''));return z;}
 fmImport=function(inp){const f=inp.files&&inp.files[0];inp.value='';if(!f)return;fm2ImportFile(f,false).then(()=>renderFoodMap()).catch(e=>alert('가져오기 실패: ZIP을 푼 여행 계획.csv 또는 지도 백업 파일인지 확인해 주세요.\n'+(e.message||e)));};
 async function fmLinkCsv(){if(!window.showOpenFilePicker){alert('이 브라우저는 파일 연결을 지원하지 않습니다. CSV 불러오기로 최신 파일을 다시 선택해 주세요.');return;}try{const a=await showOpenFilePicker({multiple:false,types:[{description:'Google Maps 여행 계획 CSV',accept:{'text/csv':['.csv']}}]}),h=a[0];await fmSyncSet('travelCsv',h);foodMap.linkedCsvName=h.name;foodMap.linkedCsvModified=0;foodMap.linkedCsvAt='확인 중';save('foodmap_v1',foodMap);await fmCheckLinkedCsv(false);}catch(e){if(e&&e.name!=='AbortError')alert('CSV 연결 실패: '+(e.message||e));}}
 async function fmCheckLinkedCsv(auto){if(fmSyncChecking)return;fmSyncChecking=true;try{const h=await fmSyncGet('travelCsv');if(!h){if(!auto)alert('연결된 CSV가 없습니다. 먼저 ‘CSV 파일 연결’을 눌러 주세요.');return;}let perm=await h.queryPermission({mode:'read'});if(perm!=='granted'&&!auto)perm=await h.requestPermission({mode:'read'});if(perm!=='granted'){if(!auto)alert('연결 파일 읽기 권한이 필요합니다.');return;}const f=await h.getFile();if(!auto||f.lastModified>(+foodMap.linkedCsvModified||0)){const z=await fm2ImportFile(f,true);foodMap.linkedCsvName=f.name;foodMap.linkedCsvModified=f.lastModified;foodMap.linkedCsvAt=new Date().toLocaleString('ko-KR');save('foodmap_v1',foodMap);if(!auto)alert('연결 파일 확인 완료\n새 장소 '+z.added+'개 · 기존 장소 갱신 '+z.updated+'개');renderFoodMap();}else if(!auto)alert('연결 파일이 이미 최신입니다.');}catch(e){if(!auto)alert('연결 파일 확인 실패: '+(e.message||e));}finally{fmSyncChecking=false;}}

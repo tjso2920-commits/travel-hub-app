@@ -11,6 +11,8 @@ let fail=0;const t=(n,c)=>{console.log((c?'PASS ':'FAIL ')+n);if(!c)fail++;};
 w.alert=()=>{};
 t('런타임 오류 0',errs.length===0);
 
+/* 무료판 장소 한도는 t33 에서 따로 본다. 여기서는 137곳 전부가 필요하다. */
+w.eval("foodMap.lic={name:'검사',date:'2026-01-01'};");
 w.fmMerge(w.fmCsv(csv));
 // 좌표 부여 (보강 완료 상태 재현)
 FM().places.forEach((p,i)=>{p.lat=33.58+i*0.0007;p.lng=130.39+i*0.0007;});

@@ -41,6 +41,8 @@ t('출처 표기 구글', w.eval('fmHoursSrc('+both+')')==='구글');
 t('출처 표기 메모', w.eval("fmHoursSrc({note:'월요일 휴무'})")==='메모');
 
 // 일괄 조회
+/* 무료판 장소 한도는 t33 에서 따로 본다. 여기서는 137곳 전부가 필요하다. */
+w.eval("foodMap.lic={name:'검사',date:'2026-01-01'};");
 w.fmMerge(w.fmCsv(csv));
 FM().places.forEach((p,i)=>{p.lat=33.59+i*0.0004;p.lng=130.40+i*0.0004;p.placeId='PL'+i;});
 FM().apiKey='TESTKEY';

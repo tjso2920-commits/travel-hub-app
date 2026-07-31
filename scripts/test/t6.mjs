@@ -21,6 +21,8 @@ t('필수 탭 유지', ['tab-collect','tab-plan','tab-now','tab-jp'].every(x=>ta
 t('내비에 운동2 버튼 없음', !w.document.body.innerHTML.includes('>운동2<'));
 
 // 오늘 만든 기능이 전부 넘어왔는지
+/* 무료판 장소 한도는 t33 에서 따로 본다. 여기서는 137곳 전부가 필요하다. */
+w.eval("foodMap.lic={name:'검사',date:'2026-01-01'};");
 w.fmMerge(w.fmCsv(csv));
 t('한국어 CSV 137건 임포트', FM().places.length===137);
 FM().places.forEach((p,i)=>{const h=[[33.5902,130.3986],[33.5895,130.4200],[33.5790,130.3960]][i%3];p.lat=h[0]+((i%17)-8)*0.0004;p.lng=h[1]+((i%13)-6)*0.0004;});
