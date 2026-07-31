@@ -1784,28 +1784,65 @@ function fm2Bounds(a){let s={minLat:90,maxLat:-90,minLng:180,maxLng:-180};
  s.minLat-=py;s.maxLat+=py;s.minLng-=px;s.maxLng+=px;return s;}
 const FM_CAT_COLOR={'맛집·식당':'#C7EC32','바·이자카야':'#F2994A','카페·디저트':'#56CCF2','관광·명소':'#BB6BD9','쇼핑':'#F2C94C','숙소':'#EB5757','교통':'#9AA0A6','사우나·온천':'#6FCF97'};
 function fm2Dot(p){return FM_CAT_COLOR[p.cat]||'#8E9AA6';}
+
+/* ── 실제 지도 타일 ──────────────────────────────────────────────────────
+   웹 메르카토르. 줌 z 에서 세계 전체가 256*2^z 픽셀이고, 그 안의 좌표를 구한다.
+   이것만 있으면 타일 위치와 핀 위치를 같은 좌표계로 계산할 수 있다. */
+const FM_TILE=256;
+const FM_TILE_URL='https://tile.openstreetmap.org/';
+function fmMercator(lat,lng,z){
+ const n=FM_TILE*Math.pow(2,z);
+ const s=Math.max(-.9999,Math.min(.9999,Math.sin(lat*Math.PI/180)));
+ return {x:(lng+180)/360*n, y:(.5-Math.log((1+s)/(1-s))/(4*Math.PI))*n};
+}
+/* 담을 범위가 화면 안에 적당히 들어오는 가장 큰 줌을 고른다.
+   너무 크게 잡으면 타일을 수십 장 받게 되므로 상한을 둔다. */
+function fmFitZoom(b,maxW,maxH){
+ for(let z=17;z>=3;z--){
+  const a=fmMercator(b.maxLat,b.minLng,z),c=fmMercator(b.minLat,b.maxLng,z);
+  if((c.x-a.x)<=maxW&&(c.y-a.y)<=maxH)return z;
+ }
+ return 3;
+}
+/* 범위를 덮는 타일 <image> 들을 만든다. 뷰박스와 좌표 변환 함수를 함께 돌려준다. */
+function fmTileLayer(b,maxW,maxH,pad){
+ pad=pad||46;
+ const z=fmFitZoom(b,maxW,maxH);
+ const tl=fmMercator(b.maxLat,b.minLng,z),br=fmMercator(b.minLat,b.maxLng,z);
+ const x0=tl.x-pad,y0=tl.y-pad,W=Math.max(120,br.x-tl.x+pad*2),H=Math.max(120,br.y-tl.y+pad*2);
+ const n=Math.pow(2,z);
+ let img='';
+ for(let tx=Math.floor(x0/FM_TILE);tx<=Math.floor((x0+W)/FM_TILE);tx++){
+  for(let ty=Math.floor(y0/FM_TILE);ty<=Math.floor((y0+H)/FM_TILE);ty++){
+   if(ty<0||ty>=n)continue;
+   const wx=((tx%n)+n)%n;
+   img+='<image href="'+FM_TILE_URL+z+'/'+wx+'/'+ty+'.png" x="'+(tx*FM_TILE-x0)+'" y="'+(ty*FM_TILE-y0)+
+    '" width="'+FM_TILE+'" height="'+FM_TILE+'" preserveAspectRatio="none"/>';
+  }
+ }
+ const X=p=>fmMercator(+p.lat,+p.lng,z).x-x0, Y=p=>fmMercator(+p.lat,+p.lng,z).y-y0;
+ return {z:z,W:W,H:H,tiles:img,X:X,Y:Y};
+}
 function fm2RenderOverview(){
  const el=document.getElementById('fmOverview');if(!el)return;
  const all=foodMap.places.filter(p=>!p.excluded&&fm2HasCoords(p));
  const noCoord=foodMap.places.filter(p=>!p.excluded&&!fm2HasCoords(p)).length;
  if(all.length<2){el.innerHTML='<div class="xcard"><div class="xsmall">좌표가 있는 장소가 2곳 이상이어야 전체 지도가 그려집니다.'+(noCoord?' 좌표 없음 '+noCoord+'곳.':'')+'</div></div>';return;}
  const cl=fm2Clusters(),sel=foodMap.cluster,visible=fm2ClusterSet();
- const b=fm2Bounds(all),W=1000,H=620;
- const kx=Math.cos((b.minLat+b.maxLat)/2*Math.PI/180)||1;
- const spanLat=b.maxLat-b.minLat,spanLng=(b.maxLng-b.minLng)*kx;
- const sc=Math.min(W/(spanLng||1e-6),H/(spanLat||1e-6));
- const ox=(W-spanLng*sc)/2,oy=(H-spanLat*sc)/2;
- const X=p=>ox+((+p.lng-b.minLng)*kx)*sc, Y=p=>oy+(b.maxLat-(+p.lat))*sc;
- let dots='';
+ const b=fm2Bounds(all);
+ const L=fmTileLayer(b,860,600),W=L.W,H=L.H,X=L.X,Y=L.Y;
+ /* 타일이 안 뜨는 환경에서도 핀은 읽혀야 하므로 배경을 먼저 깔고 그 위에 타일을 얹는다. */
+ let dots='<rect x="0" y="0" width="'+W+'" height="'+H+'" fill="#E8E6E1"/>'+L.tiles+
+  '<rect x="0" y="0" width="'+W+'" height="'+H+'" fill="#fff" opacity=".18"/>';
  all.forEach(p=>{const on=!visible||visible.has(p.id),isSel=p.id===foodMap.selected;
-  const r=isSel?13:(p.priority>=2?9:7);
-  dots+='<circle cx="'+X(p).toFixed(1)+'" cy="'+Y(p).toFixed(1)+'" r="'+r+'" fill="'+fm2Dot(p)+'" opacity="'+(on?(isSel?1:.85):.16)+'"'+(isSel?' stroke="#fff" stroke-width="3"':'')+'><title>'+esc(p.name)+'</title></circle>';});
+  const r=isSel?9:(p.priority>=2?6.5:5);
+  dots+='<circle cx="'+X(p).toFixed(1)+'" cy="'+Y(p).toFixed(1)+'" r="'+r+'" fill="'+fm2Dot(p)+'" opacity="'+(on?(isSel?1:.9):.2)+'" stroke="#fff" stroke-width="'+(isSel?2.5:1.4)+'"><title>'+esc(p.name)+'</title></circle>';});
  const h=foodMap.hotel;
  if(h&&fm2HasCoords(h)&&h.lat>=b.minLat&&h.lat<=b.maxLat&&h.lng>=b.minLng&&h.lng<=b.maxLng)
-  dots+='<g><circle cx="'+X(h).toFixed(1)+'" cy="'+Y(h).toFixed(1)+'" r="11" fill="none" stroke="#EB5757" stroke-width="4"/><text x="'+X(h).toFixed(1)+'" y="'+(Y(h)-18).toFixed(1)+'" fill="#EB5757" font-size="22" font-weight="800" text-anchor="middle">숙소</text></g>';
+  dots+='<g><circle cx="'+X(h).toFixed(1)+'" cy="'+Y(h).toFixed(1)+'" r="8" fill="#EB5757" stroke="#fff" stroke-width="2.5"/><text x="'+X(h).toFixed(1)+'" y="'+(Y(h)-13).toFixed(1)+'" fill="#C0392B" font-size="13" font-weight="800" text-anchor="middle" stroke="#fff" stroke-width="3" paint-order="stroke">숙소</text></g>';
  const g=fmGpsPoint();
  if(g&&g.lat>=b.minLat&&g.lat<=b.maxLat&&g.lng>=b.minLng&&g.lng<=b.maxLng)
-  dots+='<circle cx="'+X(g).toFixed(1)+'" cy="'+Y(g).toFixed(1)+'" r="10" fill="#2D9CDB" stroke="#fff" stroke-width="3"/>';
+  dots+='<circle cx="'+X(g).toFixed(1)+'" cy="'+Y(g).toFixed(1)+'" r="7" fill="#2D9CDB" stroke="#fff" stroke-width="2.5"/>';
 
  /* 오늘 동선을 선과 번호로 얹는다. 목록만 봐서는 어디서 어디로 가는지 안 들어온다.
     좌표가 없는 곳은 건너뛰되 번호는 원래 순서를 유지한다 — 3번이 빠져도 4번은 4번이다. */
@@ -1816,11 +1853,13 @@ function fm2RenderOverview(){
   cs.forEach((p,i)=>{if(fm2HasCoords(p))pts.push({p:p,n:i+1});});
   if(pts.length>1)
    route+='<polyline points="'+pts.map(o=>X(o.p).toFixed(1)+','+Y(o.p).toFixed(1)).join(' ')+
-    '" fill="none" stroke="#33718E" stroke-width="5" stroke-linejoin="round" stroke-linecap="round" opacity=".55"/>';
+    '" fill="none" stroke="#fff" stroke-width="6" stroke-linejoin="round" stroke-linecap="round" opacity=".85"/>'+
+    '<polyline points="'+pts.map(o=>X(o.p).toFixed(1)+','+Y(o.p).toFixed(1)).join(' ')+
+    '" fill="none" stroke="#33718E" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>';
   pts.forEach(o=>{
    const x=X(o.p).toFixed(1),y=Y(o.p).toFixed(1);
-   route+='<g><circle cx="'+x+'" cy="'+y+'" r="17" fill="#33718E" stroke="#fff" stroke-width="3.5"/>'+
-    '<text x="'+x+'" y="'+(+y+7).toFixed(1)+'" fill="#fff" font-size="20" font-weight="800" text-anchor="middle">'+o.n+'</text>'+
+   route+='<g><circle cx="'+x+'" cy="'+y+'" r="12" fill="#33718E" stroke="#fff" stroke-width="2.5"/>'+
+    '<text x="'+x+'" y="'+(+y+4.5).toFixed(1)+'" fill="#fff" font-size="14" font-weight="800" text-anchor="middle">'+o.n+'</text>'+
     '<title>'+o.n+'. '+esc(o.p.name)+'</title></g>';
   });
  }
@@ -1833,7 +1872,9 @@ function fm2RenderOverview(){
   fm2Opts([[400,'묶는 반경 400m'],[700,'묶는 반경 700m'],[1000,'묶는 반경 1km'],[1500,'묶는 반경 1.5km']],fm2ClusterRadius())+'</select>'+
   '<div class="fm-cats" style="margin-top:8px">'+chips+'</div>'+
   '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;margin-top:10px;background:var(--surface);border:1px solid var(--line);border-radius:12px" role="img" aria-label="전체 장소 분포도">'+dots+'</svg>'+
-  (csPlaces().length?'<div class="xsmall" style="margin-top:7px">파란 번호와 선 = <b style="color:var(--text)">오늘 동선</b> 순서 · 빨간 원 = 숙소':'')+
+  '<div class="xsmall" style="margin-top:7px">'+
+   (csPlaces().length?'파란 번호와 선 = <b style="color:var(--text)">오늘 동선</b> 순서 · 빨간 원 = 숙소<br>':'')+
+   '지도 © OpenStreetMap 기여자</div>'+
   '<div class="xsmall" style="margin-top:8px">점 하나가 장소 하나입니다. 배경 지도가 아니라 상대 위치 분포도입니다. 실제 지도는 아래 ‘지도 열기’로 봅니다.</div>');}
 fmFiltered=function(){const q=String(foodMap.q||'').toLowerCase().trim(),f=foodMap.filter||'전체',reg=foodMap.region||'전체 지역',kind=foodMap.kind||'전체 음식·술',st=foodMap.status||'기본 상태';
  const clSet=fm2ClusterSet();
