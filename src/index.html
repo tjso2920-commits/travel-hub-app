@@ -1711,7 +1711,7 @@ function fmInfer(s){s=String(s||'').toLowerCase();if(/ホテル|hotel|旅館|民
  if(/寿司|鮨|刺身|海鮮|ラーメン|うどん|焼鳥|焼肉|restaurant|식당|맛집|스시|라멘|우동|야키토리|고기/.test(s))return'맛집·식당';return'기타';}
 function fmInFukuoka(p){const a=String((p.address||'')+' '+(p.note||'')).toLowerCase();if(/福岡|fukuoka|후쿠오카|糸島|itoshima|이토시마|北九州|kitakyushu/.test(a))return true;
  return p.lat>=32.7&&p.lat<=34.15&&p.lng>=129.2&&p.lng<=131.25;}
-function fmLink(p){if(p.url)return p.url;const q=p.lat&&p.lng?(p.lat+','+p.lng):(p.name+' 福岡');return'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(q);}
+function fmLink(p){if(p.url)return p.url;const q=p.lat&&p.lng?(p.lat+','+p.lng):(p.name+' '+fmAreaHint());return'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(q);}
 function fmFiltered(){const q=String(foodMap.q||'').toLowerCase().trim(),f=foodMap.filter||'전체';return foodMap.places.filter(p=>{
  const hit=!q||(p.name+' '+p.note+' '+p.address+' '+p.cat).toLowerCase().includes(q);if(!hit)return false;if(f==='전체')return true;if(f==='후쿠오카권')return fmInFukuoka(p);if(f==='즐겨찾기')return!!p.fav;if(f==='미방문')return!p.visited;return p.cat===f;}).sort((a,b)=>(+!!b.fav-+!!a.fav)||(a.name||'').localeCompare(b.name||''));}
 function renderFoodMap(){
@@ -1724,7 +1724,7 @@ function renderFoodMap(){
   '<input type="file" id="fmImp" accept=".csv,text/csv,.json,.geojson,.kml,application/json,application/geo+json,application/vnd.google-earth.kml+xml" style="display:none" onchange="fmImport(this)">'+
   '<div class="xactions"><button class="xaction" onclick="fmImp.click()">📥 여행계획.csv 불러오기</button><button class="xaction sub" onclick="fmExport()">📤 현재 지도 백업</button></div></div>'+
   '<div class="fm-toolbar"><input class="xinput" id="fmSearch" value="'+esc(foodMap.q||'')+'" placeholder="가게명·메모 검색" oninput="fmSearch(this.value)"><button class="btn" onclick="fmToggleAdd()">＋ 추가</button></div>'+
-  '<div class="fm-cats">'+FM_CATS.map(x=>'<button class="'+((foodMap.filter||'전체')===x?'on':'')+'" onclick="fmSetFilter(\''+x+'\')">'+x+'</button>').join('')+'</div>'+
+  '<div class="fm-cats">'+FM_CATS.map(x=>'<button class="'+((foodMap.filter||'전체')===x?'on':'')+'" onclick="fmSetFilter(\''+x+'\')">'+esc(fmCatLabel(x))+'</button>').join('')+'</div>'+
   '<div id="fmAddBox" style="display:none" class="xcard"><h3><span class="tag">NEW</span>장소 직접 추가</h3><div class="fm-grid">'+
   '<input class="xinput wide" id="fmName" placeholder="가게 이름"><select class="xselect" id="fmCat">'+opts+'</select><input class="xinput" id="fmUrl" placeholder="구글맵 공유 URL">'+
   '<input class="xinput" id="fmLat" type="number" step="any" placeholder="위도 (선택)"><input class="xinput" id="fmLng" type="number" step="any" placeholder="경도 (선택)"><textarea class="xta wide" id="fmNote" placeholder="먹을 메뉴·메모"></textarea></div>'+
@@ -1781,7 +1781,7 @@ function fmRenderList(){const el=document.getElementById('fmList');if(!el)return
 }
 function fmRenderMap(){const el=document.getElementById('fmMap');if(!el)return;const p=foodMap.places.find(x=>x.id===foodMap.selected);
  if(!p){el.innerHTML='목록에서 장소를 누르면 여기에서 위치를 미리 봅니다.<br>여러 핀 전체보기는 각 장소의 ‘지도 열기’를 이용하세요.';return;}
- const q=p.lat&&p.lng?(p.lat+','+p.lng):(p.name+' 福岡');el.innerHTML='<iframe loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="'+esc(p.name)+' 지도" src="https://www.google.com/maps?q='+encodeURIComponent(q)+'&output=embed"></iframe>';}
+ const q=p.lat&&p.lng?(p.lat+','+p.lng):(p.name+' '+fmAreaHint());el.innerHTML='<iframe loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="'+esc(p.name)+' 지도" src="https://www.google.com/maps?q='+encodeURIComponent(q)+'&output=embed"></iframe>';}
 function fmSelect(id){foodMap.selected=id;save('foodmap_v1',foodMap);fmRenderList();fmRenderMap();const el=document.getElementById('fmMap');if(el)el.scrollIntoView({behavior:'smooth',block:'nearest'});}
 function fmToggle(id,k){const p=foodMap.places.find(x=>x.id===id);if(!p)return;p[k]=!p[k];save('foodmap_v1',foodMap);renderFoodMap();}
 function fmDelete(id){const p=foodMap.places.find(x=>x.id===id);if(!p||!confirm('“'+p.name+'”을 맛집지도에서 삭제할까요?'))return;foodMap.places=foodMap.places.filter(x=>x.id!==id);if(foodMap.selected===id)foodMap.selected=null;save('foodmap_v1',foodMap);renderFoodMap();}
@@ -1808,7 +1808,7 @@ function fmImport(inp){const f=inp.files&&inp.files[0];inp.value='';if(!f)return
 function fmSaveApi(){foodMap.apiKey=(document.getElementById('fmApiKey').value||'').trim();save('foodmap_v1',foodMap);alert('Places API 키를 이 기기에 저장했습니다.');}
 function fmTypeCat(t,n){return fmInfer(String(t||'')+' '+String(n||''));}
 async function fmEnrichSelected(){fmSaveApi();const p=foodMap.places.find(x=>x.id===foodMap.selected),out=document.getElementById('fmApiOut');if(!p){alert('먼저 목록에서 장소를 선택해 주세요.');return;}if(!foodMap.apiKey)return;
- if(out)out.innerHTML='<div class="tool-result">Places API에서 확인 중…</div>';try{const body={textQuery:p.name+' '+(p.address||'福岡'),languageCode:'ja',regionCode:'JP',maxResultCount:1};if(p.lat&&p.lng)body.locationBias={circle:{center:{latitude:p.lat,longitude:p.lng},radius:2000}};
+ if(out)out.innerHTML='<div class="tool-result">Places API에서 확인 중…</div>';try{const body={textQuery:p.name+' '+(p.address||fmAreaHint()),languageCode:fmPlaceLang(),regionCode:fmRegionCode(),maxResultCount:1};if(p.lat&&p.lng)body.locationBias={circle:{center:{latitude:p.lat,longitude:p.lng},radius:2000}};
   const r=await fetch('https://places.googleapis.com/v1/places:searchText',{method:'POST',headers:{'Content-Type':'application/json','X-Goog-Api-Key':foodMap.apiKey,'X-Goog-FieldMask':'places.id,places.displayName,places.formattedAddress,places.location,places.primaryType,places.primaryTypeDisplayName,places.rating,places.userRatingCount,places.googleMapsUri,places.regularOpeningHours.openNow,places.businessStatus'},body:JSON.stringify(body)});
   const j=await r.json();if(!r.ok)throw new Error(j.error&&j.error.message||('HTTP '+r.status));const x=j.places&&j.places[0];if(!x)throw new Error('일치하는 장소를 찾지 못했습니다.');
   p.placeId=x.id||p.placeId;p.name=x.displayName&&x.displayName.text||p.name;p.address=x.formattedAddress||p.address;p.lat=x.location&&x.location.latitude||p.lat;p.lng=x.location&&x.location.longitude||p.lng;p.url=x.googleMapsUri||p.url;p.rating=x.rating||null;p.ratingCount=x.userRatingCount||0;p.openNow=x.regularOpeningHours&&x.regularOpeningHours.openNow;p.businessStatus=x.businessStatus||'';p.placeType=x.primaryType||'';p.cat=fmTypeCat(x.primaryType,x.primaryTypeDisplayName&&x.primaryTypeDisplayName.text)||p.cat;
@@ -1875,7 +1875,17 @@ function fm2Regret(p){let s=(p.priority||0)*18+(p.fav?14:0)+(!p.visited?8:0)+(p.
  if(p.reservation==='needed')s+=8;if(p.reservation==='booked')s+=12;if(p.openNow===true)s+=5;if(p.excluded)s=0;return Math.max(0,Math.min(100,Math.round(s)));}
 function fm2Score(p){let s=fm2Regret(p)+(p.openNow===true?14:(p.openNow===false?-16:0))+(p.visited?-8:6);const d=fm2Distance(p);if(d!==null)s+=d<.7?24:d<1.5?17:d<3?9:d<6?2:-Math.min(20,d);if(p.excluded)s=-999;return s;}
 function fm2Reason(p){const r=[];const d=fm2DistTxt(p);if(d)r.push(d);if(p.openNow===true)r.push('영업 중');if(p.priority)r.push('우선 '+p.priority);if(p.rating)r.push('★ '+p.rating);if(!p.visited)r.push('미방문');return r.join(' · ')||'저장한 후보';}
-function fm2InFukuoka(p){if(fmInFukuoka(p))return true;return!fm2HasCoords(p)&&!(p.address||'').trim();}
+/* 권역 판정. 일본이면 기존 좌표 범위를 그대로 쓰고(쌓인 데이터 호환),
+   다른 나라면 기준점(숙소·현위치)에서 60km 안인지로 본다. 도시 이름이 주소에 있어도 인정한다. */
+function fmInArea(p){
+ if(fmCountry()==='JP')return fmInFukuoka(p);
+ const d=String((p.address||'')+' '+(p.note||'')).toLowerCase();
+ if(d&&d.indexOf(affDest().toLowerCase())>=0)return true;
+ const o=fmOrigin();
+ if(o&&fm2HasCoords(o)&&fm2HasCoords(p))return fmGpsDistance(o,p)<=60000;
+ return false;
+}
+function fm2InFukuoka(p){if(fmInArea(p))return true;return!fm2HasCoords(p)&&!(p.address||'').trim();}
 function fm2ClusterRadius(){return Math.max(200,Math.min(3000,+foodMap.clusterR||700));}
 function fm2Clusters(){
  const pts=foodMap.places.filter(p=>!p.excluded&&fm2HasCoords(p));
@@ -2245,9 +2255,9 @@ async function scShare(){
  }finally{const n=document.getElementById('scBtn');if(n){n.disabled=false;n.textContent='📤 공유 카드 만들기';}}
 }
 
-function fmDirectionsLink(p,mode){let u='https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(fm2HasCoords(p)?p.lat+','+p.lng:(p.name+' '+(p.address||'福岡')))+'&travelmode='+(mode||'walking');const o=fmOriginQuery();if(o)u+='&origin='+encodeURIComponent(o);return u;}
-function fmRouteLink(a){a=a.filter(Boolean);if(!a.length)return'#';let u='https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(fm2HasCoords(a[a.length-1])?a[a.length-1].lat+','+a[a.length-1].lng:(a[a.length-1].name+' 福岡'))+'&travelmode=walking';
- const o=fmOriginQuery();if(o)u+='&origin='+encodeURIComponent(o);if(a.length>1)u+='&waypoints='+encodeURIComponent(a.slice(0,-1).map(p=>fm2HasCoords(p)?p.lat+','+p.lng:(p.name+' 福岡')).join('|'));return u;}
+function fmDirectionsLink(p,mode){let u='https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(fm2HasCoords(p)?p.lat+','+p.lng:(p.name+' '+(p.address||fmAreaHint())))+'&travelmode='+(mode||'walking');const o=fmOriginQuery();if(o)u+='&origin='+encodeURIComponent(o);return u;}
+function fmRouteLink(a){a=a.filter(Boolean);if(!a.length)return'#';let u='https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(fm2HasCoords(a[a.length-1])?a[a.length-1].lat+','+a[a.length-1].lng:(a[a.length-1].name+' '+fmAreaHint()))+'&travelmode=walking';
+ const o=fmOriginQuery();if(o)u+='&origin='+encodeURIComponent(o);if(a.length>1)u+='&waypoints='+encodeURIComponent(a.slice(0,-1).map(p=>fm2HasCoords(p)?p.lat+','+p.lng:(p.name+' '+fmAreaHint())).join('|'));return u;}
 
 
 
@@ -3058,6 +3068,11 @@ function fmFirstRunHTML(){
    '<input id="frDest" type="text" value="'+esc(affDest())+'" placeholder="예: 후쿠오카" '+
    'onchange="affSetDest(this.value)">'+
    '<div class="fr-hint">날씨·환율·현지 회화가 전부 이 도시를 기준으로 맞춰집니다. 나중에 바꿔도 됩니다.</div>'+
+   '<label style="margin-top:14px">나라</label>'+
+   '<select class="xselect" style="width:100%" onchange="fmSetCountry(this.value)">'+
+    FM_COUNTRIES.map(function(c){return '<option value="'+c[0]+'"'+(fmCountry()===c[0]?' selected':'')+'>'+c[1]+'</option>';}).join('')+
+   '</select>'+
+   '<div class="fr-hint">장소를 찾을 때 쓰는 나라·언어입니다. 도시 이름으로 자동으로 맞추지만 틀리면 여기서 고치세요.</div>'+
   '</div>'+
   '<div class="fr-hint">아래 안내를 따라가거나, 링크를 붙여넣어도 됩니다.</div>'+
  '</div>';
@@ -3294,6 +3309,37 @@ const AFF_DEFAULT={
 };
 const AFF_LABEL={flight:'항공권',stay:'숙소',play:'액티비티·티켓',esim:'eSIM·유심'};
 function affDest(){return String(foodMap.dest||'후쿠오카');}
+/* ── 나라 설정 ───────────────────────────────────────────────────────────
+   장소 조회·검색어에 나라와 언어가 필요하다. 목적지를 알면 대부분 유추되지만
+   유추가 틀릴 수 있으므로 사용자가 고칠 수 있게 값으로 저장한다. */
+const FM_COUNTRIES=[
+ ['JP','일본','ja'],['KR','한국','ko'],['TW','대만','zh-TW'],['HK','홍콩','zh-TW'],
+ ['TH','태국','th'],['VN','베트남','vi'],['SG','싱가포르','en'],['MY','말레이시아','ms'],
+ ['PH','필리핀','en'],['ID','인도네시아','id'],['CN','중국','zh-CN'],['US','미국','en'],
+ ['FR','프랑스','fr'],['IT','이탈리아','it'],['ES','스페인','es'],['DE','독일','de'],
+ ['GB','영국','en'],['AU','호주','en'],['TR','튀르키예','tr'],['AE','아랍에미리트','ar']
+];
+/* 목적지 이름으로 나라를 짐작한다. 못 맞히면 일본으로 둔다(기존 사용자 기준). */
+const FM_CITY_HINT={'후쿠오카':'JP','도쿄':'JP','오사카':'JP','교토':'JP','삿포로':'JP','오키나와':'JP',
+ '나고야':'JP','후에':'VN','다낭':'VN','하노이':'VN','호치민':'VN','방콕':'TH','치앙마이':'TH',
+ '타이베이':'TW','타이중':'TW','가오슝':'TW','홍콩':'HK','싱가포르':'SG','쿠알라룸푸르':'MY',
+ '세부':'PH','보라카이':'PH','발리':'ID','상하이':'CN','베이징':'CN','서울':'KR','부산':'KR','제주':'KR',
+ '파리':'FR','로마':'IT','바르셀로나':'ES','런던':'GB','뉴욕':'US','시드니':'AU','이스탄불':'TR','두바이':'AE'};
+function fmCountry(){
+ const c=String(foodMap.destCountry||'').toUpperCase();
+ if(c&&FM_COUNTRIES.some(x=>x[0]===c))return c;
+ const d=affDest();
+ for(const k in FM_CITY_HINT)if(d.indexOf(k)>=0)return FM_CITY_HINT[k];
+ return 'JP';
+}
+function fmCountryRow(){return FM_COUNTRIES.find(x=>x[0]===fmCountry())||FM_COUNTRIES[0];}
+/* 분류 칩 이름. 저장되는 값은 그대로 두고 보이는 글자만 목적지에 맞춘다. */
+function fmCatLabel(x){return x==='후쿠오카권'?(affDest()+'권'):x;}
+function fmRegionCode(){return fmCountryRow()[0];}
+function fmPlaceLang(){return fmCountryRow()[2];}
+function fmSetCountry(v){foodMap.destCountry=String(v||'').toUpperCase();save('foodmap_v1',foodMap);renderFoodMap();}
+/* 이름만 있는 장소를 찾을 때 붙이는 꼬리말. 도시 이름이 가장 잘 듣는다. */
+function fmAreaHint(){return affDest();}
 function affIata(){return String(foodMap.destIata||'FUK').toLowerCase();}
 function affSetDest(v){foodMap.dest=String(v||'').trim()||'후쿠오카';save('foodmap_v1',foodMap);renderFoodMap();}
 function affSetIata(v){foodMap.destIata=String(v||'').trim().toUpperCase();save('foodmap_v1',foodMap);renderFoodMap();}
@@ -3567,7 +3613,7 @@ function fmSetHotelFromSpot(){
 function fmSaveHotel(){const url=document.getElementById('fmHotelUrl').value.trim(),c=fm2UrlCoords(url)||{};foodMap.hotel={name:document.getElementById('fmHotelName').value.trim(),address:document.getElementById('fmHotelAddress').value.trim(),url:url,lat:+document.getElementById('fmHotelLat').value||c.lat||null,lng:+document.getElementById('fmHotelLng').value||c.lng||null};foodMap.originMode='hotel';save('foodmap_v1',foodMap);renderFoodMap();}
 fmRenderList=function(){const el=document.getElementById('fmList');if(!el)return;const a=fmFiltered(),show=a.slice(0,250);const pick=fmSel.on;el.innerHTML='<div class="fm-count">조건 결과 '+a.length+' / 전체 '+foodMap.places.length+'</div>'+(show.length?show.map(p=>{const d=fm2DistTxt(p),badges=[p.kind,p.region,d,fm2EtaTxt(p),p.openNow===true?'영업 중':(p.openNow===false?'현재 영업 아님':''),p.priority?'우선 '+p.priority:'',p.reservation==='needed'?'예약 확인':(p.reservation==='booked'?'예약 완료':'')].filter(Boolean);
  return'<div class="place '+(pick?('picking '+(fmSel.ids.has(p.id)?'on ':'')):(p.id===foodMap.selected?'sel ':''))+(p.visited?'visited ':'')+(p.excluded?'visited':'')+'" onclick="'+(pick?'fmSelPick':'fmSelect')+'(\''+p.id+'\')">'+(pick?'<span class="fm-check">✓</span>':'')+(p.photo&&!pick?'<img class="place-thumb" src="'+esc(p.photo)+'" alt="">':'')+'<div class="place-top"><div class="place-name">'+(p.fav?'★ ':'')+esc(p.name)+'</div><span class="place-cat">'+esc(p.cat||'기타')+'</span><span class="fm-score">아쉬움 '+fm2Regret(p)+'</span></div><div class="place-note">'+esc(p.note||p.address||(fm2HasCoords(p)?p.lat+', '+p.lng:'메모 없음'))+'</div><div class="fm-badges">'+badges.map((x,i)=>'<span class="fm-badge '+(String(x).includes('영업 중')?'good':String(x).includes('아님')?'hot':'')+'">'+esc(x)+'</span>').join('')+'</div>'+(pick?'':'<div class="place-btns"><button class="'+(p.fav?'fav':'')+'" onclick="event.stopPropagation();fmToggle(\''+p.id+'\',\'fav\')">'+(p.fav?'★ 저장':'☆ 저장')+'</button><button onclick="event.stopPropagation();fmToggle(\''+p.id+'\',\'visited\')">'+(p.visited?'↩ 미방문':'✓ 방문')+'</button><a href="'+esc(fmDirectionsLink(p))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">길찾기</a><button onclick="event.stopPropagation();fmSelect(\''+p.id+'\')">영상·관리</button></div>')+'</div>';}).join(''):'<div class="empty">조건에 맞는 장소가 없습니다.</div>');if(a.length>250)el.innerHTML+='<div class="empty">250개만 표시 중 · 필터나 검색어로 좁혀보세요.</div>';};
-fmRenderMap=function(){const el=document.getElementById('fmMap');if(!el)return;const live=fmGpsPoint();if(live&&fmGps.follow){const q=live.lat+','+live.lng,acc=Number.isFinite(fmGps.accuracy)?'현재 위치 · ±'+Math.round(fmGps.accuracy)+'m':'현재 위치';el.classList.add('gps-live');el.innerHTML='<iframe loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="실시간 현재 위치 지도" src="https://www.google.com/maps?q='+encodeURIComponent(q)+'&z=17&output=embed"></iframe><span class="fm-gps-mapdot" aria-hidden="true"></span><span class="fm-gps-maplabel">'+esc(acc)+'</span>';return;}el.classList.remove('gps-live');const p=foodMap.places.find(x=>x.id===foodMap.selected);if(!p){el.innerHTML='목록의 ‘영상·관리’를 누르면 지도·상태·영상·현장 일본어가 열립니다.';return;}const q=fm2HasCoords(p)?p.lat+','+p.lng:(p.name+' 福岡');el.innerHTML='<iframe loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="'+esc(p.name)+' 지도" src="https://www.google.com/maps?q='+encodeURIComponent(q)+'&output=embed"></iframe>';};
+fmRenderMap=function(){const el=document.getElementById('fmMap');if(!el)return;const live=fmGpsPoint();if(live&&fmGps.follow){const q=live.lat+','+live.lng,acc=Number.isFinite(fmGps.accuracy)?'현재 위치 · ±'+Math.round(fmGps.accuracy)+'m':'현재 위치';el.classList.add('gps-live');el.innerHTML='<iframe loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="실시간 현재 위치 지도" src="https://www.google.com/maps?q='+encodeURIComponent(q)+'&z=17&output=embed"></iframe><span class="fm-gps-mapdot" aria-hidden="true"></span><span class="fm-gps-maplabel">'+esc(acc)+'</span>';return;}el.classList.remove('gps-live');const p=foodMap.places.find(x=>x.id===foodMap.selected);if(!p){el.innerHTML='목록의 ‘영상·관리’를 누르면 지도·상태·영상·현장 일본어가 열립니다.';return;}const q=fm2HasCoords(p)?p.lat+','+p.lng:(p.name+' '+fmAreaHint());el.innerHTML='<iframe loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="'+esc(p.name)+' 지도" src="https://www.google.com/maps?q='+encodeURIComponent(q)+'&output=embed"></iframe>';};
 /* 목록에서 장소를 누르면 상세 시트를 띄운다.
    선택 상태 갱신은 그대로 하되, 화면을 스크롤해 내리지 않는다 — 시트가 그 자리에 뜬다. */
 fmSelect=function(id){foodMap.selected=id;fmGps.follow=false;save('foodmap_v1',foodMap);
@@ -3633,12 +3679,12 @@ function fmSelBar(){const el=document.getElementById('fmSelBar');if(el)el.innerH
 function fm2Reservation(id){const p=foodMap.places.find(x=>x.id===id);if(!p)return;p.reservation=p.reservation==='none'?'needed':p.reservation==='needed'?'booked':'none';save('foodmap_v1',foodMap);renderFoodMap();}
 function fm2Priority(id){const p=foodMap.places.find(x=>x.id===id);if(!p)return;p.priority=((+p.priority||0)+1)%4;save('foodmap_v1',foodMap);renderFoodMap();}
 function fm2Yt(q){return'https://www.youtube.com/results?search_query='+encodeURIComponent(q);}
-function fmEnsureVideos(p){if(p.videos.length)return;p.videos=[{name:'자동 검색',short:fm2Yt(p.name+' 福岡 shorts'),long:fm2Yt(p.name+' 福岡 vlog review')}];save('foodmap_v1',foodMap);}
+function fmEnsureVideos(p){if(p.videos.length)return;p.videos=[{name:'자동 검색',short:fm2Yt(p.name+' '+fmAreaHint()+' shorts'),long:fm2Yt(p.name+' '+fmAreaHint()+' vlog review')}];save('foodmap_v1',foodMap);}
 function fmRenderSpotTools(){const el=document.getElementById('fmSpotTools');if(!el)return;const p=foodMap.places.find(x=>x.id===foodMap.selected);if(!p){el.innerHTML='';return;}fmEnsureVideos(p);el.innerHTML='<div class="xcard hot"><h3><span class="tag">SPOT</span>'+esc(p.name)+'</h3><div class="xsmall">'+esc(p.address||p.note||'장소 정보')+'</div><div class="fm-status-actions"><button class="'+(p.priority?'on':'')+'" onclick="fm2Priority(\''+p.id+'\')">우선 '+p.priority+'/3</button><button class="'+(p.reservation!=='none'?'on':'')+'" onclick="fm2Reservation(\''+p.id+'\')">'+(p.reservation==='needed'?'예약 확인':p.reservation==='booked'?'예약 완료':'예약 없음')+'</button><button class="'+(p.rain?'on':'')+'" onclick="fmToggle(\''+p.id+'\',\'rain\')">☔ 비 추천</button><button class="'+(p.excluded?'warn':'')+'" onclick="fmToggle(\''+p.id+'\',\'excluded\')">'+(p.excluded?'제외 해제':'후보 제외')+'</button><a href="'+esc(fmLink(p))+'" target="_blank" rel="noopener">지도 열기</a><a href="'+esc(fmDirectionsLink(p,'walking'))+'" target="_blank" rel="noopener">🚶 도보</a><a href="'+esc(fmDirectionsLink(p,'transit'))+'" target="_blank" rel="noopener">🚃 대중교통</a><a href="'+esc(fmDirectionsLink(p,'bicycling'))+'" target="_blank" rel="noopener">🚲 자전거</a></div>'+(fm2EtaTxt(p)?'<div class="xsmall" style="margin-top:8px">직선거리 기준 추정 · '+esc(fm2EtaTxt(p))+' · 실제 경로·환승·다음 차 시각은 위 버튼으로 구글맵에서 확인</div>':'')+'</div><div class="xcard"><h3><span class="tag">VIDEO</span>이 장소가 나오는 영상</h3><div class="xsmall">기본 검색 링크는 무료입니다. 정확한 영상 URL을 그룹으로 붙이거나 Gemini로 일본어 검색어를 확장할 수 있습니다.</div>'+p.videos.map((v,i)=>'<div class="fm-video"><div class="fm-video-head"><span>'+esc(v.name||('영상 '+(i+1)))+'</span><button onclick="fmDeleteVideo(\''+p.id+'\','+i+')">✕</button></div><div class="fm-video-links">'+(v.short?'<a class="short" href="'+esc(v.short)+'" target="_blank" rel="noopener">▶ 숏폼</a>':'')+(v.long?'<a href="'+esc(v.long)+'" target="_blank" rel="noopener">▶ 롱폼</a>':'')+'</div></div>').join('')+'<div class="xactions"><button class="xaction sub" onclick="fmAddVideo(\''+p.id+'\')">＋ 영상 그룹</button><button class="xaction sub" onclick="fmAiVideos(\''+p.id+'\')">✨ Gemini 검색어</button></div><div id="fmVideoOut"></div></div>'+spCardHTML(p)+'<div class="xcard"><h3><span class="tag">JAPANESE</span>이 장소에서 바로 쓸 말</h3><button class="xaction sub" onclick="fmSpotJapanese(\''+p.id+'\')">현장 일본어 카드 열기</button><div id="fmJpOut"></div></div>';}
 function fmAddVideo(id){const p=foodMap.places.find(x=>x.id===id);if(!p)return;const name=prompt('영상 그룹 이름','직접 찾은 영상');if(name===null)return;const sh=prompt('숏폼 URL (비우면 자동 검색)','')||fm2Yt(p.name+' '+name+' shorts'),lo=prompt('롱폼 URL (비우면 자동 검색)','')||fm2Yt(p.name+' '+name+' vlog');p.videos.push({name:name||'추가 영상',short:sh,long:lo});save('foodmap_v1',foodMap);fmRenderSpotTools();}
 function fmDeleteVideo(id,i){const p=foodMap.places.find(x=>x.id===id);if(!p||!confirm('이 영상 그룹을 삭제할까요?'))return;p.videos.splice(i,1);save('foodmap_v1',foodMap);fmRenderSpotTools();}
 async function fmAiVideos(id){const p=foodMap.places.find(x=>x.id===id),out=document.getElementById('fmVideoOut');if(!p)return;if(out)out.innerHTML='<div class="tool-result">일본어 검색어 생성 중…</div>';try{const prompt='후쿠오카 장소의 유튜브 검색어를 만든다. 장소명: '+p.name+', 주소: '+p.address+', 종류: '+p.kind+'. 실제 영상 URL을 추측하지 말고 일본어 검색어 조합 3개를 JSON 배열로만 답해. 형식: [{"name":"관점","short":"숏폼 검색어","long":"롱폼 검색어"}]';const t=await callGemini([{text:prompt}]),m=String(t).replace(/```json|```/g,'').match(/\[[\s\S]*\]/),a=m?JSON.parse(m[0]):[];a.forEach(x=>p.videos.push({name:x.name||'AI 검색',short:fm2Yt(x.short||p.name+' shorts'),long:fm2Yt(x.long||p.name+' vlog')}));save('foodmap_v1',foodMap);fmRenderSpotTools();}catch(e){if(out)out.innerHTML='<div class="tool-result">생성 실패: '+esc(e.message||e)+'</div>';}}
-async function fmYoutubeActual(){fmSaveApi(true);const p=foodMap.places.find(x=>x.id===foodMap.selected),out=document.getElementById('fmApiOut');if(!p){alert('먼저 장소를 선택해 주세요.');return;}if(!foodMap.youtubeKey){alert('YouTube Data API 키를 입력해 주세요. 무료 검색 링크는 키 없이도 사용 가능합니다.');return;}if(out)out.innerHTML='<div class="tool-result">YouTube에서 실제 영상 검색 중…</div>';try{const get=async q=>{const u='https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=3&q='+encodeURIComponent(q)+'&key='+encodeURIComponent(foodMap.youtubeKey),r=await fetch(u),j=await r.json();if(!r.ok)throw new Error(j.error&&j.error.message||('HTTP '+r.status));return j.items||[];};const z=await Promise.all([get(p.name+' 福岡 shorts'),get(p.name+' 福岡 vlog')]);for(let i=0;i<Math.max(z[0].length,z[1].length);i++){const s=z[0][i],l=z[1][i];p.videos.push({name:(l||s).snippet.title,short:s?'https://www.youtube.com/watch?v='+s.id.videoId:'',long:l?'https://www.youtube.com/watch?v='+l.id.videoId:''});}save('foodmap_v1',foodMap);renderFoodMap();}catch(e){if(out)out.innerHTML='<div class="tool-result">영상 검색 실패: '+esc(e.message||e)+'</div>';}}
+async function fmYoutubeActual(){fmSaveApi(true);const p=foodMap.places.find(x=>x.id===foodMap.selected),out=document.getElementById('fmApiOut');if(!p){alert('먼저 장소를 선택해 주세요.');return;}if(!foodMap.youtubeKey){alert('YouTube Data API 키를 입력해 주세요. 무료 검색 링크는 키 없이도 사용 가능합니다.');return;}if(out)out.innerHTML='<div class="tool-result">YouTube에서 실제 영상 검색 중…</div>';try{const get=async q=>{const u='https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=3&q='+encodeURIComponent(q)+'&key='+encodeURIComponent(foodMap.youtubeKey),r=await fetch(u),j=await r.json();if(!r.ok)throw new Error(j.error&&j.error.message||('HTTP '+r.status));return j.items||[];};const z=await Promise.all([get(p.name+' '+fmAreaHint()+' shorts'),get(p.name+' '+fmAreaHint()+' vlog')]);for(let i=0;i<Math.max(z[0].length,z[1].length);i++){const s=z[0][i],l=z[1][i];p.videos.push({name:(l||s).snippet.title,short:s?'https://www.youtube.com/watch?v='+s.id.videoId:'',long:l?'https://www.youtube.com/watch?v='+l.id.videoId:''});}save('foodmap_v1',foodMap);renderFoodMap();}catch(e){if(out)out.innerHTML='<div class="tool-result">영상 검색 실패: '+esc(e.message||e)+'</div>';}}
 /* ── 스팟 핵심정보 요약: 앱이 아는 것만 근거로 정리한다 ──
    34절 "AI가 게시물에서 추출할 정보"의 구현. 지어내기를 막는 것이 이 기능의 핵심이다.
    가격·메뉴를 환각하면 여행지에서 실제 피해가 되므로, 근거가 없으면 빈 값을 받는다.
@@ -3897,7 +3943,7 @@ function fmBulkOut(html){fmBulkLast=html||'';const el=document.getElementById('f
 function fmBulkCancel(){if(fmBulk.running){fmBulk.cancel=true;fmBulkOut('<div class="tool-result">중지 요청됨 — 현재 조회를 끝내고 멈춥니다.</div>');}}
 function fmNoCoordCount(){return foodMap.places.filter(p=>!fm2HasCoords(p)).length;}
 async function fmEnrichOne(p){
- const body={textQuery:(p.name||'')+' '+(p.address||'福岡'),languageCode:'ko',regionCode:'JP',maxResultCount:1,
+ const body={textQuery:(p.name||'')+' '+(p.address||fmAreaHint()),languageCode:'ko',regionCode:fmRegionCode(),maxResultCount:1,
   locationBias:{circle:{center:{latitude:33.5904,longitude:130.4017},radius:40000}}};
  const r=await fetch('https://places.googleapis.com/v1/places:searchText',{method:'POST',
   headers:{'Content-Type':'application/json','X-Goog-Api-Key':foodMap.apiKey,'X-Goog-FieldMask':'places.id,places.displayName,places.formattedAddress,places.location,places.primaryType,places.primaryTypeDisplayName,places.rating,places.userRatingCount,places.googleMapsUri,places.businessStatus,places.regularOpeningHours,places.currentOpeningHours'},
@@ -3982,7 +4028,7 @@ async function fmEnrichAll(){
  let html='<div class="tool-result">'+(stopped?'중지됨':'완료')+' — 성공 '+fmBulk.ok+'개 · 실패 '+fmBulk.fail.length+'개 · 남은 좌표 없음 '+fmNoCoordCount()+'개</div>';
  if(fmBulk.fail.length)html+='<div class="xsmall" style="margin-top:8px"><b>실패 — 장소 추가 화면에서 위경도를 직접 넣어 주세요</b><br>'+fmBulk.fail.map(x=>esc(x.name)+' — '+esc(x.msg)).join('<br>')+'</div>';
  fmBulkOut(html);renderFoodMap();}
-fmEnrichSelected=async function(){fmSaveApi(true);const p=foodMap.places.find(x=>x.id===foodMap.selected),out=document.getElementById('fmApiOut');if(!p){alert('먼저 목록에서 장소를 선택해 주세요.');return;}if(!foodMap.apiKey){alert('Places API 키를 입력해 주세요.');return;}if(out)out.innerHTML='<div class="tool-result">Places API에서 확인 중…</div>';try{const body={textQuery:p.name+' '+(p.address||'福岡'),languageCode:'ja',regionCode:'JP',maxResultCount:1};if(fm2HasCoords(p))body.locationBias={circle:{center:{latitude:+p.lat,longitude:+p.lng},radius:2000}};const r=await fetch('https://places.googleapis.com/v1/places:searchText',{method:'POST',headers:{'Content-Type':'application/json','X-Goog-Api-Key':foodMap.apiKey,'X-Goog-FieldMask':'places.id,places.displayName,places.formattedAddress,places.location,places.primaryType,places.primaryTypeDisplayName,places.rating,places.userRatingCount,places.googleMapsUri,places.regularOpeningHours.openNow,places.regularOpeningHours.weekdayDescriptions,places.businessStatus'},body:JSON.stringify(body)}),j=await r.json();if(!r.ok)throw new Error(j.error&&j.error.message||('HTTP '+r.status));const x=j.places&&j.places[0];if(!x)throw new Error('일치하는 장소를 찾지 못했습니다.');p.placeId=x.id||p.placeId;p.name=x.displayName&&x.displayName.text||p.name;p.address=x.formattedAddress||p.address;p.lat=x.location&&x.location.latitude||p.lat;p.lng=x.location&&x.location.longitude||p.lng;p.url=x.googleMapsUri||p.url;p.rating=x.rating||null;p.ratingCount=x.userRatingCount||0;p.openNow=x.regularOpeningHours&&x.regularOpeningHours.openNow;p.hours=x.regularOpeningHours&&x.regularOpeningHours.weekdayDescriptions||p.hours;p.businessStatus=x.businessStatus||'';p.placeType=x.primaryType||'';p.cat=fmInfer((x.primaryType||'')+' '+(x.primaryTypeDisplayName&&x.primaryTypeDisplayName.text||'')+' '+p.name);p.kind=fm2Kind(p.name+' '+p.placeType,p.cat);p.region=fm2Region(p.address+' '+p.name);save('foodmap_v1',foodMap);renderFoodMap();}catch(e){if(out)out.innerHTML='<div class="tool-result">보강 실패: '+esc(e.message||e)+'\nAPI 활성화·결제·키 제한을 확인해 주세요.</div>';}};
+fmEnrichSelected=async function(){fmSaveApi(true);const p=foodMap.places.find(x=>x.id===foodMap.selected),out=document.getElementById('fmApiOut');if(!p){alert('먼저 목록에서 장소를 선택해 주세요.');return;}if(!foodMap.apiKey){alert('Places API 키를 입력해 주세요.');return;}if(out)out.innerHTML='<div class="tool-result">Places API에서 확인 중…</div>';try{const body={textQuery:p.name+' '+(p.address||fmAreaHint()),languageCode:fmPlaceLang(),regionCode:fmRegionCode(),maxResultCount:1};if(fm2HasCoords(p))body.locationBias={circle:{center:{latitude:+p.lat,longitude:+p.lng},radius:2000}};const r=await fetch('https://places.googleapis.com/v1/places:searchText',{method:'POST',headers:{'Content-Type':'application/json','X-Goog-Api-Key':foodMap.apiKey,'X-Goog-FieldMask':'places.id,places.displayName,places.formattedAddress,places.location,places.primaryType,places.primaryTypeDisplayName,places.rating,places.userRatingCount,places.googleMapsUri,places.regularOpeningHours.openNow,places.regularOpeningHours.weekdayDescriptions,places.businessStatus'},body:JSON.stringify(body)}),j=await r.json();if(!r.ok)throw new Error(j.error&&j.error.message||('HTTP '+r.status));const x=j.places&&j.places[0];if(!x)throw new Error('일치하는 장소를 찾지 못했습니다.');p.placeId=x.id||p.placeId;p.name=x.displayName&&x.displayName.text||p.name;p.address=x.formattedAddress||p.address;p.lat=x.location&&x.location.latitude||p.lat;p.lng=x.location&&x.location.longitude||p.lng;p.url=x.googleMapsUri||p.url;p.rating=x.rating||null;p.ratingCount=x.userRatingCount||0;p.openNow=x.regularOpeningHours&&x.regularOpeningHours.openNow;p.hours=x.regularOpeningHours&&x.regularOpeningHours.weekdayDescriptions||p.hours;p.businessStatus=x.businessStatus||'';p.placeType=x.primaryType||'';p.cat=fmInfer((x.primaryType||'')+' '+(x.primaryTypeDisplayName&&x.primaryTypeDisplayName.text||'')+' '+p.name);p.kind=fm2Kind(p.name+' '+p.placeType,p.cat);p.region=fm2Region(p.address+' '+p.name);save('foodmap_v1',foodMap);renderFoodMap();}catch(e){if(out)out.innerHTML='<div class="tool-result">보강 실패: '+esc(e.message||e)+'\nAPI 활성화·결제·키 제한을 확인해 주세요.</div>';}};
 function fm2Download(name,obj){const b=new Blob([JSON.stringify(obj,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
 fmExport=function(){fm2Download('후쿠오카_개인지도_'+TODAY+'.json',{v:2,exported:TODAY,listName:foodMap.listName,places:foodMap.places});};
 function fmExportSale(){const fields=['name','cat','kind','region','address','url','lat','lng','placeId','rating','ratingCount','businessStatus','hours','videos'],spots=foodMap.places.filter(p=>!p.excluded).map(p=>{const x={};fields.forEach(k=>{if(p[k]!==undefined&&p[k]!==null&&p[k]!==''&&!(Array.isArray(p[k])&&!p[k].length))x[k]=p[k];});return x;});fm2Download('후쿠오카_판매용_스팟팩_'+TODAY+'.json',{v:2,publicSpotPack:true,exported:TODAY,listName:foodMap.listName,privacy:'개인 메모·위치·호텔·API 키·방문기록 제외',spots:spots});}
