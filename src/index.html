@@ -883,10 +883,10 @@ function closeOv(id){document.getElementById(id).classList.remove('show');}
 
 function saveAI(silent){ai.key=document.getElementById('gemKey').value.trim();
  ai.model=document.getElementById('gemModel').value.trim()||'gemini-flash-latest';
- save('ai',ai);renderAiStatus();if(!silent)alert('저장됨. 이제 기록 탭에서 AI 분석 사용 가능.');}
+ save('ai',ai);renderAiStatus();if(!silent)alert('저장했습니다. 이제 AI 하루 코스·여행 도우미·사진 분석이 켜집니다.');}
 function renderAiStatus(){const el=document.getElementById('aiStatus');if(!el)return;
  el.className='aistat '+(ai.key?'ok':'no');
- el.innerHTML=ai.key?'🟢 AI 연결됨 — 사진·칼로리·목표 자동분석 사용 가능':'⚪ 아직 AI 미설정 — 아래 3단계로 1분이면 켜져요';}
+ el.innerHTML=ai.key?'🟢 AI 연결됨 — 하루 코스·여행 도우미·사진 분석·현지 회화 사용 가능':'⚪ 아직 AI 미설정 — 아래 3단계로 2분이면 켜집니다. 무료이고 카드 등록은 없습니다';}
 async function testAI(){
  saveAI(true);
  if(!ai.key){alert('먼저 2단계에서 키를 붙여넣어줘.');return;}
@@ -3241,11 +3241,28 @@ function GUIDE_STEPS(){
    '다만 <b>거리·동네끼리 묶기·오늘 동선 짜기</b>는 위치 값이 있어야 계산됩니다.</p>'+
    '<p>넣고 나서 담기 화면 아래쪽 <b>좌표 일괄 채우기</b>로 채울 수 있습니다.</p></div>'},
 
- {t:'AI 켜기 (안 해도 됩니다)', done:hasKey,
-  d:'켜면 <b>하루 코스 자동 짜기·사진 분석·현장 회화 도우미</b>가 동작합니다. '+
-    '구글에서 <b>무료로</b> 받는 열쇠 하나만 붙여넣으면 되고, <b>카드 등록은 없습니다</b>. '+
-    '안 켜도 목록·지도·동선·예산은 전부 그대로 씁니다.',
-  a:'AI 켜는 곳 열기', s:1}
+ {t:'AI 켜기 · 2분이면 됩니다', done:hasKey,
+  d:'<b>켜시는 걸 권합니다.</b> 여기서 여섯 가지가 더 열립니다.',
+  how:
+   '<div class="fm-how"><b>켜면 되는 것</b>'+
+   '<ol>'+
+    '<li><b>AI가 하루 코스 짜주기</b> — 담아 둔 곳 중에서 오늘 갈 순서까지</li>'+
+    '<li><b>여행 도우미</b> — "지금 뭐 하지" 물으면 내 목록·예산·거리를 보고 답함</li>'+
+    '<li><b>사진 분석</b> — 찍은 사진에서 가게·먹은 것 알아보기</li>'+
+    '<li><b>링크만 붙여넣어도 가게 이름 알아내기</b></li>'+
+    '<li><b>그 가게에서 쓸 현지 회화</b> 즉석 생성</li>'+
+    '<li><b>일본어 원어민 음성</b>과 오늘 어휘·퀴즈</li>'+
+   '</ol></div>'+
+
+   '<div class="fm-how"><b>안 켜도 되는 것</b>'+
+   '<p>목록·지도·거리·동네 묶기·일정 배분·오늘 동선·예산·회화 카드는 <b>키 없이 그대로</b> 돕니다. '+
+   '나중에 켜도 되고, 켜는 순간 바로 쓰입니다.</p></div>'+
+
+   '<div class="fm-how"><b>돈 드나요? — 안 듭니다</b>'+
+   '<p>구글에서 <b>무료로</b> 받는 열쇠 하나를 붙여넣는 것뿐입니다. <b>카드 등록 화면이 없습니다.</b> '+
+   '열쇠는 <b>이 폰에만</b> 저장되고 저희를 포함해 아무 데도 안 보냅니다.</p>'+
+   '<p>다음 화면에 1·2·3 단계로 적어 뒀습니다. 구글 로그인 → <b>Create API key</b> → 복사 → 붙여넣기, 이게 전부입니다.</p></div>',
+  a:'AI 켜러 가기', s:1}
  ];
 }
 /* 이름표 붙은 입력 칸. hint 는 숫자의 뜻이 애매할 때만 쓴다. */
