@@ -1735,6 +1735,37 @@ function renderFoodMap(){
  fmRenderList();fmRenderMap();
 }
 function fmSearch(v){foodMap.q=v;save('foodmap_v1',foodMap);fmRenderList();}
+
+/* ── 검색·붙여넣기 한 칸 ─────────────────────────────────────────────────
+   붙여넣은 것이 주소면 담고, 아니면 거른다. 사용자가 먼저 판단하지 않아도 되게 한다. */
+function fmIsUrl(v){
+ v=String(v||'').trim();
+ if(/\s/.test(v))return false;
+ return /^https?:\/\/\S+$/i.test(v)||/^(www\.|maps\.app\.goo\.gl|goo\.gl|naver\.me|vt\.tiktok\.com|youtu\.be)\S+$/i.test(v);
+}
+function fmOneInput(v){
+ const hint=document.getElementById('fmOneHint');
+ if(fmIsUrl(v)){
+  if(hint)hint.textContent='링크네요 — 오른쪽 담기를 누르면 인박스에 들어갑니다.';
+  return;                     /* 주소를 검색어로 쓰면 목록이 통째로 비어 놀란다 */
+ }
+ if(hint)hint.textContent='';
+ fmSearch(v);
+}
+/* 오른쪽 버튼 하나가 상황에 따라 담기도 하고 지우기도 한다. */
+function fmOneGo(){
+ const el=document.getElementById('fmSearch');if(!el)return;
+ const v=(el.value||'').trim();
+ if(fmIsUrl(v)){
+  /* 담은 결과를 보여주려면 인박스 패널이 열려 있어야 한다. 열림 상태를 먼저 켠다. */
+  foodMap.panels=foodMap.panels||{};foodMap.panels.inbox=true;
+  const u=document.getElementById('ibUrl');
+  if(u){u.value=v;ibAdd();}       /* ibAdd 가 저장하고 다시 그린다 */
+  else{foodMap.q='';save('foodmap_v1',foodMap);renderFoodMap();}
+  return;
+ }
+ el.value='';fmSearch('');
+}
 function fmSetFilter(v){foodMap.filter=v;save('foodmap_v1',foodMap);renderFoodMap();}
 function fmToggleAdd(){const el=document.getElementById('fmAddBox');if(el)el.style.display=el.style.display==='none'?'block':'none';}
 function fmRenderList(){const el=document.getElementById('fmList');if(!el)return;const a=fmFiltered(),show=a.slice(0,250);
@@ -3501,7 +3532,8 @@ renderFoodMap=function(){
    '<div class="importbox" style="margin-bottom:12px'+(total?'':';display:none')+'"><div class="xeyebrow">GOOGLE TAKEOUT · 무료</div><div class="xsmall" style="margin:7px 0 10px">Takeout의 저장됨(Saved)에서 ZIP을 풀고 <b style="color:var(--wasabi)">여행 계획.csv</b>를 불러오세요. 같은 파일을 연결해 두면 수정본을 열 때 자동 확인합니다.</div><input type="file" id="fmImp" accept=".csv,text/csv,.json,.geojson,.kml,application/json,application/geo+json,application/vnd.google-earth.kml+xml" style="display:none" onchange="fmImport(this)"><div class="xactions"><button class="xaction" onclick="document.getElementById(\'fmImp\').click()">📥 CSV·백업 불러오기</button><button class="xaction sub" onclick="fmLinkCsv()">🔗 CSV 파일 연결</button><button class="xaction sub" onclick="fmCheckLinkedCsv(false)">↻ 연결 파일 확인</button><button class="xaction sub" onclick="fmExport()">📤 개인 백업</button>'+(SALE_MODE?'':'<button class="xaction sub" onclick="fmExportSale()">🛡 판매용 스팟팩</button>')+'</div><div class="xsmall" style="margin-top:8px">'+(foodMap.linkedCsvName?'연결됨: <b style="color:var(--text)">'+esc(foodMap.linkedCsvName)+'</b> · 마지막 반영 '+esc(foodMap.linkedCsvAt||'확인 전'):'연결 없음 · 크롬 계열 지원, 그 외 브라우저는 수동 재가져오기')+'</div></div>'+
   fmGuideHTML()+ibHTML()+
    '<div'+(total?'':' style="display:none"')+'>'+
-   '<div class="fm-toolbar"><input class="xinput" id="fmSearch" value="'+esc(foodMap.q||'')+'" placeholder="가게명·지역·음식·메모 검색" oninput="fmSearch(this.value)"><button class="btn" onclick="fmToggleAdd()">＋ 추가</button></div><div class="fm-cats">'+FM_CATS.map(x=>'<button class="'+((foodMap.filter||'전체')===x?'on':'')+'" onclick="fmSetFilter(\''+x+'\')">'+x+'</button>').join('')+'</div>'+
+   '<div class="fm-toolbar"><input class="xinput" id="fmSearch" value="'+esc(foodMap.q||'')+'" placeholder="검색하거나 링크를 붙여넣으세요" oninput="fmOneInput(this.value)"><button class="btn" onclick="fmOneGo()">담기</button><button class="btn" onclick="fmToggleAdd()">＋</button></div>'+
+   '<div class="xsmall" id="fmOneHint" style="margin:-4px 0 8px 2px;color:var(--wasabi)"></div><div class="fm-cats">'+FM_CATS.map(x=>'<button class="'+((foodMap.filter||'전체')===x?'on':'')+'" onclick="fmSetFilter(\''+x+'\')">'+x+'</button>').join('')+'</div>'+
    '<div class="fm-filter-grid"><select class="xselect" onchange="fmSetRegion(this.value)">'+fm2Opts(FM_REGIONS,foodMap.region)+'</select><select class="xselect" onchange="fmSetKind(this.value)">'+fm2Opts(FM_KINDS,foodMap.kind)+'</select><select class="xselect" onchange="fmSetStatus(this.value)">'+fm2Opts(FM_STATUS,foodMap.status)+'</select><select class="xselect" onchange="fmSetSort(this.value)">'+fm2Opts(FM_SORTS,foodMap.sort)+'</select></div>'+
    '<div id="fmAddBox" style="display:none" class="xcard"><h3><span class="tag">NEW</span>장소 직접 추가</h3><div class="fm-grid"><input class="xinput wide" id="fmName" placeholder="장소 이름"><select class="xselect" id="fmCat">'+opts+'</select><select class="xselect" id="fmRegion">'+fm2Opts(FM_REGIONS.slice(1),'기타 지역')+'</select><input class="xinput wide" id="fmUrl" placeholder="구글맵 공유 URL"><input class="xinput" id="fmLat" type="number" step="any" placeholder="위도 (선택)"><input class="xinput" id="fmLng" type="number" step="any" placeholder="경도 (선택)"><textarea class="xta wide" id="fmNote" placeholder="먹을 메뉴·메모"></textarea></div><div class="xactions"><button class="xaction" onclick="fmAdd()">저장</button></div></div>'+
   '</div>'+
