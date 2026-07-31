@@ -1,10 +1,10 @@
 {
-  "created_at": "2026-07-30",
+  "created_at": "2026-07-31",
   "personal": {
     "file": "private/personal.html",
     "sha256_at_handoff": "23bc6365c08a4f67dc9b6e8d88a9a912c52458d03b4487dcc4518213818d63fd",
     "protected": {
-      "root": "3f4ac4ea2e40dca01ec2f6f850ef5c3cfd64f2d8d3395976f25053394472e123"
+      "root": "9ebd6e67d96b4f1e93664c92e8263e623fef3a0f8d2f911385f320f0f4d46256"
     },
     "required_storage_keys": [
       "ai",
@@ -19,7 +19,7 @@
     "file": "src/index.html",
     "sha256_at_handoff": "00ee75162720103692835afbade9af58189863a10a99983b29402c935fe993c9",
     "protected": {
-      "root": "3f4ac4ea2e40dca01ec2f6f850ef5c3cfd64f2d8d3395976f25053394472e123"
+      "root": "9ebd6e67d96b4f1e93664c92e8263e623fef3a0f8d2f911385f320f0f4d46256"
     },
     "required_storage_keys": [
       "ai",

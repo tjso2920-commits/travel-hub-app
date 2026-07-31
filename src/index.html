@@ -706,16 +706,21 @@ async function testAI(){
   el.className='aistat ok';el.innerHTML='🟢 연결 성공! 이제 사진·칼로리·목표 AI 기능이 작동해요';
  }catch(e){el.className='aistat no';el.innerHTML='🔴 연결 실패: '+((e&&e.message)||e||'오류')+'<br>→ 3단계 모델명을 gemini-2.5-flash 로 바꿔서 다시';}
 }
-async function callGemini(parts){
+/* cfg 는 generationConfig. JSON 스키마 강제·온도 지정에 쓴다.
+   옛 모델은 이 필드들을 몰라 400 을 뱉으므로, 그때는 cfg 없이 한 번 더 시도한다. */
+async function callGemini(parts,cfg){
  if(!ai.key){alert('설정(⚙)에서 Gemini API 키를 먼저 저장해줘.\n(aistudio.google.com → Get API key, 무료)');throw 0;}
  const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(ai.model)}:generateContent?key=${encodeURIComponent(ai.key)}`;
- let last;
+ let last,noCfg=false;
  for(let attempt=0;attempt<3;attempt++){
   try{
-   const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:parts}]})});
+   const body={contents:[{parts:parts}]};
+   if(cfg&&!noCfg)body.generationConfig=cfg;
+   const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
    const j=await r.json();
-   if(r.ok)return j.candidates[0].content.parts.map(p=>p.text||'').join('');
+   if(r.ok)return (((j.candidates||[])[0]||{}).content||{parts:[]}).parts.map(p=>p.text||'').join('');
    last=new Error(j.error&&j.error.message||('HTTP '+r.status));
+   if(cfg&&!noCfg&&r.status===400){noCfg=true;attempt--;continue;}
    const retriable=r.status===503||r.status===500||/high demand|overloaded|try again|temporar/i.test(last.message);
    if(!retriable||attempt===2)throw last;
   }catch(e){last=e;if(attempt===2)throw last;}
@@ -2094,6 +2099,99 @@ function csBuild(){
  save('foodmap_v1',foodMap);renderFoodMap();
 }
 function csClear(){foodMap.course=null;save('foodmap_v1',foodMap);renderFoodMap();}
+
+/* ── AI 하루 코스 ────────────────────────────────────────────────────────
+   AI 는 후보 중에서 고르고 순서만 정한다. 시각·도보·거리는 전부 여기서 계산한다.
+   그래야 "18:30 도착" 같은 숫자가 지어낸 값이 되지 않는다. */
+const CS_AI_MAX=40;
+function csAiPool(){
+ const origin=fmOrigin();
+ return fmFiltered()
+  .filter(p=>!p.visited&&!p.excluded)
+  .map(p=>{const d=(origin&&fm2HasCoords(p)&&fm2HasCoords(origin))?fmGpsDistance(origin,p)/1000:null;return{p:p,d:d};})
+  .sort((a,b)=>(a.d===null)-(b.d===null)||((a.d||0)-(b.d||0)))
+  .slice(0,CS_AI_MAX);
+}
+const CS_AI_RULES=[
+ '너는 여행 하루 동선을 짜는 도우미다.',
+ '아래 [후보] 목록에 있는 장소만 고른다. 목록에 없는 가게를 만들어내면 안 된다.',
+ 'id 는 반드시 목록에 적힌 값을 그대로 쓴다.',
+ '고를 때 기준:',
+ '1) 하루의 흐름을 만든다. 끼니 시간에는 식사, 사이에는 카페나 구경, 늦은 시간에는 술.',
+ '2) 같은 종류를 연달아 넣지 않는다. 라멘 다음에 또 라멘은 안 된다.',
+ '3) 이동이 적게 가까운 곳끼리 묶는다. 왔다 갔다 하지 않게 한다.',
+ '4) "영업 아님"으로 적힌 곳은 피한다.',
+ 'reason 은 왜 이 순서에 이 집인지 한 줄로 쓴다. 20자 안팎. 없는 정보(맛·가격·메뉴)는 쓰지 않는다.',
+ 'title 은 그 날의 흐름을 나타내는 짧은 제목. 15자 안팎.'
+].join('\n');
+const CS_AI_SCHEMA={type:'OBJECT',properties:{
+ title:{type:'STRING'},
+ stops:{type:'ARRAY',items:{type:'OBJECT',properties:{
+  id:{type:'STRING'},reason:{type:'STRING'}},required:['id','reason']}}},
+ required:['title','stops']};
+
+async function csAiBuild(){
+ const btn=document.getElementById('csAiBtn');
+ if(!ai.key){alert('AI 코스는 Gemini 키가 있어야 합니다.\n설정(⚙)에서 키를 먼저 저장해 주세요.');return;}
+ const pool=csAiPool();
+ if(pool.length<2){alert('후보가 부족합니다.\n구역 선택을 풀거나 필터를 넓혀 보세요.');return;}
+ const hour=csStartHour(),max=csMax();
+ if(btn){btn.disabled=true;btn.textContent='AI가 짜는 중…';}
+ try{
+  const lines=pool.map(o=>{const p=o.p;
+   return [p.id,p.name,p.cat||'기타',p.kind||'',p.region||'',
+    o.d!==null?o.d.toFixed(1)+'km':'거리모름',
+    p.rating?'평점'+p.rating:'',
+    p.openNow===false?'영업 아님':(p.openNow===true?'영업 중':'')
+   ].filter(Boolean).join(' | ');});
+  const ctx='[상황]\n시작 '+hour+'시 · 최대 '+max+'곳'+
+   (foodMap.hotel&&foodMap.hotel.name?' · 숙소 '+foodMap.hotel.name:'')+
+   (wxTxt(TODAY)?' · 오늘 날씨 '+wxTxt(TODAY):'')+
+   (wxRainy(TODAY)?' (비 예보라 실내를 늘려라)':'')+
+   (bgPerDay()!==null?' · 오늘 예산 '+bgYen(bgPerDay()):'');
+  const t=await callGemini([{text:CS_AI_RULES+'\n\n'+ctx+'\n\n[후보] id | 이름 | 분류 | 음식 | 구역 | 거리 | 평점 | 영업\n'+lines.join('\n')}],
+   {temperature:.5,responseMimeType:'application/json',responseSchema:CS_AI_SCHEMA});
+  const j=JSON.parse(String(t).replace(/```json|```/g,'').trim());
+  /* 목록에 없는 id 는 버린다. AI 가 지어낸 가게가 일정에 들어가면 안 된다. */
+  const byId=new Map(pool.map(o=>[o.p.id,o.p]));
+  const seen=new Set(),chosen=[];
+  (Array.isArray(j.stops)?j.stops:[]).forEach(x=>{
+   const p=byId.get(String(x&&x.id||''));
+   if(!p||seen.has(p.id)||chosen.length>=max)return;
+   seen.add(p.id);chosen.push({p:p,why:String(x.reason||'').slice(0,40)});
+  });
+  if(chosen.length<2){alert('AI 결과를 쓸 수 없어 기본 방식으로 짭니다.');csBuild();return;}
+  csApply(chosen,hour,String(j.title||'').slice(0,30));
+ }catch(e){
+  if(e)alert('AI 코스 실패: '+((e&&e.message)||e)+'\n기본 방식으로 짭니다.');
+  csBuild();
+ }finally{const n=document.getElementById('csAiBtn');if(n){n.disabled=false;n.textContent='✨ AI가 하루 짜주기';}}
+}
+/* 고른 결과를 코스로 굳힌다. 시각·도보는 규칙 기반과 같은 계산을 쓴다. */
+function csApply(chosen,hour,title){
+ const stops=[];let t=hour*60,prev=fmOrigin();
+ chosen.forEach(o=>{
+  const p=o.p,g=csGoal(csGuessGoal(p,t))||csGoal('식사');
+  const walk=(prev&&fm2HasCoords(prev)&&fm2HasCoords(p))?Math.max(1,Math.round((fmGpsDistance(prev,p)/1000*1.3)/4.5*60)):0;
+  t+=walk;
+  stops.push({id:p.id,name:p.name,goal:g.k,walk:walk,at:t,dwell:g.dwell,why:o.why});
+  t+=g.dwell;prev=p;
+ });
+ foodMap.course={made:TODAY,startHour:hour,goals:csSel().slice(),stops:stops,
+  endAt:t,walkTotal:stops.reduce((a,x)=>a+x.walk,0),title:title,ai:true};
+ save('foodmap_v1',foodMap);renderFoodMap();
+}
+/* 분류와 시각으로 목적을 고른다. 체류 시간이 여기서 정해진다. */
+function csGuessGoal(p,minute){
+ const h=Math.floor(minute/60)%24,c=p.cat||'';
+ if(c==='카페·디저트')return '카페';
+ if(c==='바·이자카야')return '술';
+ if(c==='관광·명소')return '관광';
+ if(c==='쇼핑')return '쇼핑';
+ if(c==='사우나·온천')return '사우나';
+ if(h>=21||h<5)return '술';
+ return '식사';
+}
 function csHM(m){const h=Math.floor(m/60)%24,mm=m%60;return String(h).padStart(2,'0')+':'+String(mm).padStart(2,'0');}
 function csPlaces(){const c=foodMap.course;if(!c)return[];return c.stops.map(s=>foodMap.places.find(p=>p.id===s.id)).filter(Boolean);}
 function csHTML(){
@@ -2101,21 +2199,26 @@ function csHTML(){
  const chips=CS_GOALS.map(g=>'<button class="'+(sel.indexOf(g.k)>=0?'on':'')+'" onclick="csToggle(\''+g.k+'\')">'+g.k+(csFits(g,hour)?'':' ·시간대밖')+'</button>').join('');
  let body='';
  if(c&&c.stops.length){
-  body='<div class="fm-course-list">'+c.stops.map((s,i)=>
+  body=(c.title?'<div style="margin-top:8px;font-size:15px;font-weight:800;color:var(--text)">'+esc(c.title)+
+    (c.ai?' <span class="tag">AI</span>':'')+'</div>':'')+
+   '<div class="fm-course-list">'+c.stops.map((s,i)=>
    '<div class="fm-course-row"><b>'+(i+1)+'</b><span>'+csHM(s.at)+' · '+esc(s.name)+
-   '<i>'+esc(s.goal)+(s.walk?' · 도보 '+s.walk+'분':'')+' · 체류 '+s.dwell+'분</i></span>'+
+   '<i>'+esc(s.goal)+(s.walk?' · 도보 '+s.walk+'분':'')+' · 체류 '+s.dwell+'분'+
+   (s.why?'<br>'+esc(s.why):'')+'</i></span>'+
    '<button class="xaction sub" onclick="fmSelect(\''+s.id+'\')">보기</button></div>').join('')+'</div>'+
    '<div class="xsmall" style="margin-top:8px">종료 예상 '+csHM(c.endAt)+' · 총 도보 '+c.walkTotal+'분'+
    (bgPerDay()!==null?' · 오늘 권장 예산 '+bgYen(bgPerDay()):'')+
    '<br>직선거리 기준 추정입니다. 실제 경로는 아래 버튼으로 구글 지도에서 확인하세요.</div>'+
    (wxRainy(TODAY)?'<div class="xsmall" style="margin-top:8px">오늘 강수확률 '+wxFor(TODAY).pop+'% — 실내 비중이 높은 후보로 갈아타려면 아래 날씨 카드의 버튼을 쓰세요.</div>':'')+
    '<div class="xactions"><a class="xaction" href="'+esc(fmRouteLink(csPlaces()))+'" target="_blank" rel="noopener">구글 지도로 코스 열기</a>'+
+   '<button class="xaction sub" id="csAiBtn" onclick="csAiBuild()">✨ AI가 하루 짜주기</button>'+
    '<button class="xaction sub" onclick="csReplanNow()">지금부터 다시</button>'+
    '<button class="xaction sub" onclick="csBuild()">다시 짜기</button>'+
    '<button class="xaction sub" onclick="csClear()">지우기</button></div>';
  }else{
   body='<div class="xsmall" style="margin-top:8px">목적과 시작 시각을 고르고 코스를 만드세요. 구역을 선택해 두면 그 구역 안에서만 짭니다.</div>'+
-   '<div class="xactions"><button class="xaction" onclick="csBuild()">코스 만들기</button></div>';
+   '<div class="xactions"><button class="xaction" id="csAiBtn" onclick="csAiBuild()">✨ AI가 하루 짜주기</button>'+
+   '<button class="xaction sub" onclick="csBuild()">직접 조건으로 짜기</button></div>';
  }
  const sum=(c&&c.stops.length)?(c.stops.length+'곳 · '+csHM(c.stops[0].at)+'~'+csHM(c.endAt)+' · 도보 '+c.walkTotal+'분'):'코스 없음';
  return fmPanel('course','COURSE','오늘 동선',sum,
