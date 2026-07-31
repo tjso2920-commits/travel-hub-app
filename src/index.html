@@ -319,7 +319,21 @@
   .sp-map,.sp-photo{border-radius:14px;overflow:hidden;border:1px solid var(--line);position:relative;
     background:var(--surface2)}
   .sp-visual.both .sp-map,.sp-visual.both .sp-photo{height:168px}
-  .sp-photo img{display:block;width:100%;height:100%;max-height:230px;object-fit:cover}
+  .sp-photo{background:#fff;padding:7px 7px 7px;box-shadow:inset 0 0 0 1px rgba(34,48,58,.06)}
+  .sp-photo img{display:block;width:100%;height:100%;max-height:230px;object-fit:cover;border-radius:10px}
+  /* ── 폴라로이드 ─────────────────────────────────────────────────────────
+     흰 테두리와 아주 살짝 기울어진 각도. 그것만으로 '기록'처럼 보인다.
+     화면 회전은 레이아웃을 밀지 않으므로 목록이 흐트러지지 않는다. */
+  .polas{display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;padding:2px}
+  .pola{background:#fff;padding:9px 9px 30px;border-radius:4px;
+    box-shadow:0 5px 16px rgba(46,74,90,.14);transform:rotate(-1.6deg);position:relative}
+  .pola:nth-child(even){transform:rotate(1.8deg)}
+  .pola:nth-child(3n){transform:rotate(-.7deg)}
+  .pola img{display:block;width:126px;height:126px;object-fit:cover;border-radius:2px;background:var(--surface2)}
+  .pola b{position:absolute;left:0;right:0;bottom:8px;text-align:center;font-size:10.5px;font-weight:700;
+    color:var(--muted);padding:0 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pola .x{position:absolute;right:-8px;top:-8px;width:26px;height:26px;border:none;border-radius:50%;
+    background:rgba(34,48,58,.72);color:#fff;font-size:13px;cursor:pointer;line-height:1}
   .sp-visual.both .sp-photo img{max-height:none}
   .sp-photo button{position:absolute;right:6px;top:6px;width:44px;height:44px;border:none;border-radius:50%;
     background:rgba(31,37,42,.62);color:#fff;font-size:16px;cursor:pointer;z-index:2}
@@ -469,21 +483,29 @@
      야외에서 한 손으로 보는 앱이다. 명암 대비를 세게 잡고, 장식보다 읽히는 것을 우선한다.
      기존 :root·폰트·기능 CSS는 그대로 두고 마지막에 시각 레이어만 덮어쓴다.
      이전 테마(GRAPHITE WARM)는 git 이력에 남아 있다. */
-  html{background:#F4F3F0}
+  html{background:#E7EFF1}
   body{
-    --bg:#F4F3F0;--surface:#FFFFFF;--surface2:#EDECE8;--raise:#E3E1DC;
-    --text:#1F252A;--muted:#5C666E;--faint:#717C85;
-    --wasabi:#33718E;--wasabi-deep:#245A75;
+    --bg:#E7EFF1;--surface:#FFFFFF;--surface2:#EFF4F4;--raise:#E2EAEA;
+    --text:#22303A;--muted:#5A6B76;--faint:#78878F;
+    --wasabi:#3E7F9C;--wasabi-deep:#2C6580;
     --ember:#C2621D;--ember-soft:#9E4D12;
-    --accent:#33718E;
-    --line:rgba(31,37,42,.10);--line2:rgba(31,37,42,.17);
-    background-color:#F4F3F0;
-    background-image:radial-gradient(78% 40% at 8% -4%,rgba(51,113,142,.07),transparent 62%),radial-gradient(70% 36% at 100% 2%,rgba(194,98,29,.045),transparent 66%),linear-gradient(180deg,#FAFAF8 0%,#F4F3F0 52%,#EFEEEA 100%);
+    --mint:#4FB3A5;--mint-deep:#3A9488;
+    --accent:#3E7F9C;
+    /* 선을 거의 지우고 그림자로 띄운다. 선이 굵으면 딱딱해 보인다. */
+    --line:rgba(34,48,58,.07);--line2:rgba(34,48,58,.12);
+    --r:20px;              /* 카드 모서리 */
+    --pill:999px;          /* 버튼·칩은 완전한 알약 */
+    --sh:0 6px 20px rgba(46,74,90,.07);
+    background-color:#E7EFF1;
+    background-image:linear-gradient(180deg,#DFEBEE 0%,#E9F1F0 38%,#F0F3F0 72%,#F3F4F1 100%);
+    background-attachment:fixed;
   }
   ::selection{background:rgba(51,113,142,.22);color:#12181C}
 
-  header{background:linear-gradient(135deg,rgba(51,113,142,.055),rgba(194,98,29,.03));border-bottom-color:rgba(31,37,42,.09)}
-  nav{background:rgba(255,255,255,.94);border-bottom-color:rgba(31,37,42,.09);box-shadow:0 6px 18px rgba(31,37,42,.05)}
+  header{background:transparent;border-bottom-color:transparent}
+  nav{background:rgba(255,255,255,.72);backdrop-filter:saturate(1.6) blur(14px);
+    -webkit-backdrop-filter:saturate(1.6) blur(14px);
+    border-bottom-color:rgba(34,48,58,.06);box-shadow:none}
   nav button{color:#616C75}
   nav button.on{color:#245A75}
   nav button.on::after{background:#33718E;box-shadow:none}
@@ -493,20 +515,37 @@
   .h-goal .to,.h-goal .cur b{color:#245A75}
 
   /* 카드: 흰 면 + 아주 옅은 테두리 + 얕은 그림자. 플롯라인의 카드 인상. */
-  .g-card,.day,.gaugebox,.flist,.burnrow,.rule,.ptable,.xstat,.xcard,.place,.modal{
-    background:#FFFFFF;border-color:rgba(31,37,42,.10);box-shadow:0 2px 10px rgba(31,37,42,.05)
+  .g-card,.day,.gaugebox,.flist,.burnrow,.rule,.ptable,.xstat,.xcard,.place,.modal,
+  .importbox,.fm-panel,.fm-gps-card,.tcard{
+    background:#FFFFFF;border-color:transparent;border-radius:var(--r);box-shadow:var(--sh)
   }
+  /* 버튼·칩은 전부 알약으로. 각진 모서리가 딱딱함의 절반이다. */
+  .btn,.xaction,.fm-cats button,.xmode button,.sh-stat button,.fm-status-actions button,
+  .fm-status-actions a,.place-btns button,.place-btns a,.mb-save,.mb-cancel,.sbtn,
+  .fm-badge,.place-cat,.tag,.h-dday,.fm-gps-chip,.xselect,.xinput,.set-in,
+  .modal input,.modal-btns button,.fm-quick button,.sp-quick button,.sp-open,.tcard .tbtns button{
+    border-radius:var(--pill)
+  }
+  .xta,.fm-map,.sp-map,.sp-photo,.fr-dest input{border-radius:16px}
+  .xhero,.landing-card,.fm-decision,.sp-sheet{border-radius:24px}
   .day.today{border-color:rgba(51,113,142,.45);box-shadow:0 2px 12px rgba(51,113,142,.12)}
   .landing-card{background:#FFFFFF;border-color:rgba(31,37,42,.12);box-shadow:0 3px 14px rgba(31,37,42,.07)}
   .landing-card:active{border-color:rgba(51,113,142,.45)}
   .overlay{background:rgba(31,37,42,.42)}
   .modal{background:#FFFFFF;box-shadow:0 -6px 40px rgba(31,37,42,.16)}
-  .xhero{background:linear-gradient(140deg,#FFFFFF 0%,#F7F9FA 60%,rgba(51,113,142,.07) 100%);
-    border-color:rgba(31,37,42,.11);box-shadow:0 3px 16px rgba(31,37,42,.06)}
+  .xhero{background:linear-gradient(145deg,#FFFFFF 0%,#F4F9FA 52%,rgba(79,179,165,.10) 100%);
+    border-color:transparent;box-shadow:var(--sh)}
   .xbar{background:#E3E1DC}
   .xbar i{background:linear-gradient(90deg,#245A75,#3E86A6);box-shadow:none}
   .xmode button,.fm-cats button{background:#FFFFFF;border-color:rgba(31,37,42,.14)}
-  .xmode button.on,.fm-cats button.on{background:#33718E;border-color:#33718E;color:#FFFFFF}
+  .xmode button.on,.fm-cats button.on{background:#3E7F9C;border-color:#3E7F9C;color:#FFFFFF}
+  /* 두 번째 강조는 민트. 파랑 하나만 쓰면 화면이 단조롭고 차갑다. */
+  .xaction.sub{border-color:rgba(34,48,58,.12)}
+  .fm-badge.good{color:var(--mint-deep);border-color:rgba(79,179,165,.4);background:rgba(79,179,165,.10)}
+  .tag{background:rgba(79,179,165,.14);color:var(--mint-deep)}
+  .fm-decision{border-color:rgba(79,179,165,.3);background:linear-gradient(180deg,rgba(79,179,165,.07),#FFF)}
+  .sp-open{background:linear-gradient(135deg,#3E7F9C,#4691AF)}
+  .place.picking.on .fm-check{background:var(--mint);border-color:var(--mint)}
 
   .h-dday,.prog,.role-main,.place-cat,.fm-badge.good{background-color:rgba(51,113,142,.10)}
   .rule.hot,.xcard.hot{border-color:rgba(194,98,29,.30);background:linear-gradient(180deg,rgba(194,98,29,.05),#FFFFFF)}
@@ -3276,8 +3315,15 @@ function tjHTML(){
   }).join('');
   const dayAmt=g.items.filter(x=>x.k==='spend').reduce((a,x)=>a+x.amt,0);
   const wd=/^\d{4}-\d{2}-\d{2}$/.test(g.d)?(' ('+WD[new Date(g.d+'T00:00:00').getDay()]+')'):'';
+  /* 그날 다녀온 곳 중 사진이 있는 것을 폴라로이드로 깐다. 글자만 있으면 기록이 안 남는 느낌이다. */
+  const pics=foodMap.places.filter(function(p){
+   return p.photo&&p.visited&&String(p.visitedAt||'').slice(0,10)===g.d;});
+  const pola=pics.length?'<div class="polas">'+pics.map(function(p){
+   return '<div class="pola"><img src="'+esc(p.photo)+'" alt="'+esc(p.name)+'"><b>'+esc(p.name)+'</b></div>';
+  }).join('')+'</div>':'';
   return '<details class="fm-plan-day"><summary>'+esc(g.d)+wd+' · '+g.items.length+'건'+
-   (dayAmt?' · '+bgYen(dayAmt):'')+'</summary><div class="fm-plan-list">'+rows+'</div></details>';
+   (dayAmt?' · '+bgYen(dayAmt):'')+(pics.length?' · 사진 '+pics.length:'')+
+   '</summary>'+pola+'<div class="fm-plan-list">'+rows+'</div></details>';
  }).join('');
  return fmPanel('journal','LOG','여행 일지',sum,
   '<div class="xsmall">기록한 날 '+days.length+'일 · 방문 '+visits+'곳 · 총 지출 '+bgBoth(spent)+
