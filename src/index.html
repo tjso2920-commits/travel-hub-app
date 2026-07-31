@@ -2005,6 +2005,128 @@ function fmSpotQuick(k){
 function fmSpotMore(){closeOv('ovSpot');showTab('now');
  const el=document.getElementById('fmSpotTools');if(el)el.scrollIntoView({behavior:'smooth',block:'start'});}
 
+/* ── 공유 카드 ───────────────────────────────────────────────────────────
+   인스타 세로 비율(4:5). 폰에서 잘리지 않고 글씨가 읽히는 크기다. */
+const SC_W=1080,SC_H=1350;
+function scLoadTile(url){
+ return new Promise(res=>{
+  const im=new Image();
+  im.crossOrigin='anonymous';          /* 이게 없으면 그린 뒤에 저장이 막힌다 */
+  im.onload=()=>res(im); im.onerror=()=>res(null);
+  im.src=url;
+ });
+}
+async function scDraw(){
+ const c=foodMap.course;
+ if(!c||!c.stops.length)throw new Error('먼저 오늘 동선을 만들어 주세요.');
+ const stops=csPlaces();
+ const cv=document.createElement('canvas');cv.width=SC_W;cv.height=SC_H;
+ const x=cv.getContext('2d');
+ const F=(w,sz)=>w+' '+sz+'px ui-rounded,-apple-system,"Apple SD Gothic Neo",sans-serif';
+
+ x.fillStyle='#F4F3F0';x.fillRect(0,0,SC_W,SC_H);
+
+ /* 머리말 */
+ x.fillStyle='#33718E';x.font=F(800,30);
+ x.fillText((affDest()||'여행')+' · '+(c.stops.length)+'곳',64,96);
+ x.fillStyle='#1F252A';x.font=F(800,62);
+ const title=(c.title||'오늘 동선').slice(0,16);
+ x.fillText(title,64,172);
+
+ /* 지도 */
+ const MX=64,MY=214,MW=SC_W-128,MH=520;
+ x.save();
+ x.beginPath();
+ if(x.roundRect)x.roundRect(MX,MY,MW,MH,28); else x.rect(MX,MY,MW,MH);
+ x.clip();
+ x.fillStyle='#E8E6E1';x.fillRect(MX,MY,MW,MH);
+
+ const pts=stops.filter(fm2HasCoords);
+ let ok=false;
+ if(pts.length){
+  const b=fm2Bounds(pts.length>1?pts:[pts[0],pts[0]]);
+  const pad=pts.length>1?0.0006:0.0022;
+  const bb={minLat:b.minLat-pad,maxLat:b.maxLat+pad,minLng:b.minLng-pad,maxLng:b.maxLng+pad};
+  const L=fmTileLayer(bb,MW,MH,40);
+  const sc=Math.min(MW/L.W,MH/L.H);
+  const ox=MX+(MW-L.W*sc)/2, oy=MY+(MH-L.H*sc)/2;
+  /* 타일을 실제로 받아서 그린다. 하나라도 실패하면 배경 없이 간다. */
+  const urls=[...L.tiles.matchAll(/href="([^"]+)" x="([-\d.]+)" y="([-\d.]+)"/g)];
+  const imgs=await Promise.all(urls.map(m=>scLoadTile(m[1])));
+  ok=imgs.length>0&&imgs.every(Boolean);
+  if(ok)urls.forEach((m,i)=>{
+   x.drawImage(imgs[i],ox+(+m[2])*sc,oy+(+m[3])*sc,FM_TILE*sc,FM_TILE*sc);
+  });
+  x.fillStyle='rgba(255,255,255,.2)';x.fillRect(MX,MY,MW,MH);
+  const PX=p=>ox+L.X(p)*sc, PY=p=>oy+L.Y(p)*sc;
+  if(pts.length>1){
+   x.lineJoin=x.lineCap='round';
+   x.strokeStyle='#fff';x.lineWidth=14;
+   x.beginPath();pts.forEach((p,i)=>i?x.lineTo(PX(p),PY(p)):x.moveTo(PX(p),PY(p)));x.stroke();
+   x.strokeStyle='#33718E';x.lineWidth=7;
+   x.beginPath();pts.forEach((p,i)=>i?x.lineTo(PX(p),PY(p)):x.moveTo(PX(p),PY(p)));x.stroke();
+  }
+  pts.forEach((p,i)=>{
+   x.beginPath();x.arc(PX(p),PY(p),27,0,7);
+   x.fillStyle='#33718E';x.fill();x.strokeStyle='#fff';x.lineWidth=6;x.stroke();
+   x.fillStyle='#fff';x.font=F(800,30);x.textAlign='center';x.textBaseline='middle';
+   x.fillText(String(i+1),PX(p),PY(p)+1);x.textAlign='left';x.textBaseline='alphabetic';
+  });
+ }
+ if(!ok&&pts.length){
+  x.fillStyle='#98A2AA';x.font=F(600,24);x.textAlign='center';
+  x.fillText('지도 배경을 불러오지 못했습니다',MX+MW/2,MY+MH-28);x.textAlign='left';
+ }
+ x.restore();
+
+ /* 정거장 목록 — 다섯 곳까지 */
+ let y=MY+MH+72;
+ c.stops.slice(0,5).forEach((st,i)=>{
+  x.beginPath();x.arc(88,y-11,24,0,7);x.fillStyle='#33718E';x.fill();
+  x.fillStyle='#fff';x.font=F(800,26);x.textAlign='center';x.textBaseline='middle';
+  x.fillText(String(i+1),88,y-10);x.textAlign='left';x.textBaseline='alphabetic';
+  x.fillStyle='#5C666E';x.font=F(700,26);x.fillText(csHM(st.at),128,y-2);
+  x.fillStyle='#1F252A';x.font=F(800,34);
+  x.fillText(String(st.name).slice(0,14),236,y);
+  y+=76;
+ });
+ if(c.stops.length>5){
+  x.fillStyle='#717C85';x.font=F(700,26);
+  x.fillText('외 '+(c.stops.length-5)+'곳',128,y-6);y+=52;
+ }
+
+ /* 바닥 */
+ x.strokeStyle='rgba(31,37,42,.12)';x.lineWidth=2;
+ x.beginPath();x.moveTo(64,SC_H-132);x.lineTo(SC_W-64,SC_H-132);x.stroke();
+ const foot=[csHM(c.stops[0].at)+'–'+csHM(c.endAt),'도보 '+c.walkTotal+'분']
+  .concat(bgPerDay()!==null?['예산 '+bgYen(bgPerDay())]:[]).join('   ·   ');
+ x.fillStyle='#5C666E';x.font=F(700,30);x.fillText(foot,64,SC_H-76);
+ if(pts.length){x.fillStyle='#98A2AA';x.font=F(600,20);
+  x.textAlign='right';x.fillText('지도 © OpenStreetMap',SC_W-64,SC_H-76);x.textAlign='left';}
+ return cv;
+}
+async function scShare(){
+ const btn=document.getElementById('scBtn');
+ if(btn){btn.disabled=true;btn.textContent='만드는 중…';}
+ try{
+  const cv=await scDraw();
+  const blob=await new Promise(r=>cv.toBlob(r,'image/png'));
+  const name=((foodMap.course&&foodMap.course.title)||'오늘동선')+'.png';
+  const file=new File([blob],name,{type:'image/png'});
+  /* 아이폰은 공유 시트로 넘기는 게 가장 확실하다. 거기서 사진 저장·인스타 모두 된다. */
+  if(navigator.canShare&&navigator.canShare({files:[file]})){
+   await navigator.share({files:[file]});
+  }else{
+   const url=URL.createObjectURL(blob);
+   const el=document.getElementById('scOut');
+   if(el)el.innerHTML='<img src="'+url+'" alt="공유 카드" style="width:100%;border-radius:14px;margin-top:10px">'+
+    '<div class="xsmall" style="margin-top:6px">이미지를 <b>길게 눌러</b> 사진에 저장하세요.</div>';
+  }
+ }catch(e){
+  if(e&&e.name!=='AbortError')alert('공유 카드 실패: '+((e&&e.message)||e));
+ }finally{const n=document.getElementById('scBtn');if(n){n.disabled=false;n.textContent='📤 공유 카드 만들기';}}
+}
+
 function fmDirectionsLink(p,mode){let u='https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(fm2HasCoords(p)?p.lat+','+p.lng:(p.name+' '+(p.address||'福岡')))+'&travelmode='+(mode||'walking');const o=fmOriginQuery();if(o)u+='&origin='+encodeURIComponent(o);return u;}
 function fmRouteLink(a){a=a.filter(Boolean);if(!a.length)return'#';let u='https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(fm2HasCoords(a[a.length-1])?a[a.length-1].lat+','+a[a.length-1].lng:(a[a.length-1].name+' 福岡'))+'&travelmode=walking';
  const o=fmOriginQuery();if(o)u+='&origin='+encodeURIComponent(o);if(a.length>1)u+='&waypoints='+encodeURIComponent(a.slice(0,-1).map(p=>fm2HasCoords(p)?p.lat+','+p.lng:(p.name+' 福岡')).join('|'));return u;}
@@ -2375,7 +2497,9 @@ function csHTML(){
    '<button class="xaction sub" id="csAiBtn" onclick="csAiBuild()">✨ AI가 하루 짜주기</button>'+
    '<button class="xaction sub" onclick="csReplanNow()">지금부터 다시</button>'+
    '<button class="xaction sub" onclick="csBuild()">다시 짜기</button>'+
-   '<button class="xaction sub" onclick="csClear()">지우기</button></div>';
+   '<button class="xaction sub" onclick="csClear()">지우기</button></div>'+
+   '<div class="xactions"><button class="xaction" id="scBtn" onclick="scShare()">📤 공유 카드 만들기</button></div>'+
+   '<div id="scOut"></div>';
  }else{
   body='<div class="xsmall" style="margin-top:8px">목적과 시작 시각을 고르고 코스를 만드세요. 구역을 선택해 두면 그 구역 안에서만 짭니다.</div>'+
    '<div class="xactions"><button class="xaction" id="csAiBtn" onclick="csAiBuild()">✨ AI가 하루 짜주기</button>'+
