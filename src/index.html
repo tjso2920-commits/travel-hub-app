@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#101214">
+<meta name="theme-color" content="#F4F3F0">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="여행허브">
@@ -414,80 +414,86 @@
   }
   footer{text-align:center;padding:24px;font-family:var(--mono);font-size:10.5px;color:var(--faint);letter-spacing:.1em}
 
-  /* GRAPHITE WARM · 사용자 승인 테마
-     기존 :root·폰트·기능 CSS는 그대로 두고 마지막에 시각 레이어만 덮어쓴다. */
-  html{background:#101214}
+  /* DAYLIGHT · 밝은 테마
+     야외에서 한 손으로 보는 앱이다. 명암 대비를 세게 잡고, 장식보다 읽히는 것을 우선한다.
+     기존 :root·폰트·기능 CSS는 그대로 두고 마지막에 시각 레이어만 덮어쓴다.
+     이전 테마(GRAPHITE WARM)는 git 이력에 남아 있다. */
+  html{background:#F4F3F0}
   body{
-    --bg:#101214;--surface:#181B1E;--surface2:#22262A;--raise:#2B3035;
-    --text:#F3ECE2;--muted:#B8B0A5;--faint:#7C8287;
-    --wasabi:#C7EC32;--wasabi-deep:#91AA23;
-    --ember:#C97084;--ember-soft:#E3A0B0;
-    --line:rgba(243,236,226,.09);--line2:rgba(243,236,226,.16);
-    background-color:#101214;
-    background-image:radial-gradient(78% 42% at 9% -5%,rgba(199,236,50,.105),transparent 62%),radial-gradient(72% 38% at 100% 2%,rgba(176,154,232,.075),transparent 66%),linear-gradient(180deg,#131619 0%,#101214 58%,#0D0F11 100%);
+    --bg:#F4F3F0;--surface:#FFFFFF;--surface2:#EDECE8;--raise:#E3E1DC;
+    --text:#1F252A;--muted:#616C75;--faint:#8D97A0;
+    --wasabi:#33718E;--wasabi-deep:#245A75;
+    --ember:#C2621D;--ember-soft:#9E4D12;
+    --accent:#33718E;
+    --line:rgba(31,37,42,.10);--line2:rgba(31,37,42,.17);
+    background-color:#F4F3F0;
+    background-image:radial-gradient(78% 40% at 8% -4%,rgba(51,113,142,.07),transparent 62%),radial-gradient(70% 36% at 100% 2%,rgba(194,98,29,.045),transparent 66%),linear-gradient(180deg,#FAFAF8 0%,#F4F3F0 52%,#EFEEEA 100%);
   }
-  ::selection{background:rgba(199,236,50,.28);color:#F8F2E8}
-  header{background:linear-gradient(135deg,rgba(199,236,50,.038),rgba(176,154,232,.025));border-bottom-color:rgba(243,236,226,.1)}
-  nav{background:rgba(16,18,20,.92);border-bottom-color:rgba(243,236,226,.1);box-shadow:0 10px 28px rgba(0,0,0,.16)}
-  nav button{color:#B8B0A5}
-  nav button.on{color:#C7EC32}
-  nav button.on::after{background:#C7EC32;box-shadow:0 0 12px rgba(199,236,50,.3)}
-  .homebtn{background:rgba(243,236,226,.035);border-color:rgba(243,236,226,.17);border-radius:10px;color:#F3ECE2}
-  .h-dday{color:#C7EC32;background:rgba(199,236,50,.085)}
-  .h-goal .arr{color:#B8B0A5}
-  .h-goal .to,.h-goal .cur b{color:#C7EC32}
+  ::selection{background:rgba(51,113,142,.22);color:#12181C}
 
+  header{background:linear-gradient(135deg,rgba(51,113,142,.055),rgba(194,98,29,.03));border-bottom-color:rgba(31,37,42,.09)}
+  nav{background:rgba(255,255,255,.94);border-bottom-color:rgba(31,37,42,.09);box-shadow:0 6px 18px rgba(31,37,42,.05)}
+  nav button{color:#616C75}
+  nav button.on{color:#245A75}
+  nav button.on::after{background:#33718E;box-shadow:none}
+  .homebtn{background:#FFFFFF;border-color:rgba(31,37,42,.15);border-radius:10px;color:#1F252A}
+  .h-dday{color:#245A75;background:rgba(51,113,142,.10)}
+  .h-goal .arr{color:#8D97A0}
+  .h-goal .to,.h-goal .cur b{color:#245A75}
+
+  /* 카드: 흰 면 + 아주 옅은 테두리 + 얕은 그림자. 플롯라인의 카드 인상. */
   .g-card,.day,.gaugebox,.flist,.burnrow,.rule,.ptable,.xstat,.xcard,.place,.modal{
-    border-color:rgba(243,236,226,.1);box-shadow:0 14px 34px rgba(0,0,0,.19)
+    background:#FFFFFF;border-color:rgba(31,37,42,.10);box-shadow:0 2px 10px rgba(31,37,42,.05)
   }
-  .day.today{border-color:rgba(199,236,50,.48);box-shadow:0 14px 34px rgba(0,0,0,.2),0 0 0 1px rgba(199,236,50,.06)}
-  .landing-card{background:linear-gradient(135deg,#1D2125,#181B1E 64%,rgba(199,236,50,.045));border-color:rgba(243,236,226,.14);box-shadow:0 16px 34px rgba(0,0,0,.22)}
-  .landing-card:active{border-color:rgba(199,236,50,.42)}
-  .overlay{background:rgba(7,9,10,.78)}
-  .modal{background:#181B1E}
-  .xhero{background:linear-gradient(135deg,#22272B 0%,#181B1E 67%,rgba(199,236,50,.07) 100%);border-color:rgba(243,236,226,.14);box-shadow:0 18px 40px rgba(0,0,0,.24)}
-  .xbar{background:#30363B}
-  .xbar i{background:linear-gradient(90deg,#94AF21,#C7EC32);box-shadow:0 0 12px rgba(199,236,50,.22)}
-  .xmode button,.fm-cats button{background:#181B1E;border-color:rgba(243,236,226,.14)}
-  .xmode button.on,.fm-cats button.on{background:#C7EC32;border-color:#C7EC32;color:#151719}
+  .day.today{border-color:rgba(51,113,142,.45);box-shadow:0 2px 12px rgba(51,113,142,.12)}
+  .landing-card{background:#FFFFFF;border-color:rgba(31,37,42,.12);box-shadow:0 3px 14px rgba(31,37,42,.07)}
+  .landing-card:active{border-color:rgba(51,113,142,.45)}
+  .overlay{background:rgba(31,37,42,.42)}
+  .modal{background:#FFFFFF;box-shadow:0 -6px 40px rgba(31,37,42,.16)}
+  .xhero{background:linear-gradient(140deg,#FFFFFF 0%,#F7F9FA 60%,rgba(51,113,142,.07) 100%);
+    border-color:rgba(31,37,42,.11);box-shadow:0 3px 16px rgba(31,37,42,.06)}
+  .xbar{background:#E3E1DC}
+  .xbar i{background:linear-gradient(90deg,#245A75,#3E86A6);box-shadow:none}
+  .xmode button,.fm-cats button{background:#FFFFFF;border-color:rgba(31,37,42,.14)}
+  .xmode button.on,.fm-cats button.on{background:#33718E;border-color:#33718E;color:#FFFFFF}
 
-  .h-dday,.prog,.role-main,.place-cat,.fm-badge.good{background-color:rgba(199,236,50,.09)}
-  .rule.hot,.xcard.hot{border-color:rgba(201,112,132,.28);background:linear-gradient(180deg,rgba(201,112,132,.045),#181B1E)}
-  .fm-badge.hot{border-color:rgba(201,112,132,.3)}
-  .fm-decision{border-color:rgba(199,236,50,.25);background:linear-gradient(180deg,rgba(199,236,50,.045),#181B1E)}
-  .importbox{background:rgba(199,236,50,.025);border-color:rgba(243,236,226,.17)}
+  .h-dday,.prog,.role-main,.place-cat,.fm-badge.good{background-color:rgba(51,113,142,.10)}
+  .rule.hot,.xcard.hot{border-color:rgba(194,98,29,.30);background:linear-gradient(180deg,rgba(194,98,29,.05),#FFFFFF)}
+  .fm-badge.hot{border-color:rgba(194,98,29,.32)}
+  .fm-decision{border-color:rgba(51,113,142,.28);background:linear-gradient(180deg,rgba(51,113,142,.05),#FFFFFF)}
+  .importbox{background:rgba(51,113,142,.035);border-color:rgba(31,37,42,.14)}
 
-  /* 일본어 읽기 영역만 2번의 베이지 가독성을 결합한다. */
+  /* 강조색 위에 얹히던 글자는 전부 어두운 색이었다.
+     주색이 짙은 청록으로 바뀌었으므로 흰색으로 뒤집는다. 안 뒤집으면 안 읽힌다. */
+  .g-btn.w,.btn.on,.prog.done,.astep .sn,.alink,.sh-stat button.sel,
+  .xaction:not(.sub),.xaction.ember,.bubble.me,.fm-route,
+  .place.picking.on .fm-check,.fm-guide-step>b,.fm-course-row>b,
+  .mb-save,.g-btn.r{color:#FFFFFF}
+  .xaction.sub{background:#FFFFFF;border:1px solid rgba(31,37,42,.16);color:#33718E}
+
+  /* 일본어 탭: 어두운 앱에서 읽으라고 베이지로 띄워 놨던 카드다.
+     이제 바탕이 밝으므로 특별 취급을 없애고 따뜻한 기본 카드로 되돌린다. */
   #tab-jp .xcard:not(.hot){
-    --bg:#E7DED2;--surface:#F3ECE2;--surface2:#E7DDD0;--raise:#DCD1C3;
-    --text:#181A1C;--muted:#615D57;--faint:#817B73;
-    --wasabi:#5E7310;--wasabi-deep:#4F620C;
-    --ember:#B6546D;--ember-soft:#8F4C5E;
-    --line:rgba(24,26,28,.12);--line2:rgba(24,26,28,.2);
-    color:#181A1C;background:#F3ECE2;border-color:rgba(24,26,28,.16);
-    box-shadow:0 16px 34px rgba(0,0,0,.2),inset 0 0 0 1px rgba(255,255,255,.32)
+    background:#FFFDF9;border-color:rgba(31,37,42,.12);
+    box-shadow:0 2px 10px rgba(31,37,42,.05)
   }
   #tab-jp .xcard.hot{
-    --bg:#101214;--surface:#181B1E;--surface2:#22262A;--raise:#2B3035;
-    --text:#F3ECE2;--muted:#B8B0A5;--faint:#7C8287;
-    --wasabi:#C7EC32;--wasabi-deep:#91AA23;--ember:#A991E3;--ember-soft:#CBBDF2;
-    --line:rgba(243,236,226,.09);--line2:rgba(243,236,226,.16);
-    color:#F3ECE2;border-color:rgba(199,236,50,.2);
-    background:linear-gradient(145deg,#1C2024,#181B1E 72%,rgba(199,236,50,.055))
+    background:linear-gradient(160deg,#FFFFFF,#F6F9FB 70%,rgba(51,113,142,.07));
+    border-color:rgba(51,113,142,.26);color:#1F252A
   }
-  #tab-jp .xcard:not(.hot) .gdetail{background:linear-gradient(135deg,rgba(114,136,23,.08),rgba(159,137,220,.055));border-color:rgba(24,26,28,.12)}
-  #tab-jp .xcard:not(.hot) .tool-result,#tab-jp .xcard:not(.hot) .audio-now,#tab-jp .xcard:not(.hot) .reading{background:#E7DED2;border-color:rgba(24,26,28,.13)}
-  #tab-jp .xcard:not(.hot) .xaction:not(.sub):not(.ember),#tab-jp .xcard:not(.hot) .bubble.me{background:#A8CA2B;color:#151719}
-  #tab-jp .xcard:not(.hot) .sound{color:#7055A1}
-  #tab-jp .xcard.hot .sound{color:#CBBDF2}
-  #tab-jp .jp-listen{background:#A991E3;border-color:#BBA9EA;color:#151719;box-shadow:0 7px 16px rgba(107,83,166,.18)}
-  #tab-jp .jp-listen:active{background:#9580D5;transform:translateY(1px)}
-  #tab-jp .jp-voicebar{background:#181B1E;border-color:rgba(243,236,226,.12);box-shadow:0 12px 28px rgba(0,0,0,.17)}
-  #tab-jp .jp-voicecontrols button{border-color:rgba(176,154,232,.38);background:rgba(176,154,232,.09);color:#D7CCF5}
-  #tab-jp .jp-devicevoice{border-top-color:rgba(243,236,226,.1)}
+  #tab-jp .xcard:not(.hot) .gdetail{background:rgba(51,113,142,.05);border-color:rgba(31,37,42,.11)}
+  #tab-jp .xcard:not(.hot) .tool-result,#tab-jp .xcard:not(.hot) .audio-now,#tab-jp .xcard:not(.hot) .reading{background:#F5F4F1;border-color:rgba(31,37,42,.12)}
+  #tab-jp .xcard:not(.hot) .xaction:not(.sub):not(.ember),#tab-jp .xcard:not(.hot) .bubble.me{background:#33718E;color:#FFFFFF}
+  #tab-jp .xcard:not(.hot) .sound,#tab-jp .xcard.hot .sound{color:#6B4FA8}
+  #tab-jp .jp-listen{background:#6B4FA8;border-color:#7B5FB8;color:#FFFFFF;box-shadow:0 3px 12px rgba(107,79,168,.22)}
+  #tab-jp .jp-listen:active{background:#5C4293;transform:translateY(1px)}
+  #tab-jp .jp-voicebar{background:#FFFFFF;border-color:rgba(31,37,42,.12);box-shadow:0 -4px 20px rgba(31,37,42,.08)}
+  #tab-jp .jp-voicecontrols button{border-color:rgba(107,79,168,.34);background:rgba(107,79,168,.07);color:#5C4293}
+  #tab-jp .jp-devicevoice{border-top-color:rgba(31,37,42,.1)}
 
-  input::placeholder,textarea::placeholder{color:var(--faint);opacity:.9}
-  button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid rgba(199,236,50,.72);outline-offset:2px}
+  input,textarea,select{background:#FFFFFF}
+  input::placeholder,textarea::placeholder{color:var(--faint);opacity:1}
+  button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid #33718E;outline-offset:2px}
 
   .w2-hero{border:1px solid rgba(199,236,50,.22);border-radius:14px;padding:15px;margin:0 0 14px;
     background:linear-gradient(135deg,rgba(199,236,50,.075),rgba(176,154,232,.045) 55%,var(--surface));box-shadow:0 14px 34px rgba(0,0,0,.18)}
