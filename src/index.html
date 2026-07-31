@@ -304,6 +304,13 @@
   .sp-x{width:44px;height:44px;flex:none;border-radius:50%;border:none;background:var(--surface2);
     color:var(--muted);font-size:18px;cursor:pointer}
   .sp-map{margin:0 16px;border-radius:14px;overflow:hidden;border:1px solid var(--line)}
+  .sp-photo{margin:0 16px 10px;border-radius:14px;overflow:hidden;border:1px solid var(--line);position:relative}
+  .sp-photo img{display:block;width:100%;height:auto;max-height:260px;object-fit:cover}
+  .sp-photo button{position:absolute;right:8px;top:8px;width:44px;height:44px;border:none;border-radius:50%;
+    background:rgba(31,37,42,.62);color:#fff;font-size:16px;cursor:pointer}
+  .sp-addphoto{margin:0 16px 10px;width:calc(100% - 32px);min-height:48px;border-radius:12px;
+    border:1px dashed var(--line2);background:var(--surface2);color:var(--muted);
+    font-size:13px;font-weight:700;cursor:pointer}
   .sp-map svg{display:block;width:100%;height:auto;max-height:200px;object-fit:cover}
   .sp-meta{display:flex;align-items:center;gap:8px;padding:12px 16px 4px;font-size:13px;color:var(--muted)}
   .sp-meta b{color:var(--text);font-family:var(--mono)}
@@ -324,6 +331,10 @@
   .fm-selbar .fm-selcount span{font-weight:600;color:var(--muted);font-size:12px}
   .fm-selbar .xactions{margin-top:10px}
   .fm-selbar .xaction{min-height:46px}
+  .place{position:relative}
+  .place-thumb{position:absolute;right:12px;top:12px;width:52px;height:52px;border-radius:10px;
+    object-fit:cover;border:1px solid var(--line)}
+  .place:has(.place-thumb) .place-top,.place:has(.place-thumb) .place-note{padding-right:60px}
   .place.picking{padding-left:48px;position:relative}
   .place.picking .fm-check{position:absolute;left:13px;top:50%;transform:translateY(-50%);
     width:26px;height:26px;border-radius:7px;border:2px solid var(--line2);
@@ -685,7 +696,9 @@ const DK=['sun','mon','tue','wed','thu','fri','sat'];
 /* 운동2 전용 영상 2종. 기존 V 객체와 기존 자동 매핑은 변경하지 않는다. */
 
 function load(k,f){try{const r=localStorage.getItem(PFX+k);return r?JSON.parse(r):f;}catch(e){return f;}}
-function save(k,v){try{localStorage.setItem(PFX+k,JSON.stringify(v));}catch(e){}}
+/* 저장 실패를 조용히 삼키면 사용자는 저장된 줄 안다. 실패 여부를 돌려준다.
+   기존 호출부는 반환값을 안 보므로 동작이 바뀌지 않는다. */
+function save(k,v){try{localStorage.setItem(PFX+k,JSON.stringify(v));return true;}catch(e){return false;}}
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function ymd(d){const p=n=>String(n).padStart(2,'0');return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());}
 const TODAY=ymd(new Date());
@@ -1967,11 +1980,17 @@ function fmSpotRender(){
    '좌표가 없어 지도를 그릴 수 없습니다.<br>아래 버튼으로 이름 검색은 됩니다.</div>';
  }
  const d=fm2DistTxt(p),eta=fm2EtaTxt(p);
- el.innerHTML='<div class="sp-head">'+
+ /* 사진이 있으면 사진이 먼저다. 지도보다 사진이 "가보고 싶다"를 만든다. */
+ const photo=p.photo
+  ? '<div class="sp-photo"><img src="'+esc(p.photo)+'" alt="'+esc(p.name)+' 사진">'+
+    '<button onclick="fmSpotPhotoDel()" aria-label="사진 지우기">✕</button></div>'
+  : '<button class="sp-addphoto" onclick="document.getElementById(\'spPhotoIn\').click()">＋ 사진 추가</button>';
+ el.innerHTML='<input type="file" id="spPhotoIn" accept="image/*" style="display:none" onchange="fmSpotPhotoAdd(this)">'+
+  '<div class="sp-head">'+
    '<span class="sp-ico" style="background:'+color+'22;color:'+color+'">'+ico+'</span>'+
    '<b>'+esc(p.name||'이름 없음')+'</b>'+
    '<button class="sp-x" onclick="closeOv(\'ovSpot\')" aria-label="닫기">✕</button></div>'+
-  map+
+  photo+map+
   '<div class="sp-meta">'+esc(affDest()||'')+(d?' · <b>'+esc(d)+'</b>':'')+(eta?' · '+esc(eta):'')+
    (p.visited?' · <b>방문함</b>':'')+'</div>'+
   '<div class="sp-rows">'+
@@ -2001,6 +2020,38 @@ function fmSpotQuick(k){
  if(k==='visited')p.visitedAt=p.visited?fmVisitStamp():null;
  save('foodmap_v1',foodMap);
  fmSpotRender();renderFoodMap();
+}
+/* 사진 한 장이 60KB 를 넘지 않게 줄인다. localStorage 는 5~10MB 뿐이다. */
+const SP_PHOTO_PX=640, SP_PHOTO_Q=.72;
+function fmSpotPhotoAdd(inp){
+ const f=inp.files&&inp.files[0];inp.value='';if(!f)return;
+ const p=foodMap.places.find(x=>x.id===foodMap.selected);if(!p)return;
+ const url=URL.createObjectURL(f),im=new Image();
+ im.onload=()=>{
+  try{
+   const sc=Math.min(1,SP_PHOTO_PX/Math.max(im.naturalWidth,im.naturalHeight));
+   const w=Math.max(1,Math.round(im.naturalWidth*sc)),h=Math.max(1,Math.round(im.naturalHeight*sc));
+   const cv=document.createElement('canvas');cv.width=w;cv.height=h;
+   cv.getContext('2d').drawImage(im,0,0,w,h);
+   const data=cv.toDataURL('image/jpeg',SP_PHOTO_Q);
+   URL.revokeObjectURL(url);
+   const before=p.photo;
+   p.photo=data;
+   if(!save('foodmap_v1',foodMap)){
+    p.photo=before;save('foodmap_v1',foodMap);
+    alert('사진을 저장할 공간이 부족합니다.\n\n다른 장소의 사진을 몇 장 지우거나,\n개인 백업을 내려받아 두고 정리해 주세요.');
+    return;
+   }
+   fmSpotRender();renderFoodMap();
+  }catch(e){URL.revokeObjectURL(url);alert('사진을 읽지 못했습니다: '+((e&&e.message)||e));}
+ };
+ im.onerror=()=>{URL.revokeObjectURL(url);alert('이 형식의 사진은 읽지 못합니다.');};
+ im.src=url;
+}
+function fmSpotPhotoDel(){
+ const p=foodMap.places.find(x=>x.id===foodMap.selected);if(!p||!p.photo)return;
+ if(!confirm('이 장소의 사진을 지울까요?'))return;
+ delete p.photo;save('foodmap_v1',foodMap);fmSpotRender();renderFoodMap();
 }
 function fmSpotMore(){closeOv('ovSpot');showTab('now');
  const el=document.getElementById('fmSpotTools');if(el)el.scrollIntoView({behavior:'smooth',block:'start'});}
@@ -3428,7 +3479,7 @@ function fmSetHotelFromSpot(){
  alert('“'+p.name+'”을 숙소 기준으로 지정했습니다.');}
 function fmSaveHotel(){const url=document.getElementById('fmHotelUrl').value.trim(),c=fm2UrlCoords(url)||{};foodMap.hotel={name:document.getElementById('fmHotelName').value.trim(),address:document.getElementById('fmHotelAddress').value.trim(),url:url,lat:+document.getElementById('fmHotelLat').value||c.lat||null,lng:+document.getElementById('fmHotelLng').value||c.lng||null};foodMap.originMode='hotel';save('foodmap_v1',foodMap);renderFoodMap();}
 fmRenderList=function(){const el=document.getElementById('fmList');if(!el)return;const a=fmFiltered(),show=a.slice(0,250);const pick=fmSel.on;el.innerHTML='<div class="fm-count">조건 결과 '+a.length+' / 전체 '+foodMap.places.length+'</div>'+(show.length?show.map(p=>{const d=fm2DistTxt(p),badges=[p.kind,p.region,d,fm2EtaTxt(p),p.openNow===true?'영업 중':(p.openNow===false?'현재 영업 아님':''),p.priority?'우선 '+p.priority:'',p.reservation==='needed'?'예약 확인':(p.reservation==='booked'?'예약 완료':'')].filter(Boolean);
- return'<div class="place '+(pick?('picking '+(fmSel.ids.has(p.id)?'on ':'')):(p.id===foodMap.selected?'sel ':''))+(p.visited?'visited ':'')+(p.excluded?'visited':'')+'" onclick="'+(pick?'fmSelPick':'fmSelect')+'(\''+p.id+'\')">'+(pick?'<span class="fm-check">✓</span>':'')+'<div class="place-top"><div class="place-name">'+(p.fav?'★ ':'')+esc(p.name)+'</div><span class="place-cat">'+esc(p.cat||'기타')+'</span><span class="fm-score">아쉬움 '+fm2Regret(p)+'</span></div><div class="place-note">'+esc(p.note||p.address||(fm2HasCoords(p)?p.lat+', '+p.lng:'메모 없음'))+'</div><div class="fm-badges">'+badges.map((x,i)=>'<span class="fm-badge '+(String(x).includes('영업 중')?'good':String(x).includes('아님')?'hot':'')+'">'+esc(x)+'</span>').join('')+'</div>'+(pick?'':'<div class="place-btns"><button class="'+(p.fav?'fav':'')+'" onclick="event.stopPropagation();fmToggle(\''+p.id+'\',\'fav\')">'+(p.fav?'★ 저장':'☆ 저장')+'</button><button onclick="event.stopPropagation();fmToggle(\''+p.id+'\',\'visited\')">'+(p.visited?'↩ 미방문':'✓ 방문')+'</button><a href="'+esc(fmDirectionsLink(p))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">길찾기</a><button onclick="event.stopPropagation();fmSelect(\''+p.id+'\')">영상·관리</button></div>')+'</div>';}).join(''):'<div class="empty">조건에 맞는 장소가 없습니다.</div>');if(a.length>250)el.innerHTML+='<div class="empty">250개만 표시 중 · 필터나 검색어로 좁혀보세요.</div>';};
+ return'<div class="place '+(pick?('picking '+(fmSel.ids.has(p.id)?'on ':'')):(p.id===foodMap.selected?'sel ':''))+(p.visited?'visited ':'')+(p.excluded?'visited':'')+'" onclick="'+(pick?'fmSelPick':'fmSelect')+'(\''+p.id+'\')">'+(pick?'<span class="fm-check">✓</span>':'')+(p.photo&&!pick?'<img class="place-thumb" src="'+esc(p.photo)+'" alt="">':'')+'<div class="place-top"><div class="place-name">'+(p.fav?'★ ':'')+esc(p.name)+'</div><span class="place-cat">'+esc(p.cat||'기타')+'</span><span class="fm-score">아쉬움 '+fm2Regret(p)+'</span></div><div class="place-note">'+esc(p.note||p.address||(fm2HasCoords(p)?p.lat+', '+p.lng:'메모 없음'))+'</div><div class="fm-badges">'+badges.map((x,i)=>'<span class="fm-badge '+(String(x).includes('영업 중')?'good':String(x).includes('아님')?'hot':'')+'">'+esc(x)+'</span>').join('')+'</div>'+(pick?'':'<div class="place-btns"><button class="'+(p.fav?'fav':'')+'" onclick="event.stopPropagation();fmToggle(\''+p.id+'\',\'fav\')">'+(p.fav?'★ 저장':'☆ 저장')+'</button><button onclick="event.stopPropagation();fmToggle(\''+p.id+'\',\'visited\')">'+(p.visited?'↩ 미방문':'✓ 방문')+'</button><a href="'+esc(fmDirectionsLink(p))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">길찾기</a><button onclick="event.stopPropagation();fmSelect(\''+p.id+'\')">영상·관리</button></div>')+'</div>';}).join(''):'<div class="empty">조건에 맞는 장소가 없습니다.</div>');if(a.length>250)el.innerHTML+='<div class="empty">250개만 표시 중 · 필터나 검색어로 좁혀보세요.</div>';};
 fmRenderMap=function(){const el=document.getElementById('fmMap');if(!el)return;const live=fmGpsPoint();if(live&&fmGps.follow){const q=live.lat+','+live.lng,acc=Number.isFinite(fmGps.accuracy)?'현재 위치 · ±'+Math.round(fmGps.accuracy)+'m':'현재 위치';el.classList.add('gps-live');el.innerHTML='<iframe loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="실시간 현재 위치 지도" src="https://www.google.com/maps?q='+encodeURIComponent(q)+'&z=17&output=embed"></iframe><span class="fm-gps-mapdot" aria-hidden="true"></span><span class="fm-gps-maplabel">'+esc(acc)+'</span>';return;}el.classList.remove('gps-live');const p=foodMap.places.find(x=>x.id===foodMap.selected);if(!p){el.innerHTML='목록의 ‘영상·관리’를 누르면 지도·상태·영상·현장 일본어가 열립니다.';return;}const q=fm2HasCoords(p)?p.lat+','+p.lng:(p.name+' 福岡');el.innerHTML='<iframe loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="'+esc(p.name)+' 지도" src="https://www.google.com/maps?q='+encodeURIComponent(q)+'&output=embed"></iframe>';};
 /* 목록에서 장소를 누르면 상세 시트를 띄운다.
    선택 상태 갱신은 그대로 하되, 화면을 스크롤해 내리지 않는다 — 시트가 그 자리에 뜬다. */
