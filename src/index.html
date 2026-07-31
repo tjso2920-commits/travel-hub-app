@@ -1150,7 +1150,35 @@ const JP_N3_BOOST=[
  '〜ないことはない · 못 하는 것은 아니다','〜一方だ · 계속 한 방향으로 변하다','〜というより · 라기보다는'
 ];
 const JP_LIMIT=90,JP_REVIEW_CAP=12;
+/* ── 학습 코스 ───────────────────────────────────────────────────────────
+   13주치 콘텐츠는 그대로 두고, 어느 주차를 쓸지만 고른다.
+   문장 id 가 (주차, 줄번호) 기준이라 코스를 바꿔도 이미 외운 것과 복습 일정이 살아남는다.
+   주차 번호: 0 스몰토크 1 대화잇기 2 이자카야 3 리액션 4 스시 5 주방업계
+              6 하카타벤 7 하카타벤2 8 취향 9 비교설명 10 예상밖질문 11 화제전환 12 종합 */
+const JP_PLANS=[
+ {k:'essential',n:'필수 표현만',d:7,  w:[0,2,3],       s:'시간 없을 때. 인사·주문·리액션만 훑는다'},
+ {k:'d15',      n:'15일',      d:15, w:[0,1,2,3],     s:'출발이 코앞일 때'},
+ {k:'d30',      n:'30일',      d:30, w:[0,1,2,3,4,8], s:'한 달 남았을 때'},
+ {k:'d60',      n:'60일',      d:60, w:[0,1,2,3,4,5,8,9,10],       s:'여유 있게'},
+ {k:'d90',      n:'90일 전체', d:90, w:[0,1,2,3,4,5,6,7,8,9,10,11,12], s:'전부 다. 하카타벤까지'}
+];
+function jpPlan(){return JP_PLANS.find(p=>p.k===jpState.plan)||JP_PLANS[JP_PLANS.length-1];}
+function jpLimit(){return jpPlan().d;}
+/* n일차가 어느 주차인지. 코스가 짧으면 주차를 건너뛴다. */
+function jpWeekFor(n){
+ const p=jpPlan(),i=Math.min(p.w.length-1,Math.floor(n*p.w.length/p.d));
+ return p.w[Math.max(0,i)];
+}
+function jpSetPlan(k){
+ if(!JP_PLANS.some(p=>p.k===k))return;
+ jpState.plan=k;
+ /* 짧은 코스로 옮기면 진도가 총량을 넘을 수 있다. 넘치면 끝에 맞춘다. */
+ if((jpState.pointer||0)>jpLimit())jpState.pointer=jpLimit();
+ save('jp_state_v1',jpState);renderJapanese();
+}
 let jpState=load('jp_state_v1',{pointer:0,done:{},srs:{},read:{},bed:{},showReading:true});
+/* 코스 개념이 생기기 전에 쓰던 사람은 90일 전체를 하고 있었다 */
+if(jpState&&!jpState.plan)jpState.plan='d90';
 if(!jpState||typeof jpState!=='object')jpState={pointer:0,done:{},srs:{},read:{},bed:{},showReading:true};
 if(!jpState.done)jpState.done={};if(!jpState.srs)jpState.srs={};if(!jpState.read)jpState.read={};if(!jpState.bed)jpState.bed={};
 let jpChat=load('jp_chat_v1',[]);
@@ -1159,7 +1187,7 @@ let jpMode='today',jpReviewQueue=[],jpReviewOpen=false,jpAudio=[],jpAudioAt=0,jp
 
 function jpLineId(w,i){return 'w'+w+'l'+i;}
 function jpFindLine(id){const m=String(id).match(/^w(\d+)l(\d+)$/);if(!m)return null;const w=+m[1],i=+m[2];return JP_WEEKS[w]&&JP_WEEKS[w].l[i]?JP_WEEKS[w].l[i]:null;}
-function jpSession(n){n=Math.max(0,Math.min(JP_LIMIT-1,n));const w=Math.min(12,Math.floor(n/7)),d=n%7,src=JP_WEEKS[w].l,out=[];
+function jpSession(n){n=Math.max(0,Math.min(jpLimit()-1,n));const w=jpWeekFor(n),d=n%7,src=JP_WEEKS[w].l,out=[];
  for(let x=0;x<6;x++){const i=(d*2+x)%src.length;out.push({id:jpLineId(w,i),v:src[i]});}return{w:w,d:d,lines:out};}
 function jpDateAdd(s,n){const d=new Date(s+'T00:00:00');d.setDate(d.getDate()+n);return ymd(d);}
 function jpDue(){return Object.keys(jpState.srs).filter(id=>jpState.srs[id].due<=TODAY&&jpFindLine(id))
@@ -1187,12 +1215,19 @@ function jpSetDeviceVoice(n){jpVoiceCfg().device=n||'';save('jp_state_v1',jpStat
 function jpPreviewVoice(){jpSpeakText('福岡へようこそ。今日は何を食べたいですか。');}
 if('speechSynthesis'in window&&speechSynthesis.addEventListener)speechSynthesis.addEventListener('voiceschanged',jpRefreshVoiceUI);
 function renderJapanese(){
- const root=document.getElementById('jpRoot');if(!root)return;const p=Math.min(JP_LIMIT,jpState.pointer||0),s=jpSession(Math.min(89,p)),pct=Math.round(p/JP_LIMIT*100),due=jpDue().length;
+ const root=document.getElementById('jpRoot');if(!root)return;
+ const LIM=jpLimit(),PL=jpPlan();
+ const p=Math.min(LIM,jpState.pointer||0),s=jpSession(Math.min(LIM-1,p)),pct=Math.round(p/LIM*100),due=jpDue().length;
  const todayPacks=Object.values(jpState.done).filter(x=>x===TODAY).length;
- root.innerHTML='<div class="xhero"><div class="xhero-top"><div><div class="xeyebrow">90-DAY PACK · FLEXIBLE PROGRESS</div><div class="xtitle">'+esc(JP_WEEKS[s.w].t)+'</div></div>'+
-  '<div class="xmeta">W'+(s.w+1)+' · '+(p>=90?'완료':('DAY '+(p+1)))+'<br>'+p+' / '+JP_LIMIT+'</div></div>'+
-  '<div class="xbar"><i style="width:'+pct+'%"></i></div><div class="xsmall">달력과 무관한 90일분 학습팩입니다. 못 한 날은 그대로 남고, 여유 있는 날은 2~3팩 연속 진행할 수 있습니다.</div></div>'+
-  '<div class="xstats"><div class="xstat"><b>'+todayPacks+'</b><span>오늘 완료 팩</span></div><div class="xstat"><b>'+due+'</b><span>오늘 복습</span></div><div class="xstat"><b>'+pct+'%</b><span>90일분 진도</span></div></div>'+jpModes()+jpVoiceControls()+'<div id="jpPane"></div>';
+ root.innerHTML='<div class="xhero"><div class="xhero-top"><div><div class="xeyebrow">'+esc(PL.n)+' · FLEXIBLE PROGRESS</div><div class="xtitle">'+esc(JP_WEEKS[s.w].t)+'</div></div>'+
+  '<div class="xmeta">W'+(s.w+1)+' · '+(p>=LIM?'완료':('DAY '+(p+1)))+'<br>'+p+' / '+LIM+'</div></div>'+
+  '<div class="xbar"><i style="width:'+pct+'%"></i></div>'+
+  '<div class="fm-cats" style="margin-top:11px">'+JP_PLANS.map(function(x){
+   return '<button class="'+(PL.k===x.k?'on':'')+'" onclick="jpSetPlan(\''+x.k+'\')">'+esc(x.n)+'</button>';}).join('')+'</div>'+
+  '<div class="xsmall" style="margin-top:8px"><b style="color:var(--text)">'+esc(PL.n)+'</b> — '+esc(PL.s)+
+  '<br>달력과 무관합니다. 못 한 날은 그대로 남고, 여유 있는 날은 2~3팩 연속 진행할 수 있습니다.'+
+  '<br>코스를 바꿔도 <b style="color:var(--text)">이미 외운 문장과 복습 일정은 그대로</b> 남습니다.</div></div>'+
+  '<div class="xstats"><div class="xstat"><b>'+todayPacks+'</b><span>오늘 완료 팩</span></div><div class="xstat"><b>'+due+'</b><span>오늘 복습</span></div><div class="xstat"><b>'+pct+'%</b><span>'+esc(PL.n)+' 진도</span></div></div>'+jpModes()+jpVoiceControls()+'<div id="jpPane"></div>';
  setTimeout(jpRefreshVoiceUI,0);
  const pane=document.getElementById('jpPane');
  if(jpMode==='today')jpTodayPane(pane);else if(jpMode==='review')jpReviewPane(pane);else if(jpMode==='audio')jpAudioPane(pane);
@@ -1626,7 +1661,7 @@ function jpChainHTML(s){const c=JP_CHAINS[s.w];if(!c)return'';const row=(v,btn)=
  return'<div class="xcard hot"><h3><span class="tag">FOLLOW-UP</span>'+esc(c.t)+'</h3><div class="xsmall">외운 문장 다음에 실제로 받을 질문과 답변 선택지를 연결합니다.</div>'+row(c.q,'<button class="jp-listen" onclick="jpSpeakChain('+s.w+',\'q\',0)">🔊 질문 듣기</button>')+'<div class="xsmall" style="margin-top:10px;color:var(--wasabi)">내 상황에 맞는 답을 골라 말하기</div>'+c.a.map((v,i)=>row(v,'<button class="jp-listen" onclick="jpSpeakChain('+s.w+',\'a\','+i+')">🔊 답 듣기</button>')).join('')+'<div class="xsmall" style="margin-top:10px;color:var(--ember-soft)">한 단계 더 이어지는 질문</div>'+row(c.next,'<button class="jp-listen" onclick="jpSpeakChain('+s.w+',\'next\',0)">🔊 이어질 질문</button>')+'<div class="tool-result">연결 포인트 · '+esc(c.tip)+'</div></div>';}
 function jpPlaySession(p){jpAudio=jpSession(Math.min(89,p)).lines;jpStartAudio();}
 function jpTodayPane(pane){
- const p=Math.min(JP_LIMIT,jpState.pointer||0);if(p>=JP_LIMIT){pane.innerHTML='<div class="xcard hot"><h3><span class="tag">COMPLETE</span>90회 완주</h3>'+
+ const LIM=jpLimit(),p=Math.min(LIM,jpState.pointer||0);if(p>=LIM){pane.innerHTML='<div class="xcard hot"><h3><span class="tag">COMPLETE</span>90회 완주</h3>'+
   '<div class="xsmall">달력에 쫓기지 않고 끝까지 왔습니다. 자동복습과 실전 AI 모드로 계속 유지하세요.</div></div>';return;}
  const s=jpSession(p),topic=JP_WEEKS[s.w].s[s.d]||JP_WEEKS[s.w].t,g=JP_GRAMMAR[p]||JP_GRAMMAR[JP_GRAMMAR.length-1],boost=p>=45?JP_N3_BOOST[(p-45)%JP_N3_BOOST.length]:'';
  const phase=p<14?'N5 기억 복구':p<56?'N4 핵심 구축':p<84?'N4 실전·회화 통합':'N4 마무리·N3 도전';
@@ -1660,8 +1695,8 @@ async function jpGeneratePack(p){const out=document.getElementById('jpPackOut');
 function jpToggleReading(){jpState.showReading=!jpState.showReading;save('jp_state_v1',jpState);renderJapanese();}
 function jpCompleteSession(){
  const doneToday=Object.values(jpState.done).filter(x=>x===TODAY).length;if(doneToday>=3&&!confirm('오늘 '+(doneToday+1)+'번째 학습팩입니다. 내일 복습량이 늘어납니다. 그래도 계속할까요?'))return;
- const p=Math.min(JP_LIMIT-1,jpState.pointer||0),s=jpSession(p);s.lines.forEach(x=>{if(!jpState.srs[x.id])jpState.srs[x.id]={box:0,due:TODAY,seen:0};});
- jpState.done[String(p)]=TODAY;jpState.pointer=Math.min(JP_LIMIT,p+1);save('jp_state_v1',jpState);jpMode='review';jpReviewQueue=jpDue();renderJapanese();
+ const p=Math.min(jpLimit()-1,jpState.pointer||0),s=jpSession(p);s.lines.forEach(x=>{if(!jpState.srs[x.id])jpState.srs[x.id]={box:0,due:TODAY,seen:0};});
+ jpState.done[String(p)]=TODAY;jpState.pointer=Math.min(jpLimit(),p+1);save('jp_state_v1',jpState);jpMode='review';jpReviewQueue=jpDue();renderJapanese();
 }
 function jpReviewPane(pane){
  if(!jpReviewQueue.length)jpReviewQueue=jpDue();
@@ -1699,7 +1734,7 @@ function jpSaveScroll(el,w){clearTimeout(jpReadTimer);jpReadTimer=setTimeout(()=
 function jpBedPane(pane){
  const done=Object.keys(jpState.done).filter(k=>jpState.done[k]===TODAY).map(Number),today=[];
  done.forEach(n=>jpSession(n).lines.forEach(x=>{if(!today.find(z=>z.id===x.id))today.push(x);}));
- const next=jpState.pointer<JP_LIMIT?jpSession(jpState.pointer).lines.slice(0,2):[];
+ const next=jpState.pointer<jpLimit()?jpSession(jpState.pointer).lines.slice(0,2):[];
  pane.innerHTML='<div class="xcard"><h3><span class="tag">TONIGHT</span>오늘 배운 것</h3>'+
   (today.length?today.slice(0,6).map(x=>jpLineHTML(x,true)).join(''):'<div class="empty">오늘 완료한 세션이 없습니다. 복습 카드 한 장만 보고 자도 충분합니다.</div>')+'</div>'+
   '<div class="xcard"><h3><span class="tag">PREVIEW</span>다음에 나올 두 문장</h3>'+(next.length?next.map(x=>jpLineHTML(x,true)).join(''):'<div class="empty">90회 완주</div>')+
@@ -3532,7 +3567,7 @@ function asContext(){
  const visitedToday=foodMap.places.filter(p=>p.visited).length;
  lines.push('[저장 장소] 총 '+foodMap.places.length+'곳 · 방문 표시 '+visitedToday+'곳');
  const jl=Object.keys(jpState.done||{}).length;
- lines.push('[일본어 진도] '+Math.min(JP_LIMIT,jpState.pointer||0)+'/'+JP_LIMIT+'회차');
+ lines.push('[일본어 진도] '+Math.min(jpLimit(),jpState.pointer||0)+'/'+jpLimit()+'회차('+jpPlan().n+')');
  const c=foodMap.course;
  if(c&&c.stops&&c.stops.length){
   lines.push('[짜여 있는 오늘 동선] '+c.stops.map((s,i)=>(i+1)+'. '+csHM(s.at)+' '+s.name+'('+s.goal+')').join(' → ')+' · 종료 예상 '+csHM(c.endAt));
