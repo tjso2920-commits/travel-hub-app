@@ -52,23 +52,39 @@ if(isSale){
   }
 }
 
-/* 처음 켠 사람에게 설정 화면이 먼저 뜨는가 — 그리고 가두지 않는가 */
+/* 처음 켠 사람에게 고르는 화면이 먼저 뜨는가 — 그리고 가두지 않는가 */
 const sw=d.getElementById('setupWrap');
-t('처음 설정 화면 존재', !!sw);
-t('처음 설정 화면이 떠 있음', sw.style.display==='block');
+t('시작 화면 존재', !!sw);
+t('시작 화면이 떠 있음', sw.style.display!=='none' && sw.style.display!=='');
 t('앱 본체는 가려짐', d.getElementById('app').style.display==='none');
-t('설정 화면에 3단계', sw.querySelectorAll('#fmGuideStart .fm-guide-step').length===3);
+t('고르는 화면에 두 갈래', sw.textContent.includes('세팅 먼저 하기') && sw.textContent.includes('나중에 하기'));
+t('고르는 화면엔 3단계가 아직 없음', sw.querySelectorAll('.fm-guide-step').length===0);
+
+/* 세팅 먼저 하기 */
+w.eval("setupShow('setup')");
+t('세팅 화면에 3단계', sw.querySelectorAll('#fmGuideStart .fm-guide-step').length===3);
 t('id 충돌 없음', d.querySelectorAll('#fmGuideStart').length===1);
-t('나중에 하기 버튼', sw.textContent.includes('나중에 하기'));
 t('유료 위험 고지', sw.textContent.includes('요금이 나올 수 있습니다'));
-w.eval('setupSkip()');
-t('건너뛰면 앱으로', sw.style.display==='none' && d.getElementById('app').style.display==='block');
-t('건너뛴 것 기억', w.eval('foodMap.setupSkipped')===true);
-w.eval("foodMap.setupSkipped=false;setupShow();");
-t('다시 띄우기 동작', sw.style.display==='block');
-w.eval("foodMap.places=[{id:'x1',name:'테스트',cat:'맛집·식당'}];renderFoodMap();");
-t('장소가 들어오면 저절로 닫힘', sw.style.display==='none');
-w.eval("foodMap.places=[];foodMap.setupSkipped=false;renderFoodMap();");
+t('끝내는 버튼', sw.textContent.includes('세팅 끝내고 시작하기'));
+
+/* 나중에 하기 — 지금까지 쓰던 화면 그대로여야 한다 */
+w.eval('setupLater()');
+t('나중에 하면 앱으로', sw.style.display==='none' && d.getElementById('app').style.display==='block');
+t('다시 안 물음', w.eval('foodMap.setupSeen')===true);
+t('나중에 하면 안내 카드 유지', !!d.getElementById('fmGuide'));
+t('나중에 하면 가져오기 상자 유지', d.getElementById('fmCollect').textContent.includes('파일 넣기'));
+
+/* 세팅 끝내기 — 담기 화면에서 세팅 흔적이 사라지고 버튼 하나만 남아야 한다 */
+w.eval("setupShow('setup');setupFinish()");
+t('끝내면 앱으로', sw.style.display==='none');
+t('끝낸 것 기억', w.eval('foodMap.setupDone')===true);
+t('끝내면 안내 카드 사라짐', d.getElementById('fmGuide')===null);
+t('끝내면 다시 하기 버튼만', d.querySelectorAll('#fmCollect .fm-resetup button').length===1);
+t('다시 하기 버튼 문구', d.querySelector('#fmCollect .fm-resetup button').textContent.includes('세팅 다시 하기'));
+w.eval('setupAgain()');
+t('다시 하기가 세팅 화면을 엶', sw.style.display==='block' && sw.querySelectorAll('.fm-guide-step').length===3);
+w.eval('setupLater()');
+w.eval("foodMap.setupDone=false;foodMap.setupSeen=false;renderFoodMap();");
 
 /* 데이터가 없을 때 각 탭이 빈 화면으로 끝나지 않고 무엇을 하라고 알려 주는가 */
 t('시작 안내가 자동으로 열림', d.getElementById('fmCollect').textContent.includes('처음 설정'));

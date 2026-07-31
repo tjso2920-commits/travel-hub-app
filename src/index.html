@@ -506,8 +506,17 @@
   #setupWrap .su-head b{font-size:19px;font-weight:800;color:var(--text)}
   #setupWrap .su-hi{font-size:24px;font-weight:800;color:var(--text);line-height:1.35;margin:14px 2px 8px}
   #setupWrap .su-sub{font-size:13px;color:var(--muted);line-height:1.65;margin:0 2px 18px}
-  #setupWrap .su-skip{width:100%;min-height:52px;margin-top:16px;border:1px solid var(--line2);
+  #setupWrap .su-skip{width:100%;min-height:52px;margin-top:12px;border:1px solid var(--line2);
     border-radius:var(--pill,999px);background:transparent;color:var(--muted);font-size:14px;font-weight:800}
+  #setupWrap .su-go{width:100%;min-height:56px;margin-top:18px;border:0;
+    border-radius:var(--pill,999px);background:var(--wasabi);color:#fff;font-size:16px;font-weight:800}
+  /* 고르는 화면은 버튼 두 개만 크게. 가운데 세로 정렬. */
+  #setupWrap.pick{display:flex;flex-direction:column;justify-content:center;min-height:100vh;min-height:100dvh}
+  #setupWrap .su-why{font-size:12px;color:var(--faint);line-height:1.6;margin:9px 4px 0;text-align:center}
+  /* 세팅을 끝낸 사람에게 남는 단 하나의 세팅 흔적 */
+  .fm-resetup{display:flex;justify-content:flex-end;margin:0 0 10px}
+  .fm-resetup button{min-height:44px;padding:0 15px;border-radius:var(--pill,999px);
+    border:1px solid var(--line2);background:transparent;color:var(--muted);font-size:12.5px;font-weight:800}
   footer{text-align:center;padding:24px;font-family:var(--mono);font-size:10.5px;color:var(--faint);letter-spacing:.1em}
 
   /* DAYLIGHT · 밝은 테마
@@ -856,37 +865,71 @@ function startApp(){
  renderFoodMap();
  if(shared)showTab('collect');
  /* 공유로 들어온 사람은 볼 것이 있어서 온 것이다. 설정으로 가로막지 않는다. */
- if(!shared&&setupNeeded())setupShow();
+ if(!shared&&setupNeeded())setupShow('pick');
 }
 /* ── 처음 설정 화면 ──────────────────────────────────────────────────────
    장소가 0곳이고 아직 건너뛰지 않은 사람에게만 뜬다. 건너뛴 것은 저장한다. */
-function setupNeeded(){return !foodMap.places.length&&!foodMap.setupSkipped;}
-function setupShow(){
+/* 처음 켠 사람에게만 고르는 화면을 띄운다. 한 번 고르면 다시 안 묻는다. */
+function setupNeeded(){return !foodMap.setupSeen;}
+/* 세팅을 끝냈는가. 끝냈으면 담기 화면에서 세팅 관련을 전부 치운다. */
+function setupIsDone(){return !!foodMap.setupDone;}
+function suMark(){
+ return '<div class="su-head">'+
+  '<svg viewBox="0 0 100 100" role="img" aria-label="여행허브">'+
+   '<path d="M22 76 C 34 52, 44 68, 54 44 S 70 26, 80 22" fill="none" stroke="#4FB3A5" stroke-width="6" stroke-linecap="round"/>'+
+   '<circle cx="22" cy="76" r="8" fill="#3E7F9C"/><circle cx="80" cy="22" r="8" fill="#E0692F"/></svg>'+
+  '<b>여행허브</b></div>';
+}
+/* mode: 'pick' 고르는 화면 · 'setup' 3단계 화면 */
+function setupShow(mode){
  const w=document.getElementById('setupWrap');if(!w)return;
- w.innerHTML='<div class="su-head">'+
-   '<svg viewBox="0 0 100 100" role="img" aria-label="여행허브">'+
-    '<path d="M22 76 C 34 52, 44 68, 54 44 S 70 26, 80 22" fill="none" stroke="#4FB3A5" stroke-width="6" stroke-linecap="round"/>'+
-    '<circle cx="22" cy="76" r="8" fill="#3E7F9C"/><circle cx="80" cy="22" r="8" fill="#E0692F"/></svg>'+
-   '<b>여행허브</b></div>'+
-  '<div class="su-hi">저장만 해 둔 곳,<br>이번엔 실제로 가 봅시다</div>'+
-  '<div class="su-sub">쓰기 전에 아래 3단계만 맞춰 두면 됩니다. 오래 안 걸립니다.</div>'+
-  /* 앱 안쪽에도 같은 안내가 있다. id 가 겹치지 않게 접미사를 붙인다. */
-  fmGuideHTML('Start')+
-  '<button class="su-skip" onclick="setupSkip()">나중에 하기 · 앱 먼저 둘러보기</button>';
- w.style.display='block';
+ w.className=(mode==='pick')?'pick':'';
+ if(mode==='pick'){
+  w.innerHTML=suMark()+
+   '<div class="su-hi">저장만 해 둔 곳,<br>이번엔 실제로 가 봅시다</div>'+
+   '<div class="su-sub">쓰기 전에 3단계만 맞춰 두면 바로 쓸 수 있습니다.<br>'+
+    '어디 가는지 · 갈 곳 넣기 · AI 켜기, 이게 전부입니다.</div>'+
+   '<button class="su-go" onclick="setupShow(\'setup\')">세팅 먼저 하기 · 2분</button>'+
+   '<button class="su-skip" onclick="setupLater()">나중에 하기 · 앱 먼저 둘러보기</button>'+
+   '<div class="su-why">나중에 하셔도 앱 안에서 똑같이 할 수 있습니다.</div>';
+ }else{
+  w.innerHTML=suMark()+
+   '<div class="su-hi">처음 세팅</div>'+
+   '<div class="su-sub">순서대로 하시면 됩니다. 끝나면 이 화면은 다시 안 나옵니다.</div>'+
+   /* 앱 안쪽에도 같은 안내가 있다. id 가 겹치지 않게 접미사를 붙인다. */
+   fmGuideHTML('Start')+fmFileToolsHTML()+
+   '<button class="su-go" onclick="setupFinish()">세팅 끝내고 시작하기</button>'+
+   '<button class="su-skip" onclick="setupLater()">나중에 하기</button>';
+ }
+ /* 인라인 display 가 클래스의 flex 를 이긴다. 고르는 화면은 세로 가운데라 flex 로 켠다. */
+ w.style.display=(mode==='pick')?'flex':'block';
  document.getElementById('app').style.display='none';
  /* scrollTo 대신 scrollTop — 아이폰 사파리에서도 같고, 검사 환경에서 경고를 안 낸다 */
  const se=document.scrollingElement||document.documentElement;if(se)se.scrollTop=0;
 }
 function setupClose(){
  const w=document.getElementById('setupWrap');if(!w)return;
- w.style.display='none';w.innerHTML='';
+ w.style.display='none';w.innerHTML='';w.className='';
  document.getElementById('app').style.display='block';
 }
-function setupSkip(){foodMap.setupSkipped=true;save('foodmap_v1',foodMap);setupClose();renderFoodMap();}
+/* 끝냈다 — 담기 화면에서 안내 카드·가져오기 상자를 치우고 버튼 하나만 남긴다. */
+function setupFinish(){
+ foodMap.setupSeen=true;foodMap.setupDone=true;save('foodmap_v1',foodMap);
+ setupClose();renderFoodMap();
+}
+/* 나중에 — 지금까지 쓰던 화면 그대로 둔다(안내 카드·가져오기 상자 유지). */
+function setupLater(){
+ foodMap.setupSeen=true;save('foodmap_v1',foodMap);
+ setupClose();renderFoodMap();
+}
+function setupAgain(){setupShow('setup');}
 /* 설정 화면에서 '직접 적기' 를 누르면 앱으로 넘어가 입력칸을 연다.
    입력칸은 앱 안에 있어서, 설정 화면을 띄운 채로는 눌러도 아무 일도 안 일어난다. */
-function fmAddHere(){if(document.getElementById('setupWrap').style.display==='block')setupSkip();fmToggleAdd();}
+function fmAddHere(){
+ const w=document.getElementById('setupWrap');
+ if(w&&w.style.display==='block'){foodMap.setupSeen=true;save('foodmap_v1',foodMap);setupClose();renderFoodMap();}
+ fmToggleAdd();
+}
 let landingReturnTab='collect';
 function showLanding(){
  const on=document.querySelector('.tab.on');landingReturnTab=on?on.id.replace('tab-',''):'collect';
@@ -1991,6 +2034,19 @@ function fmSaveKeysHere(){
  save('foodmap_v1',foodMap);
  alert('이 기기에 저장했습니다. 언제든 지울 수 있습니다.');
  renderFoodMap();
+}
+/* 이미 한 번 넣어 본 사람을 위한 파일 도구. 세팅 화면에서만 보여준다. */
+function fmFileToolsHTML(){
+ if(!foodMap.places.length)return '';
+ return '<details class="xcard" style="margin-top:14px"><summary style="font-size:13px;font-weight:800;cursor:pointer">이미 넣으신 분 — 파일 다시 넣기 · 백업</summary>'+
+  '<div class="xsmall" style="margin-top:10px">지금 <b style="color:var(--text)">'+foodMap.places.length+'곳</b>이 들어 있습니다. '+
+  '같은 파일을 연결해 두면 구글에서 목록을 고칠 때마다 앱을 열 때 자동으로 확인합니다.</div>'+
+  '<div class="xactions"><button class="xaction sub" onclick="fmGuideImport()">📥 파일 다시 넣기</button>'+
+  '<button class="xaction sub" onclick="fmLinkCsv()">🔗 파일 연결해 두기</button>'+
+  '<button class="xaction sub" onclick="fmCheckLinkedCsv(false)">↻ 연결 파일 확인</button>'+
+  '<button class="xaction sub" onclick="fmExport()">📤 백업 내려받기</button></div>'+
+  '<div class="xsmall" style="margin-top:8px">'+(foodMap.linkedCsvName?('연결됨: <b style="color:var(--text)">'+esc(foodMap.linkedCsvName)+'</b>'):'연결 없음 · 크롬 계열만 지원')+'</div>'+
+  '</details>';
 }
 function fmExtraHTML(){
  return '<details class="xcard" style="margin-top:14px"><summary style="font-size:13px;font-weight:800;cursor:pointer">더 붙이기 (선택 · 안 해도 됩니다)</summary>'+
@@ -3849,9 +3905,7 @@ function fmClearDecision(){foodMap.decision=null;save('foodmap_v1',foodMap);rend
 renderFoodMap=function(){
  const cRoot=document.getElementById('fmCollect'),pRoot=document.getElementById('fmPlan'),nRoot=document.getElementById('fmNow');
  if(!cRoot||!pRoot||!nRoot)return;
- /* 파일을 넣었으면 설정 화면은 할 일이 끝났다. */
- const sw=document.getElementById('setupWrap');
- if(sw&&sw.style.display==='block'&&foodMap.places.length)setupClose();
+
  fm2Init();
  const total=foodMap.places.length,fav=foodMap.places.filter(x=>x.fav).length,visited=foodMap.places.filter(x=>x.visited).length,origin=fmOrigin(),hotel=foodMap.hotel||{};
  const opts=FM_CATS.slice(4).map(x=>'<option value="'+x+'">'+x+'</option>').join('');
@@ -3861,8 +3915,10 @@ renderFoodMap=function(){
   /* 0/0/0 통계는 장소가 없을 때 보여줄 이유가 없다.
      대신 어디 가는지 묻고 시작 안내를 앞으로 끌어올린다. */
   (total?'<div class="xstats"><div class="xstat"><b>'+total+'</b><span>전체</span></div><div class="xstat"><b>'+fav+'</b><span>즐겨찾기</span></div><div class="xstat"><b>'+visited+'</b><span>방문 완료</span></div></div>':fmFirstRunHTML())+
-   '<div class="importbox" style="margin-bottom:12px'+(total?'':';display:none')+'"><div class="xeyebrow">장소 가져오기 · 무료</div><div class="xsmall" style="margin:7px 0 10px">구글 지도에 저장해 둔 목록을 파일로 받아 넣습니다. 받는 방법은 위 <b style="color:var(--wasabi)">처음 설정</b>의 2단계에 적어 뒀습니다. 같은 파일을 연결해 두면 수정본을 열 때 자동으로 확인합니다.</div><input type="file" id="fmImp" accept=".csv,text/csv,.json,.geojson,.kml,application/json,application/geo+json,application/vnd.google-earth.kml+xml" style="display:none" onchange="fmImport(this)"><div class="xactions"><button class="xaction" onclick="document.getElementById(\'fmImp\').click()">📥 파일 넣기</button><button class="xaction sub" onclick="fmLinkCsv()">🔗 파일 연결해 두기</button><button class="xaction sub" onclick="fmCheckLinkedCsv(false)">↻ 연결 파일 확인</button><button class="xaction sub" onclick="fmExport()">📤 개인 백업</button>'+(SALE_MODE?'':'<button class="xaction sub" onclick="fmExportSale()">🛡 판매용 스팟팩</button>')+'</div><div class="xsmall" style="margin-top:8px">'+(foodMap.linkedCsvName?'연결됨: <b style="color:var(--text)">'+esc(foodMap.linkedCsvName)+'</b> · 마지막 반영 '+esc(foodMap.linkedCsvAt||'확인 전'):'연결 없음 · 크롬 계열 지원, 그 외 브라우저는 수동 재가져오기')+'</div></div>'+
-  fmGuideHTML()+ibHTML()+
+   '<div class="importbox" style="margin-bottom:12px'+((total&&!setupIsDone())?'':';display:none')+'"><div class="xeyebrow">장소 가져오기 · 무료</div><div class="xsmall" style="margin:7px 0 10px">구글 지도에 저장해 둔 목록을 파일로 받아 넣습니다. 받는 방법은 위 <b style="color:var(--wasabi)">처음 설정</b>의 2단계에 적어 뒀습니다. 같은 파일을 연결해 두면 수정본을 열 때 자동으로 확인합니다.</div><input type="file" id="fmImp" accept=".csv,text/csv,.json,.geojson,.kml,application/json,application/geo+json,application/vnd.google-earth.kml+xml" style="display:none" onchange="fmImport(this)"><div class="xactions"><button class="xaction" onclick="document.getElementById(\'fmImp\').click()">📥 파일 넣기</button><button class="xaction sub" onclick="fmLinkCsv()">🔗 파일 연결해 두기</button><button class="xaction sub" onclick="fmCheckLinkedCsv(false)">↻ 연결 파일 확인</button><button class="xaction sub" onclick="fmExport()">📤 개인 백업</button>'+(SALE_MODE?'':'<button class="xaction sub" onclick="fmExportSale()">🛡 판매용 스팟팩</button>')+'</div><div class="xsmall" style="margin-top:8px">'+(foodMap.linkedCsvName?'연결됨: <b style="color:var(--text)">'+esc(foodMap.linkedCsvName)+'</b> · 마지막 반영 '+esc(foodMap.linkedCsvAt||'확인 전'):'연결 없음 · 크롬 계열 지원, 그 외 브라우저는 수동 재가져오기')+'</div></div>'+
+  (setupIsDone()
+   ? '<div class="fm-resetup"><button onclick="setupAgain()">⚙ 세팅 다시 하기</button></div>'
+   : fmGuideHTML())+ibHTML()+
    '<div'+(total?'':' style="display:none"')+'>'+
    '<div class="fm-toolbar"><input class="xinput" id="fmSearch" value="'+esc(foodMap.q||'')+'" placeholder="검색하거나 링크를 붙여넣으세요" oninput="fmOneInput(this.value)"><button class="btn" onclick="fmOneGo()">담기</button><button class="btn" onclick="fmToggleAdd()">＋</button></div>'+
    '<div class="xsmall" id="fmOneHint" style="margin:-4px 0 8px 2px;color:var(--wasabi)"></div><div class="fm-cats">'+FM_CATS.map(x=>'<button class="'+((foodMap.filter||'전체')===x?'on':'')+'" onclick="fmSetFilter(\''+x+'\')">'+x+'</button>').join('')+'</div>'+
