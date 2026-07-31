@@ -345,8 +345,9 @@
   .sp-visual .sp-addphoto{margin:0;width:100%;height:168px;font-size:12.5px}
   .sp-map svg{display:block;width:100%;height:auto;max-height:230px}
   .sp-visual.both .sp-map svg{height:100%;max-height:none;object-fit:cover}
-  .sp-meta{display:flex;align-items:center;gap:8px;padding:12px 16px 4px;font-size:13px;color:var(--muted)}
+  .sp-meta{padding:12px 16px 4px;font-size:13px;color:var(--muted);line-height:1.7}
   .sp-meta b{color:var(--text);font-family:var(--mono)}
+  .sp-why{font-size:11.5px;color:var(--faint);line-height:1.5;margin-top:3px}
   .sp-rows{padding:8px 16px 0}
   .sp-row{display:flex;gap:12px;padding:11px 0;border-top:1px solid var(--line);font-size:13.5px}
   .sp-row span{width:64px;flex:none;color:var(--muted)}
@@ -436,7 +437,8 @@
   .fm-badge.hot{color:var(--ember-soft);border-color:rgba(224,105,47,.32)}
   .fm-badge.good{color:var(--wasabi);border-color:rgba(180,194,74,.3)}
   .fm-badge.dim{color:var(--faint)}
-  .fm-score{font-family:var(--mono);font-size:10px;color:var(--ember-soft);font-weight:800;margin-left:auto;white-space:nowrap}
+  .fm-score{font-size:10.5px;font-weight:800;margin-left:auto;white-space:nowrap;
+    border-radius:999px;padding:3px 8px;background:var(--surface2);color:var(--muted)}
   .fm-decision{border:1px solid rgba(180,194,74,.28);background:linear-gradient(180deg,rgba(180,194,74,.06),var(--surface));
     border-radius:14px;padding:14px;margin-bottom:12px}
   .fm-decision h3{font-size:14px;margin-bottom:7px}
@@ -593,7 +595,8 @@
   .fm-gps-readout{background:rgba(51,113,142,.06);border-color:rgba(31,37,42,.12)}
   .fm-badge.good{color:#2F6B33;border-color:rgba(47,107,51,.35)}
   .fm-badge.hot{color:#9E4D12}
-  .fm-score{color:#9E4D12}
+  .fm-score{background:rgba(34,48,58,.05);color:#5A6B76}
+  .fm-score.top{background:rgba(62,127,156,.11);color:#2C6580}
 
   /* 걸으면서 한 손으로 누르는 화면이다. 분류 칩·장소 버튼이 32px 대라 자주 빗나간다.
      44px 은 애플이 권고하는 최소치이고, 이 앱에서는 그보다 아래로 내려가면 안 된다. */
@@ -1947,6 +1950,20 @@ function fm2Eta(p){const d=fm2Distance(p);if(d===null)return null;const km=d*1.3
 function fm2EtaTxt(p){const e=fm2Eta(p);return e?('도보 '+e.walk+'분 · 자전거 '+e.bike+'분'):'';}
 function fm2Regret(p){let s=(p.priority||0)*18+(p.fav?14:0)+(!p.visited?8:0)+(p.rating?Math.max(0,p.rating-3.5)*12:0)+Math.min(12,Math.log10((p.ratingCount||0)+1)*5);
  if(p.reservation==='needed')s+=8;if(p.reservation==='booked')s+=12;if(p.openNow===true)s+=5;if(p.excluded)s=0;return Math.max(0,Math.min(100,Math.round(s)));}
+/* 점수를 날것으로 보여주면 "아쉬움 8" 이 무슨 말인지 아무도 모른다.
+   낮은 것은 아예 안 띄우고, 눈에 띄어야 할 것만 말로 붙인다. */
+function fm2Tier(p){
+ if(p.excluded||p.visited)return '';
+ const v=fm2Regret(p);
+ if(v>=55)return '<span class="fm-score top">꼭 가기</span>';
+ if(v>=30)return '<span class="fm-score">추천</span>';
+ return '';
+}
+/* 상세에서는 숫자를 보여주되 반드시 무슨 뜻인지 같이 적는다. */
+function fm2TierTxt(p){
+ const v=fm2Regret(p);
+ return (v>=55?'꼭 가기':v>=30?'추천':'보통')+' · '+v+'점';
+}
 function fm2Score(p){let s=fm2Regret(p)+(p.openNow===true?14:(p.openNow===false?-16:0))+(p.visited?-8:6);const d=fm2Distance(p);if(d!==null)s+=d<.7?24:d<1.5?17:d<3?9:d<6?2:-Math.min(20,d);if(p.excluded)s=-999;return s;}
 function fm2Reason(p){const r=[];const d=fm2DistTxt(p);if(d)r.push(d);if(p.openNow===true)r.push('영업 중');if(p.priority)r.push('우선 '+p.priority);if(p.rating)r.push('★ '+p.rating);if(!p.visited)r.push('미방문');return r.join(' · ')||'저장한 후보';}
 /* 권역 판정. 일본이면 기존 좌표 범위를 그대로 쓰고(쌓인 데이터 호환),
@@ -2146,6 +2163,8 @@ function fmSpotRender(){
    (p.visited?' · <b>방문함</b>':'')+'</div>'+
   '<div class="sp-rows">'+
    '<div class="sp-row"><span>이름</span><div>'+esc(p.name||'')+'</div></div>'+
+   '<div class="sp-row"><span>놓치면<br>아쉬움</span><div>'+esc(fm2TierTxt(p))+
+    '<div class="sp-why">즐겨찾기·우선순위·평점·예약 여부로 계산합니다. 이 순서로 하루 코스를 짭니다.</div></div></div>'+
    (p.address?'<div class="sp-row"><span>주소</span><div>'+esc(p.address)+'</div></div>':'')+
    (p.note?'<div class="sp-row"><span>메모</span><div>'+esc(p.note)+'</div></div>':'')+
    (p.rating?'<div class="sp-row"><span>평점</span><div>★ '+esc(String(p.rating))+' ('+(p.ratingCount||0)+')</div></div>':'')+
@@ -3693,7 +3712,7 @@ function fmSetHotelFromSpot(){
  alert('“'+p.name+'”을 숙소 기준으로 지정했습니다.');}
 function fmSaveHotel(){const url=document.getElementById('fmHotelUrl').value.trim(),c=fm2UrlCoords(url)||{};foodMap.hotel={name:document.getElementById('fmHotelName').value.trim(),address:document.getElementById('fmHotelAddress').value.trim(),url:url,lat:+document.getElementById('fmHotelLat').value||c.lat||null,lng:+document.getElementById('fmHotelLng').value||c.lng||null};foodMap.originMode='hotel';save('foodmap_v1',foodMap);renderFoodMap();}
 fmRenderList=function(){const el=document.getElementById('fmList');if(!el)return;const a=fmFiltered(),show=a.slice(0,250);const pick=fmSel.on;el.innerHTML='<div class="fm-count">조건 결과 '+a.length+' / 전체 '+foodMap.places.length+'</div>'+(show.length?show.map(p=>{const d=fm2DistTxt(p),badges=[p.kind,p.region,d,fm2EtaTxt(p),p.openNow===true?'영업 중':(p.openNow===false?'현재 영업 아님':''),p.priority?'우선 '+p.priority:'',p.reservation==='needed'?'예약 확인':(p.reservation==='booked'?'예약 완료':'')].filter(Boolean);
- return'<div class="place '+(pick?('picking '+(fmSel.ids.has(p.id)?'on ':'')):(p.id===foodMap.selected?'sel ':''))+(p.visited?'visited ':'')+(p.excluded?'visited':'')+'" onclick="'+(pick?'fmSelPick':'fmSelect')+'(\''+p.id+'\')">'+(pick?'<span class="fm-check">✓</span>':'')+(p.photo&&!pick?'<img class="place-thumb" src="'+esc(p.photo)+'" alt="">':'')+'<div class="place-top"><div class="place-name">'+(p.fav?'★ ':'')+esc(p.name)+'</div><span class="place-cat">'+esc(p.cat||'기타')+'</span><span class="fm-score">아쉬움 '+fm2Regret(p)+'</span></div><div class="place-note">'+esc(p.note||p.address||(fm2HasCoords(p)?p.lat+', '+p.lng:'메모 없음'))+'</div><div class="fm-badges">'+badges.map((x,i)=>'<span class="fm-badge '+(String(x).includes('영업 중')?'good':String(x).includes('아님')?'hot':'')+'">'+esc(x)+'</span>').join('')+'</div>'+(pick?'':'<div class="place-btns"><button class="'+(p.fav?'fav':'')+'" onclick="event.stopPropagation();fmToggle(\''+p.id+'\',\'fav\')">'+(p.fav?'★ 저장':'☆ 저장')+'</button><button onclick="event.stopPropagation();fmToggle(\''+p.id+'\',\'visited\')">'+(p.visited?'↩ 미방문':'✓ 방문')+'</button><a href="'+esc(fmDirectionsLink(p))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">길찾기</a><button onclick="event.stopPropagation();fmSelect(\''+p.id+'\')">영상·관리</button></div>')+'</div>';}).join(''):'<div class="empty">조건에 맞는 장소가 없습니다.</div>');if(a.length>250)el.innerHTML+='<div class="empty">250개만 표시 중 · 필터나 검색어로 좁혀보세요.</div>';};
+ return'<div class="place '+(pick?('picking '+(fmSel.ids.has(p.id)?'on ':'')):(p.id===foodMap.selected?'sel ':''))+(p.visited?'visited ':'')+(p.excluded?'visited':'')+'" onclick="'+(pick?'fmSelPick':'fmSelect')+'(\''+p.id+'\')">'+(pick?'<span class="fm-check">✓</span>':'')+(p.photo&&!pick?'<img class="place-thumb" src="'+esc(p.photo)+'" alt="">':'')+'<div class="place-top"><div class="place-name">'+(p.fav?'★ ':'')+esc(p.name)+'</div><span class="place-cat">'+esc(p.cat||'기타')+'</span>'+fm2Tier(p)+'</div><div class="place-note">'+esc(p.note||p.address||'메모 없음')+'</div><div class="fm-badges">'+badges.map((x,i)=>'<span class="fm-badge '+(String(x).includes('영업 중')?'good':String(x).includes('아님')?'hot':'')+'">'+esc(x)+'</span>').join('')+'</div>'+(pick?'':'<div class="place-btns"><button class="'+(p.fav?'fav':'')+'" onclick="event.stopPropagation();fmToggle(\''+p.id+'\',\'fav\')">'+(p.fav?'★ 저장':'☆ 저장')+'</button><button onclick="event.stopPropagation();fmToggle(\''+p.id+'\',\'visited\')">'+(p.visited?'↩ 미방문':'✓ 방문')+'</button><a href="'+esc(fmDirectionsLink(p))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">길찾기</a><button onclick="event.stopPropagation();fmSelect(\''+p.id+'\')">영상·관리</button></div>')+'</div>';}).join(''):'<div class="empty">조건에 맞는 장소가 없습니다.</div>');if(a.length>250)el.innerHTML+='<div class="empty">250개만 표시 중 · 필터나 검색어로 좁혀보세요.</div>';};
 fmRenderMap=function(){const el=document.getElementById('fmMap');if(!el)return;const live=fmGpsPoint();if(live&&fmGps.follow){const q=live.lat+','+live.lng,acc=Number.isFinite(fmGps.accuracy)?'현재 위치 · ±'+Math.round(fmGps.accuracy)+'m':'현재 위치';el.classList.add('gps-live');el.innerHTML='<iframe loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="실시간 현재 위치 지도" src="https://www.google.com/maps?q='+encodeURIComponent(q)+'&z=17&output=embed"></iframe><span class="fm-gps-mapdot" aria-hidden="true"></span><span class="fm-gps-maplabel">'+esc(acc)+'</span>';return;}el.classList.remove('gps-live');const p=foodMap.places.find(x=>x.id===foodMap.selected);if(!p){el.innerHTML='목록의 ‘영상·관리’를 누르면 지도·상태·영상·현장 일본어가 열립니다.';return;}const q=fm2HasCoords(p)?p.lat+','+p.lng:(p.name+' '+fmAreaHint());el.innerHTML='<iframe loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="'+esc(p.name)+' 지도" src="https://www.google.com/maps?q='+encodeURIComponent(q)+'&output=embed"></iframe>';};
 /* 목록에서 장소를 누르면 상세 시트를 띄운다.
    선택 상태 갱신은 그대로 하되, 화면을 스크롤해 내리지 않는다 — 시트가 그 자리에 뜬다. */
