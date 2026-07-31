@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#F4F3F0">
+<title>여행 통합 허브 — 저장만 해 둔 곳, 이번엔 실제로</title>
+<meta name="description" content="구글 지도에 저장만 해 둔 장소를 실제로 돌 수 있는 하루 동선으로 바꿉니다. 설치 없이 브라우저에서 바로.">
+<meta property="og:title" content="저장만 해 둔 곳, 이번엔 실제로 가 봅시다">
+<meta property="og:description" content="저장한 장소를 숙소·시간·거리에 맞춰 오늘 갈 순서로 바꿔 줍니다.">
+<meta property="og:type" content="website">
+<style>
+/* ── 앱과 같은 톤. 밝은 바탕에 짙은 청록 강조. ── */
+:root{
+  --bg:#F4F3F0;--surface:#FFF;--surface2:#EDECE8;
+  --text:#1F252A;--muted:#525C64;--faint:#5F6971;
+  --pri:#33718E;--pri-deep:#245A75;--ember:#C2621D;
+  --line:rgba(31,37,42,.10);--line2:rgba(31,37,42,.17);
+  --sans:ui-rounded,"SF Pro Rounded",-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{background:var(--bg)}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:16px;line-height:1.7;
+  -webkit-text-size-adjust:100%;
+  background-image:radial-gradient(78% 40% at 8% -4%,rgba(51,113,142,.07),transparent 62%),
+    radial-gradient(70% 36% at 100% 2%,rgba(194,98,29,.045),transparent 66%)}
+.wrap{max-width:760px;margin:0 auto;padding:0 20px}
+section{padding:52px 0}
+h1{font-size:clamp(30px,7vw,46px);line-height:1.28;font-weight:800;margin:0 0 18px;letter-spacing:-.02em}
+h2{font-size:clamp(21px,4.6vw,28px);line-height:1.4;font-weight:800;margin:0 0 16px;letter-spacing:-.01em}
+h3{font-size:17px;font-weight:800;margin:0 0 7px}
+p{margin:0 0 15px;color:var(--muted)}
+p.lead{font-size:clamp(16px,3.6vw,19px);color:var(--muted)}
+b{color:var(--text)}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.14em;font-weight:800;color:var(--pri);margin:0 0 12px}
+
+.hero{padding:56px 0 40px}
+.cta{display:inline-flex;align-items:center;justify-content:center;min-height:56px;padding:0 30px;
+  border-radius:14px;background:var(--pri);color:#fff;font-size:17px;font-weight:800;text-decoration:none;
+  box-shadow:0 3px 14px rgba(51,113,142,.24)}
+.cta:active{background:var(--pri-deep)}
+.cta.ghost{background:var(--surface);color:var(--pri);border:1px solid var(--line2);box-shadow:none}
+.ctarow{display:flex;gap:11px;flex-wrap:wrap;margin-top:26px}
+.note{font-size:13px;color:var(--faint);margin-top:14px}
+
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px;
+  box-shadow:0 2px 10px rgba(31,37,42,.05)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+.grid p{margin:0;font-size:14.5px}
+
+.shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:16px;margin-top:8px}
+.shot{background:var(--surface);border:1px solid var(--line);border-radius:18px;overflow:hidden;
+  box-shadow:0 3px 16px rgba(31,37,42,.07)}
+.shot img{display:block;width:100%;height:auto}
+.shot span{display:block;padding:12px 15px;font-size:13.5px;color:var(--muted);border-top:1px solid var(--line)}
+.shot span b{display:block;color:var(--text);font-size:14.5px;margin-bottom:2px}
+
+.steps{counter-reset:s;margin:0;padding:0;list-style:none}
+.steps li{counter-increment:s;position:relative;padding:0 0 22px 46px}
+.steps li::before{content:counter(s);position:absolute;left:0;top:1px;width:30px;height:30px;border-radius:50%;
+  background:var(--pri);color:#fff;font-family:var(--mono);font-size:14px;font-weight:800;
+  display:grid;place-items:center}
+.steps li:last-child{padding-bottom:0}
+.steps b{display:block;font-size:16.5px;margin-bottom:3px}
+.steps p{margin:0;font-size:14.5px}
+
+.price{text-align:center}
+.price .amt{font-size:clamp(38px,9vw,56px);font-weight:800;letter-spacing:-.03em;line-height:1.15}
+.price .amt small{font-size:.42em;font-weight:700;color:var(--muted);margin-left:6px}
+.tick{list-style:none;margin:20px 0 0;padding:0;text-align:left;display:inline-block}
+.tick li{padding:6px 0 6px 26px;position:relative;font-size:15px}
+.tick li::before{content:"✓";position:absolute;left:0;color:var(--pri);font-weight:800}
+
+.qa{border-top:1px solid var(--line);padding:18px 0}
+.qa:last-of-type{border-bottom:1px solid var(--line)}
+.qa summary{cursor:pointer;list-style:none;font-weight:800;font-size:16px;display:flex;gap:12px;
+  align-items:center;min-height:44px}
+.qa summary::-webkit-details-marker{display:none}
+.qa summary::after{content:"＋";margin-left:auto;color:var(--faint);font-weight:700;flex:none}
+.qa[open] summary::after{content:"−"}
+.qa p{margin:12px 0 0;font-size:14.5px}
+.warn{border-left:3px solid var(--ember);padding:2px 0 2px 15px;margin:18px 0}
+.warn p{margin:0;font-size:14px}
+footer{padding:36px 0 60px;border-top:1px solid var(--line);color:var(--faint);font-size:13px}
+footer a{color:var(--pri);font-weight:700;display:inline-flex;align-items:center;min-height:44px}
+</style>
+</head>
+<body>
+
+<!-- ────────────────────────────────────────────────────────────────
+     ⚠️ 파는 사람이 고칠 곳은 여기 두 군데뿐입니다.
+       1) 아래 '신청하기' 링크 두 개의 href  → 오픈채팅·인스타 DM·구글폼 주소
+       2) 맨 아래 연락처 한 줄
+     나머지는 그대로 두면 됩니다.
+     ──────────────────────────────────────────────────────────────── -->
+
+<div class="wrap">
+
+<section class="hero">
+  <div class="eyebrow">TRAVEL HUB</div>
+  <h1>저장만 해 둔 곳,<br>이번엔 실제로 가 봅시다</h1>
+  <p class="lead">
+    구글 지도에 저장한 장소가 <b>100곳이 넘는데</b> 막상 여행 가면
+    호텔 근처 아무 데나 들어가지 않으셨나요.<br>
+    저장한 목록을 <b>숙소·시간·거리에 맞춰 오늘 갈 순서</b>로 바꿔 드립니다.
+  </p>
+  <div class="ctarow">
+    <a class="cta" href="#apply">베타 신청하기</a>
+    <a class="cta ghost" href="./index.html">먼저 둘러보기</a>
+  </div>
+  <p class="note">설치 없이 브라우저에서 바로 씁니다 · 아이폰은 홈 화면에 추가하면 앱처럼 열립니다</p>
+</section>
+
+<section>
+  <h2>문제는 저장이 아니라 실행입니다</h2>
+  <div class="grid">
+    <div class="card">
+      <h3>저장은 쉽고 정리는 어렵다</h3>
+      <p>인스타·유튜브에서 본 곳을 저장하는 건 1초. 그런데 목록이 쌓이면
+        어디가 어딘지, 뭘 이미 가봤는지 알 수 없게 됩니다.</p>
+    </div>
+    <div class="card">
+      <h3>현지에서는 결국 폰만 본다</h3>
+      <p>지도 켜고, 영업시간 찾고, 거리 재고, 번역기 켜고. 그러다 지쳐서
+        눈앞에 보이는 가게로 들어갑니다.</p>
+    </div>
+    <div class="card">
+      <h3>다녀와도 남는 게 없다</h3>
+      <p>어디를 갔는지, 얼마를 썼는지 기억이 안 납니다. 다음 여행에서
+        같은 목록을 또 처음부터 봅니다.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>이렇게 씁니다</h2>
+  <ol class="steps">
+    <li><b>담기</b><p>구글 지도 저장 목록을 파일로 내려받아 넣습니다.
+      인스타·틱톡·유튜브 링크를 붙여넣어도 됩니다. 이미 가 본 곳은 한 번에 표시해 걸러냅니다.</p></li>
+    <li><b>일정 짜기</b><p>숙소와 날짜를 넣으면 거리·영업시간·끼니 시간을 따져
+      하루 동선을 만듭니다. 지도에 ①②③ 순서로 그려 줍니다.</p></li>
+    <li><b>지금 여행</b><p>현지에서 현재 위치 기준으로 가까운 곳을 뽑고,
+      비가 오면 실내 위주로 다시 짭니다. 그 가게에서 쓸 현지 회화도 같이 나옵니다.</p></li>
+  </ol>
+</section>
+
+<section>
+  <h2>실제 화면</h2>
+  <div class="shots">
+    <div class="shot">
+      <img src="./shots/1-map.png" alt="저장한 장소가 지도에 분류별로 표시되고 구역별로 묶인 화면" loading="lazy">
+      <span><b>저장한 곳 전부를 지도에</b>분류별 색, 구역 자동 묶기, 가 본 곳 제외</span>
+    </div>
+    <div class="shot">
+      <img src="./shots/2-course.png" alt="오늘 동선이 시각과 도보 시간과 함께 순서대로 나열된 화면" loading="lazy">
+      <span><b>오늘 갈 순서</b>도착 시각·도보 시간·체류 시간까지</span>
+    </div>
+    <div class="shot">
+      <img src="./shots/3-spot.png" alt="장소를 눌렀을 때 지도와 주소가 함께 뜨는 상세 화면" loading="lazy">
+      <span><b>한 곳을 누르면</b>지도·거리·주소, 애플 지도/구글 지도로 바로</span>
+    </div>
+  </div>
+  <p class="note">화면은 실제 앱을 캡처한 것입니다. 장소 데이터는 예시입니다.</p>
+</section>
+
+<section>
+  <h2>들어 있는 것</h2>
+  <div class="grid">
+    <div class="card"><h3>동선 자동 생성</h3><p>거리·영업시간·끼니 시간을 따져 순서를 만듭니다. AI에게 맡길 수도 있습니다.</p></div>
+    <div class="card"><h3>지도 위 번호 동선</h3><p>실제 지도에 순서대로 선을 그립니다. 어디서 어디로 가는지 한눈에 보입니다.</p></div>
+    <div class="card"><h3>가 본 곳 제외</h3><p>방문 표시한 곳은 다음 동선에서 자동으로 빠집니다. 여러 곳을 한 번에 표시할 수 있습니다.</p></div>
+    <div class="card"><h3>날씨 연동</h3><p>비 예보가 있으면 실내 비중이 높은 후보로 갈아탑니다.</p></div>
+    <div class="card"><h3>예산·환율</h3><p>하루 권장 예산과 남은 돈을 자국 통화로 환산해 보여줍니다.</p></div>
+    <div class="card"><h3>현장 회화</h3><p>그 가게에서 바로 꺼내 쓸 문장을 카드로 만듭니다. <b>현재 일본어만 제공됩니다.</b></p></div>
+    <div class="card"><h3>사진으로 기록</h3><p>다녀와서 사진을 올리면 언제 어디에 갔는지 일지로 남습니다.</p></div>
+    <div class="card"><h3>공유 카드</h3><p>하루 동선을 이미지 한 장으로 만들어 SNS에 바로 올립니다.</p></div>
+    <div class="card"><h3>오프라인 동작</h3><p>데이터가 끊겨도 앱이 열립니다. 저장한 목록은 그대로 보입니다.</p></div>
+  </div>
+</section>
+
+<section>
+  <h2>데이터는 기기 밖으로 안 나갑니다</h2>
+  <p>저장한 장소, 메모, 사진, 방문 기록은 <b>사용하는 브라우저 안에만</b> 저장됩니다.
+    서버가 없어서 보낼 곳도 없습니다. 회원가입도 로그인도 없습니다.</p>
+  <div class="warn">
+    <p>그래서 <b>백업은 직접 하셔야 합니다.</b> 앱 안에 백업 파일을 내려받는 버튼이 있습니다.
+      브라우저 데이터를 지우거나 폰을 바꾸면 기록이 사라집니다.</p>
+  </div>
+</section>
+
+<section id="price" class="price">
+  <div class="card">
+    <div class="eyebrow" style="text-align:center">BETA</div>
+    <h2>먼저 쓰는 10명</h2>
+    <div class="amt">14,900<small>원</small></div>
+    <p style="margin-top:10px">한 번 결제 · 구독 아님</p>
+    <ul class="tick">
+      <li>모든 기능 제한 없이</li>
+      <li>업데이트 추가 비용 없음</li>
+      <li>불편한 점 알려주시면 우선 반영</li>
+      <li>일주일 안에 안 맞으면 전액 환불</li>
+    </ul>
+    <div class="ctarow" style="justify-content:center">
+      <a class="cta" href="#apply" id="apply">신청하기</a>
+    </div>
+    <p class="note">신청하시면 사용 방법과 함께 주소를 보내 드립니다.</p>
+  </div>
+</section>
+
+<section>
+  <h2>먼저 알아두실 것</h2>
+
+  <details class="qa"><summary>앱스토어에서 받나요?</summary>
+    <p>아닙니다. 주소를 열면 바로 실행됩니다. 아이폰은 사파리에서 공유 → 홈 화면에 추가를 하면
+      아이콘이 생기고 앱처럼 열립니다. 설치도 업데이트도 필요 없습니다.</p></details>
+
+  <details class="qa"><summary>내 장소는 어떻게 넣나요?</summary>
+    <p>구글 Takeout에서 저장 목록을 내려받아 파일을 넣으면 됩니다. 안내가 앱 첫 화면에 있습니다.
+      인스타·틱톡·유튜브 링크를 하나씩 붙여넣거나, 장소를 직접 입력해도 됩니다.</p></details>
+
+  <details class="qa"><summary>지도에 위치가 안 뜨는 경우가 있나요?</summary>
+    <p>있습니다. 구글 저장 목록을 <b>CSV로</b> 내려받으면 위도·경도가 들어 있지 않습니다.
+      좌표가 없으면 목록·메모·지도 앱 연결은 되지만 거리 계산과 동선 그리기가 안 됩니다.
+      Takeout의 JSON 형식으로 받으면 좌표가 함께 들어옵니다.</p></details>
+
+  <details class="qa"><summary>AI 기능은 돈이 드나요?</summary>
+    <p>구글에서 무료로 발급되는 키를 앱에 한 번 넣으면 됩니다. 카드 등록이 필요 없습니다.
+      발급 방법은 앱 설정에 단계별로 안내되어 있습니다. 키를 넣지 않아도 동선·지도·목록은 그대로 동작합니다.</p></details>
+
+  <details class="qa"><summary>일본 말고 다른 나라도 되나요?</summary>
+    <p>됩니다. 목적지를 정하면 검색·거리·권역이 그 도시 기준으로 맞춰집니다.
+      다만 <b>현장 회화는 지금 일본어만</b> 있습니다. 다른 언어는 준비 중입니다.</p></details>
+
+  <details class="qa"><summary>여러 기기에서 같이 쓰나요?</summary>
+    <p>안 됩니다. 서버가 없어서 기기끼리 동기화되지 않습니다.
+      백업 파일을 내려받아 다른 기기에서 불러오는 방식은 됩니다.</p></details>
+
+  <details class="qa"><summary>환불되나요?</summary>
+    <p>일주일 안에 말씀해 주시면 이유를 묻지 않고 전액 환불합니다.</p></details>
+</section>
+
+<footer>
+  <p style="margin:0 0 8px">여행 통합 허브 · 개인 개발</p>
+  <p style="margin:0 0 8px">문의 — <a href="#apply">신청·문의하기</a></p>
+  <p style="margin:0;font-size:12px">지도 © OpenStreetMap 기여자 · 장소 정보는 구글 지도 저장 목록에서 가져옵니다.</p>
+</footer>
+
+</div>
+</body>
+</html>
