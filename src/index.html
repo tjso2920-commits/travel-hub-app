@@ -297,6 +297,26 @@
   .tool-result{white-space:pre-wrap;background:var(--bg);border:1px solid var(--line);border-radius:11px;
     padding:12px;margin-top:10px;font-size:12.5px;color:var(--text);max-height:300px;overflow:auto}
   .fm-toolbar{display:flex;gap:7px;margin-bottom:10px}
+  .sp-sheet{padding:0}
+  .sp-head{display:flex;align-items:center;gap:11px;padding:16px 16px 12px}
+  .sp-ico{width:40px;height:40px;flex:none;border-radius:12px;display:grid;place-items:center;font-size:19px}
+  .sp-head b{flex:1;min-width:0;font-size:17px;font-weight:800;line-height:1.35;color:var(--text)}
+  .sp-x{width:44px;height:44px;flex:none;border-radius:50%;border:none;background:var(--surface2);
+    color:var(--muted);font-size:18px;cursor:pointer}
+  .sp-map{margin:0 16px;border-radius:14px;overflow:hidden;border:1px solid var(--line)}
+  .sp-map svg{display:block;width:100%;height:auto;max-height:200px;object-fit:cover}
+  .sp-meta{display:flex;align-items:center;gap:8px;padding:12px 16px 4px;font-size:13px;color:var(--muted)}
+  .sp-meta b{color:var(--text);font-family:var(--mono)}
+  .sp-rows{padding:8px 16px 0}
+  .sp-row{display:flex;gap:12px;padding:11px 0;border-top:1px solid var(--line);font-size:13.5px}
+  .sp-row span{width:64px;flex:none;color:var(--muted)}
+  .sp-row div{flex:1;min-width:0;color:var(--text);word-break:break-all}
+  .sp-open{margin:14px 16px 0;width:calc(100% - 32px);min-height:52px;border:none;border-radius:13px;
+    background:var(--wasabi);color:#fff;font-size:15px;font-weight:800;cursor:pointer}
+  .sp-quick{display:flex;gap:8px;padding:10px 16px 16px}
+  .sp-quick button{flex:1;min-height:46px;border-radius:11px;border:1px solid var(--line2);
+    background:var(--surface2);color:var(--muted);font-size:13px;font-weight:700;cursor:pointer}
+  .sp-quick button.on{background:var(--wasabi);border-color:var(--wasabi);color:#fff}
   .fm-selbar{margin:10px 0}
   .fm-selbar.on{background:var(--surface2);border:1px solid var(--wasabi);border-radius:13px;padding:12px 13px}
   .fm-selbar .fm-selcount{font-size:14px;font-weight:800;color:var(--text)}
@@ -579,6 +599,8 @@
 
 </div>
 </div>
+
+<div class="overlay" id="ovSpot"><div class="modal sp-sheet" id="spSheet"></div></div>
 
 <div class="overlay" id="ovSet"><div class="modal">
   <h4>설정</h4>
@@ -1782,7 +1804,7 @@ function fm2Bounds(a){let s={minLat:90,maxLat:-90,minLng:180,maxLng:-180};
  if(s.maxLng-s.minLng<0.004){s.minLng-=0.002;s.maxLng+=0.002;}
  const py=(s.maxLat-s.minLat)*0.08,px=(s.maxLng-s.minLng)*0.08;
  s.minLat-=py;s.maxLat+=py;s.minLng-=px;s.maxLng+=px;return s;}
-const FM_CAT_COLOR={'맛집·식당':'#C7EC32','바·이자카야':'#F2994A','카페·디저트':'#56CCF2','관광·명소':'#BB6BD9','쇼핑':'#F2C94C','숙소':'#EB5757','교통':'#9AA0A6','사우나·온천':'#6FCF97'};
+const FM_CAT_COLOR={'맛집·식당':'#C2621D','바·이자카야':'#9B4A6E','카페·디저트':'#7A5C3E','관광·명소':'#33718E','쇼핑':'#4B7A3E','숙소':'#C0392B','교통':'#6B7780','사우나·온천':'#2F8F86'};
 function fm2Dot(p){return FM_CAT_COLOR[p.cat]||'#8E9AA6';}
 
 /* ── 실제 지도 타일 ──────────────────────────────────────────────────────
@@ -1885,6 +1907,79 @@ fmFiltered=function(){const q=String(foodMap.q||'').toLowerCase().trim(),f=foodM
   if(st==='미방문'&&p.visited)return false;if(st==='비 오는 날'&&!fm2RainOK(p))return false;if(st==='제외한 장소'&&!p.excluded)return false;if(st==='좌표 없음'&&fm2HasCoords(p))return false;return true;});
  const sort=foodMap.sort||'smart';return a.sort((x,y)=>sort==='distance'?((fm2Distance(x)??9999)-(fm2Distance(y)??9999)):sort==='rating'?((y.rating||0)-(x.rating||0)):sort==='regret'?(fm2Regret(y)-fm2Regret(x)):sort==='name'?(x.name||'').localeCompare(y.name||''):fm2Score(y)-fm2Score(x));};
 function fm2RainOK(p){const s=(p.name+' '+p.note+' '+p.cat+' '+p.kind).toLowerCase();if(p.rain)return true;if(/公園|海岸|beach|park|전망대|해변|공원/.test(s))return false;return['맛집·식당','바·이자카야','카페·디저트','쇼핑','사우나·온천','관광·명소'].includes(p.cat);}
+/* ── 장소 상세 시트 ──────────────────────────────────────────────────────
+   아이폰 사용자는 애플 지도를 쓰고 안드로이드·PC 는 구글 지도를 쓴다.
+   어느 쪽인지 앱이 정하지 말고 사용자가 고르게 한다. */
+function fmAppleLink(p){
+ const q=encodeURIComponent(p.name||'');
+ return fm2HasCoords(p)
+  ? 'https://maps.apple.com/?q='+q+'&ll='+p.lat+','+p.lng
+  : 'https://maps.apple.com/?q='+encodeURIComponent((p.name||'')+' '+(p.address||''));
+}
+const SP_ICON={'맛집·식당':'🍴','바·이자카야':'🍶','카페·디저트':'☕','관광·명소':'⛩','쇼핑':'🛍',
+ '숙소':'🛏','교통':'🚃','사우나·온천':'♨'};
+function fmSpotOpen(id){
+ const p=foodMap.places.find(x=>x.id===id);if(!p)return;
+ foodMap.selected=id;save('foodmap_v1',foodMap);
+ fmSpotRender();showOv('ovSpot');
+}
+function fmSpotRender(){
+ const el=document.getElementById('spSheet');if(!el)return;
+ const p=foodMap.places.find(x=>x.id===foodMap.selected);
+ if(!p){el.innerHTML='';return;}
+ const color=fm2Dot(p),ico=SP_ICON[p.cat]||'📍';
+ /* 한 곳만 보여줄 때는 그 점을 중심으로 좁게 잡는다. 약 300m 반경. */
+ let map='';
+ if(fm2HasCoords(p)){
+  const dLat=.0022,dLng=.0028;
+  const L=fmTileLayer({minLat:+p.lat-dLat,maxLat:+p.lat+dLat,minLng:+p.lng-dLng,maxLng:+p.lng+dLng},700,420,10);
+  map='<div class="sp-map"><svg viewBox="0 0 '+L.W+' '+L.H+'" role="img" aria-label="'+esc(p.name)+' 위치">'+
+   '<rect x="0" y="0" width="'+L.W+'" height="'+L.H+'" fill="#E8E6E1"/>'+L.tiles+
+   '<circle cx="'+L.X(p).toFixed(1)+'" cy="'+L.Y(p).toFixed(1)+'" r="11" fill="'+color+'" stroke="#fff" stroke-width="3.5"/>'+
+   '</svg></div>';
+ }else{
+  map='<div class="sp-map" style="padding:22px;text-align:center;font-size:12.5px;color:var(--faint)">'+
+   '좌표가 없어 지도를 그릴 수 없습니다.<br>아래 버튼으로 이름 검색은 됩니다.</div>';
+ }
+ const d=fm2DistTxt(p),eta=fm2EtaTxt(p);
+ el.innerHTML='<div class="sp-head">'+
+   '<span class="sp-ico" style="background:'+color+'22;color:'+color+'">'+ico+'</span>'+
+   '<b>'+esc(p.name||'이름 없음')+'</b>'+
+   '<button class="sp-x" onclick="closeOv(\'ovSpot\')" aria-label="닫기">✕</button></div>'+
+  map+
+  '<div class="sp-meta">'+esc(affDest()||'')+(d?' · <b>'+esc(d)+'</b>':'')+(eta?' · '+esc(eta):'')+
+   (p.visited?' · <b>방문함</b>':'')+'</div>'+
+  '<div class="sp-rows">'+
+   '<div class="sp-row"><span>이름</span><div>'+esc(p.name||'')+'</div></div>'+
+   (p.address?'<div class="sp-row"><span>주소</span><div>'+esc(p.address)+'</div></div>':'')+
+   (p.note?'<div class="sp-row"><span>메모</span><div>'+esc(p.note)+'</div></div>':'')+
+   (p.rating?'<div class="sp-row"><span>평점</span><div>★ '+esc(String(p.rating))+' ('+(p.ratingCount||0)+')</div></div>':'')+
+   ((p.region||p.kind)?'<div class="sp-row"><span>분류</span><div>'+esc([p.cat,p.kind,p.region].filter(Boolean).join(' · '))+'</div></div>':'')+
+  '</div>'+
+  '<button class="sp-open" onclick="fmSpotMaps()">🗺 지도에서 열기</button>'+
+  '<div class="sp-quick">'+
+   '<button class="'+(p.fav?'on':'')+'" onclick="fmSpotQuick(\'fav\')">'+(p.fav?'★ 즐겨찾기':'☆ 즐겨찾기')+'</button>'+
+   '<button class="'+(p.visited?'on':'')+'" onclick="fmSpotQuick(\'visited\')">'+(p.visited?'✓ 방문함':'방문 표시')+'</button>'+
+   '<button onclick="fmSpotMore()">영상·관리</button>'+
+  '</div>';
+}
+/* 어느 지도 앱으로 열지 고르게 한다. */
+function fmSpotMaps(){
+ const p=foodMap.places.find(x=>x.id===foodMap.selected);if(!p)return;
+ const useApple=confirm('어느 지도로 열까요?\n\n[확인] 애플 지도\n[취소] 구글 지도');
+ window.open(useApple?fmAppleLink(p):fmLink(p),'_blank','noopener');
+}
+/* 시트 안에서 바로 토글한다. 시트를 닫았다 열 필요가 없어야 한다. */
+function fmSpotQuick(k){
+ const p=foodMap.places.find(x=>x.id===foodMap.selected);if(!p)return;
+ p[k]=!p[k];
+ if(k==='visited')p.visitedAt=p.visited?fmVisitStamp():null;
+ save('foodmap_v1',foodMap);
+ fmSpotRender();renderFoodMap();
+}
+function fmSpotMore(){closeOv('ovSpot');showTab('now');
+ const el=document.getElementById('fmSpotTools');if(el)el.scrollIntoView({behavior:'smooth',block:'start'});}
+
 function fmDirectionsLink(p,mode){let u='https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(fm2HasCoords(p)?p.lat+','+p.lng:(p.name+' '+(p.address||'福岡')))+'&travelmode='+(mode||'walking');const o=fmOriginQuery();if(o)u+='&origin='+encodeURIComponent(o);return u;}
 function fmRouteLink(a){a=a.filter(Boolean);if(!a.length)return'#';let u='https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(fm2HasCoords(a[a.length-1])?a[a.length-1].lat+','+a[a.length-1].lng:(a[a.length-1].name+' 福岡'))+'&travelmode=walking';
  const o=fmOriginQuery();if(o)u+='&origin='+encodeURIComponent(o);if(a.length>1)u+='&waypoints='+encodeURIComponent(a.slice(0,-1).map(p=>fm2HasCoords(p)?p.lat+','+p.lng:(p.name+' 福岡')).join('|'));return u;}
@@ -3186,7 +3281,10 @@ function fmSaveHotel(){const url=document.getElementById('fmHotelUrl').value.tri
 fmRenderList=function(){const el=document.getElementById('fmList');if(!el)return;const a=fmFiltered(),show=a.slice(0,250);const pick=fmSel.on;el.innerHTML='<div class="fm-count">조건 결과 '+a.length+' / 전체 '+foodMap.places.length+'</div>'+(show.length?show.map(p=>{const d=fm2DistTxt(p),badges=[p.kind,p.region,d,fm2EtaTxt(p),p.openNow===true?'영업 중':(p.openNow===false?'현재 영업 아님':''),p.priority?'우선 '+p.priority:'',p.reservation==='needed'?'예약 확인':(p.reservation==='booked'?'예약 완료':'')].filter(Boolean);
  return'<div class="place '+(pick?('picking '+(fmSel.ids.has(p.id)?'on ':'')):(p.id===foodMap.selected?'sel ':''))+(p.visited?'visited ':'')+(p.excluded?'visited':'')+'" onclick="'+(pick?'fmSelPick':'fmSelect')+'(\''+p.id+'\')">'+(pick?'<span class="fm-check">✓</span>':'')+'<div class="place-top"><div class="place-name">'+(p.fav?'★ ':'')+esc(p.name)+'</div><span class="place-cat">'+esc(p.cat||'기타')+'</span><span class="fm-score">아쉬움 '+fm2Regret(p)+'</span></div><div class="place-note">'+esc(p.note||p.address||(fm2HasCoords(p)?p.lat+', '+p.lng:'메모 없음'))+'</div><div class="fm-badges">'+badges.map((x,i)=>'<span class="fm-badge '+(String(x).includes('영업 중')?'good':String(x).includes('아님')?'hot':'')+'">'+esc(x)+'</span>').join('')+'</div>'+(pick?'':'<div class="place-btns"><button class="'+(p.fav?'fav':'')+'" onclick="event.stopPropagation();fmToggle(\''+p.id+'\',\'fav\')">'+(p.fav?'★ 저장':'☆ 저장')+'</button><button onclick="event.stopPropagation();fmToggle(\''+p.id+'\',\'visited\')">'+(p.visited?'↩ 미방문':'✓ 방문')+'</button><a href="'+esc(fmDirectionsLink(p))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">길찾기</a><button onclick="event.stopPropagation();fmSelect(\''+p.id+'\')">영상·관리</button></div>')+'</div>';}).join(''):'<div class="empty">조건에 맞는 장소가 없습니다.</div>');if(a.length>250)el.innerHTML+='<div class="empty">250개만 표시 중 · 필터나 검색어로 좁혀보세요.</div>';};
 fmRenderMap=function(){const el=document.getElementById('fmMap');if(!el)return;const live=fmGpsPoint();if(live&&fmGps.follow){const q=live.lat+','+live.lng,acc=Number.isFinite(fmGps.accuracy)?'현재 위치 · ±'+Math.round(fmGps.accuracy)+'m':'현재 위치';el.classList.add('gps-live');el.innerHTML='<iframe loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="실시간 현재 위치 지도" src="https://www.google.com/maps?q='+encodeURIComponent(q)+'&z=17&output=embed"></iframe><span class="fm-gps-mapdot" aria-hidden="true"></span><span class="fm-gps-maplabel">'+esc(acc)+'</span>';return;}el.classList.remove('gps-live');const p=foodMap.places.find(x=>x.id===foodMap.selected);if(!p){el.innerHTML='목록의 ‘영상·관리’를 누르면 지도·상태·영상·현장 일본어가 열립니다.';return;}const q=fm2HasCoords(p)?p.lat+','+p.lng:(p.name+' 福岡');el.innerHTML='<iframe loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="'+esc(p.name)+' 지도" src="https://www.google.com/maps?q='+encodeURIComponent(q)+'&output=embed"></iframe>';};
-fmSelect=function(id){foodMap.selected=id;fmGps.follow=false;save('foodmap_v1',foodMap);fmRenderList();fmRenderMap();fmRenderSpotTools();const el=document.getElementById('fmMap');if(el)el.scrollIntoView({behavior:'smooth',block:'nearest'});};
+/* 목록에서 장소를 누르면 상세 시트를 띄운다.
+   선택 상태 갱신은 그대로 하되, 화면을 스크롤해 내리지 않는다 — 시트가 그 자리에 뜬다. */
+fmSelect=function(id){foodMap.selected=id;fmGps.follow=false;save('foodmap_v1',foodMap);
+ fmRenderList();fmRenderMap();fmRenderSpotTools();fmSpotOpen(id);};
 fmToggle=function(id,k){const p=foodMap.places.find(x=>x.id===id);if(!p)return;p[k]=!p[k];
  /* 방문을 켤 때 시각을 남긴다 — 여행 일지가 날짜별로 묶으려면 필요하다. 끄면 지운다. */
  if(k==='visited')p.visitedAt=p.visited?(TODAY+' '+new Date().toTimeString().slice(0,5)):null;
@@ -3611,6 +3709,7 @@ async function fmLinkCsv(){if(!window.showOpenFilePicker){alert('이 브라우�
 async function fmCheckLinkedCsv(auto){if(fmSyncChecking)return;fmSyncChecking=true;try{const h=await fmSyncGet('travelCsv');if(!h){if(!auto)alert('연결된 CSV가 없습니다. 먼저 ‘CSV 파일 연결’을 눌러 주세요.');return;}let perm=await h.queryPermission({mode:'read'});if(perm!=='granted'&&!auto)perm=await h.requestPermission({mode:'read'});if(perm!=='granted'){if(!auto)alert('연결 파일 읽기 권한이 필요합니다.');return;}const f=await h.getFile();if(!auto||f.lastModified>(+foodMap.linkedCsvModified||0)){const z=await fm2ImportFile(f,true);foodMap.linkedCsvName=f.name;foodMap.linkedCsvModified=f.lastModified;foodMap.linkedCsvAt=new Date().toLocaleString('ko-KR');save('foodmap_v1',foodMap);if(!auto)alert('연결 파일 확인 완료\n새 장소 '+z.added+'개 · 기존 장소 갱신 '+z.updated+'개');renderFoodMap();}else if(!auto)alert('연결 파일이 이미 최신입니다.');}catch(e){if(!auto)alert('연결 파일 확인 실패: '+(e.message||e));}finally{fmSyncChecking=false;}}
 
 document.getElementById('ovSet').addEventListener('click',e=>{if(e.target.id==='ovSet')closeOv('ovSet');});
+document.getElementById('ovSpot').addEventListener('click',e=>{if(e.target.id==='ovSpot')closeOv('ovSpot');});
 boot();
 </script>
 </body>
