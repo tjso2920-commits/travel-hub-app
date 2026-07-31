@@ -52,6 +52,24 @@ if(isSale){
   }
 }
 
+/* 처음 켠 사람에게 설정 화면이 먼저 뜨는가 — 그리고 가두지 않는가 */
+const sw=d.getElementById('setupWrap');
+t('처음 설정 화면 존재', !!sw);
+t('처음 설정 화면이 떠 있음', sw.style.display==='block');
+t('앱 본체는 가려짐', d.getElementById('app').style.display==='none');
+t('설정 화면에 3단계', sw.querySelectorAll('#fmGuideStart .fm-guide-step').length===3);
+t('id 충돌 없음', d.querySelectorAll('#fmGuideStart').length===1);
+t('나중에 하기 버튼', sw.textContent.includes('나중에 하기'));
+t('유료 위험 고지', sw.textContent.includes('요금이 나올 수 있습니다'));
+w.eval('setupSkip()');
+t('건너뛰면 앱으로', sw.style.display==='none' && d.getElementById('app').style.display==='block');
+t('건너뛴 것 기억', w.eval('foodMap.setupSkipped')===true);
+w.eval("foodMap.setupSkipped=false;setupShow();");
+t('다시 띄우기 동작', sw.style.display==='block');
+w.eval("foodMap.places=[{id:'x1',name:'테스트',cat:'맛집·식당'}];renderFoodMap();");
+t('장소가 들어오면 저절로 닫힘', sw.style.display==='none');
+w.eval("foodMap.places=[];foodMap.setupSkipped=false;renderFoodMap();");
+
 /* 데이터가 없을 때 각 탭이 빈 화면으로 끝나지 않고 무엇을 하라고 알려 주는가 */
 t('시작 안내가 자동으로 열림', d.getElementById('fmCollect').textContent.includes('처음 설정'));
 t('구글 목록 받는 방법 안내', [...d.querySelectorAll('#fmCollect a[href]')].some(x=>x.href.includes('takeout.google.com')));

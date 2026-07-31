@@ -499,6 +499,15 @@
     #splash{transition:none}
     #splash .sp-route{animation:none;stroke-dashoffset:0}
   }
+  /* 처음 설정만 보이는 화면. 앱 위에 덮는 게 아니라 앱 대신 뜬다. */
+  #setupWrap{min-height:100vh;min-height:100dvh;padding:26px 18px calc(30px + env(safe-area-inset-bottom))}
+  #setupWrap .su-head{display:flex;align-items:center;gap:11px;margin:0 2px 6px}
+  #setupWrap .su-head svg{width:34px;height:34px;flex:none}
+  #setupWrap .su-head b{font-size:19px;font-weight:800;color:var(--text)}
+  #setupWrap .su-hi{font-size:24px;font-weight:800;color:var(--text);line-height:1.35;margin:14px 2px 8px}
+  #setupWrap .su-sub{font-size:13px;color:var(--muted);line-height:1.65;margin:0 2px 18px}
+  #setupWrap .su-skip{width:100%;min-height:52px;margin-top:16px;border:1px solid var(--line2);
+    border-radius:var(--pill,999px);background:transparent;color:var(--muted);font-size:14px;font-weight:800}
   footer{text-align:center;padding:24px;font-family:var(--mono);font-size:10.5px;color:var(--faint);letter-spacing:.1em}
 
   /* DAYLIGHT · 밝은 테마
@@ -708,6 +717,7 @@
     <div class="g-goal" style="margin-top:12px">이 안내가 보이면 파일 미리보기에서 JavaScript가 차단된 상태입니다. HTML 파일을 다운로드한 뒤 Safari 또는 Chrome에서 직접 열어주세요.</div>
   </div>
 </div>
+<div id="setupWrap" style="display:none"></div>
 <div id="app" style="display:none">
 <div class="wrap">
   <header>
@@ -820,7 +830,7 @@ function boot(){
  startApp();
  /* 화면이 다 그려진 뒤에 재는 게 아니라, 켜자마자 시계를 건다.
     느린 폰에서 그리기가 늦어도 여는 화면이 그만큼 오래 떠 있는 셈이라 자연스럽다. */
- setTimeout(splashOut,700);
+ setTimeout(splashOut,1000);
 }
 /* 여행 시작일은 '일정' 탭의 여행 준비에서 사용자가 정한다(foodMap.planStart).
    판매용은 그 전까지 D-day 를 만들지 않는다. 남의 날짜를 보여주면 안 된다.
@@ -845,7 +855,38 @@ function startApp(){
     showTab 을 부르지 않는 이유: 그 안의 window.scrollTo 는 부팅 시점에 의미가 없다. */
  renderFoodMap();
  if(shared)showTab('collect');
+ /* 공유로 들어온 사람은 볼 것이 있어서 온 것이다. 설정으로 가로막지 않는다. */
+ if(!shared&&setupNeeded())setupShow();
 }
+/* ── 처음 설정 화면 ──────────────────────────────────────────────────────
+   장소가 0곳이고 아직 건너뛰지 않은 사람에게만 뜬다. 건너뛴 것은 저장한다. */
+function setupNeeded(){return !foodMap.places.length&&!foodMap.setupSkipped;}
+function setupShow(){
+ const w=document.getElementById('setupWrap');if(!w)return;
+ w.innerHTML='<div class="su-head">'+
+   '<svg viewBox="0 0 100 100" role="img" aria-label="여행허브">'+
+    '<path d="M22 76 C 34 52, 44 68, 54 44 S 70 26, 80 22" fill="none" stroke="#4FB3A5" stroke-width="6" stroke-linecap="round"/>'+
+    '<circle cx="22" cy="76" r="8" fill="#3E7F9C"/><circle cx="80" cy="22" r="8" fill="#E0692F"/></svg>'+
+   '<b>여행허브</b></div>'+
+  '<div class="su-hi">저장만 해 둔 곳,<br>이번엔 실제로 가 봅시다</div>'+
+  '<div class="su-sub">쓰기 전에 아래 3단계만 맞춰 두면 됩니다. 오래 안 걸립니다.</div>'+
+  /* 앱 안쪽에도 같은 안내가 있다. id 가 겹치지 않게 접미사를 붙인다. */
+  fmGuideHTML('Start')+
+  '<button class="su-skip" onclick="setupSkip()">나중에 하기 · 앱 먼저 둘러보기</button>';
+ w.style.display='block';
+ document.getElementById('app').style.display='none';
+ /* scrollTo 대신 scrollTop — 아이폰 사파리에서도 같고, 검사 환경에서 경고를 안 낸다 */
+ const se=document.scrollingElement||document.documentElement;if(se)se.scrollTop=0;
+}
+function setupClose(){
+ const w=document.getElementById('setupWrap');if(!w)return;
+ w.style.display='none';w.innerHTML='';
+ document.getElementById('app').style.display='block';
+}
+function setupSkip(){foodMap.setupSkipped=true;save('foodmap_v1',foodMap);setupClose();renderFoodMap();}
+/* 설정 화면에서 '직접 적기' 를 누르면 앱으로 넘어가 입력칸을 연다.
+   입력칸은 앱 안에 있어서, 설정 화면을 띄운 채로는 눌러도 아무 일도 안 일어난다. */
+function fmAddHere(){if(document.getElementById('setupWrap').style.display==='block')setupSkip();fmToggleAdd();}
 let landingReturnTab='collect';
 function showLanding(){
  const on=document.querySelector('.tab.on');landingReturnTab=on?on.id.replace('tab-',''):'collect';
@@ -1942,6 +1983,30 @@ function fmMerge(arr){let added=0,updated=0,skipped=0;const byKey=new Map();food
 function fmImport(inp){const f=inp.files&&inp.files[0];inp.value='';if(!f)return;const r=new FileReader();r.onload=()=>{try{const txt=String(r.result);let arr;if(/\.csv$/i.test(f.name))arr=fmCsv(txt);else if(/\.kml$/i.test(f.name)||/^\s*</.test(txt))arr=fmKml(txt);else arr=fmJson(JSON.parse(txt));
   if(/\.csv$/i.test(f.name))foodMap.listName=f.name.replace(/\.csv$/i,'')||'여행계획';const z=fmMerge(arr);save('foodmap_v1',foodMap);alert('“'+foodMap.listName+'” 불러오기 완료\n새 장소 '+z.added+'개 · 기존 장소 갱신 '+z.updated+'개'+(z.skipped?' · 제외 '+z.skipped+'개':''));
   renderFoodMap();}catch(e){alert('가져오기 실패: 여행계획.csv 형식을 확인해 주세요.\n'+(e.message||e));}};r.readAsText(f);}
+/* 처음 설정 화면에도 열쇠 칸을 둔다. 앱 안쪽 칸과 저장 위치가 같다. */
+function fmSaveKeysHere(){
+ const p=document.getElementById('gdPlaces'),y=document.getElementById('gdYt');
+ if(p)foodMap.apiKey=(p.value||'').trim();
+ if(y)foodMap.youtubeKey=(y.value||'').trim();
+ save('foodmap_v1',foodMap);
+ alert('이 기기에 저장했습니다. 언제든 지울 수 있습니다.');
+ renderFoodMap();
+}
+function fmExtraHTML(){
+ return '<details class="xcard" style="margin-top:14px"><summary style="font-size:13px;font-weight:800;cursor:pointer">더 붙이기 (선택 · 안 해도 됩니다)</summary>'+
+  '<div class="fm-how" style="border-top:0;padding-top:10px"><b>유튜브 — 무료, 카드 등록 없음</b>'+
+  '<p>장소마다 <b>실제 유튜브 영상</b>을 찾아 붙입니다. 가기 전에 분위기를 볼 수 있습니다.</p></div>'+
+  '<div class="fm-how"><b>구글 지도(Places) — 카드 등록이 필요합니다</b>'+
+  '<p>가게의 <b>위치 값·평점·영업시간</b>을 자동으로 채웁니다. 위치 값이 없어 거리·동선이 안 될 때 이걸로 채웁니다.</p>'+
+  '<p><b style="color:var(--ember,#C4551F)">주의:</b> 구글에서 이 열쇠를 받으려면 <b>카드 등록이 필요하고, 많이 쓰면 요금이 나올 수 있습니다.</b> '+
+  '무료 한도가 있지만 한도와 금액은 구글이 정하고 바뀝니다. 안 넣어도 앱은 전부 돕니다.</p></div>'+
+  fmField('유튜브 열쇠 (선택)','<input class="xinput" id="gdYt" type="password" value="'+esc(foodMap.youtubeKey||'')+'" placeholder="안 넣어도 됩니다">','',1)+
+  fmField('구글 지도 열쇠 (선택)','<input class="xinput" id="gdPlaces" type="password" value="'+esc(foodMap.apiKey||'')+'" placeholder="카드 등록이 필요합니다">','',1)+
+  '<div class="xactions"><button class="xaction sub" onclick="fmSaveKeysHere()">열쇠 저장</button>'+
+  '<a class="xaction sub" href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">구글에서 열쇠 받기</a></div>'+
+  '<div class="xsmall" style="margin-top:8px">열쇠는 이 기기에만 저장되고 내보내는 파일에도 안 들어갑니다.</div>'+
+  '</details>';
+}
 function fmSaveApi(){foodMap.apiKey=(document.getElementById('fmApiKey').value||'').trim();save('foodmap_v1',foodMap);alert('Places API 키를 이 기기에 저장했습니다.');}
 function fmTypeCat(t,n){return fmInfer(String(t||'')+' '+String(n||''));}
 async function fmEnrichSelected(){fmSaveApi();const p=foodMap.places.find(x=>x.id===foodMap.selected),out=document.getElementById('fmApiOut');if(!p){alert('먼저 목록에서 장소를 선택해 주세요.');return;}if(!foodMap.apiKey)return;
@@ -3233,7 +3298,7 @@ function GUIDE_STEPS(){
 
    '<div class="fm-how"><b>③ 직접 적기</b>'+
    '<p>가게 이름만 알아도 됩니다.</p>'+
-   '<div class="xactions"><button class="xaction sub" onclick="fmToggleAdd()">＋ 직접 추가</button></div></div>'+
+   '<div class="xactions"><button class="xaction sub" onclick="fmAddHere()">＋ 직접 추가</button></div></div>'+
 
    '<div class="fm-how"><b>미리 알아두실 것 — 위치 값</b>'+
    '<p>구글에서 받은 목록에는 <b>위치 값(위도·경도)이 안 들어 있는 경우</b>가 많습니다. '+
@@ -3493,8 +3558,9 @@ function tjHTML(){
   '<div class="xsmall">기록한 날 '+days.length+'일 · 방문 '+visits+'곳 · 총 지출 '+bgBoth(spent)+
   '<br>날짜를 누르면 그날 다녀온 곳과 쓴 돈이 시각 순서로 펼쳐집니다.</div>'+body);
 }
-function fmGuideHTML(){
- if(!fmGuideOpen())return '<div class="xactions" style="margin:0 0 10px"><button class="xaction sub" onclick="fmGuideToggle(true)">시작 안내 다시 보기</button></div>';
+function fmGuideHTML(sfx){
+ sfx=sfx||'';
+ if(!sfx&&!fmGuideOpen())return '<div class="xactions" style="margin:0 0 10px"><button class="xaction sub" onclick="fmGuideToggle(true)">시작 안내 다시 보기</button></div>';
  const list=GUIDE_STEPS(),left=list.filter(function(x){return !x.done;}).length;
  const steps=list.map(function(x,i){
   const badge=x.done?'<span class="st ok">'+(x.cnt?x.cnt+'곳 담김':'완료')+'</span>':'<span class="st">아직</span>';
@@ -3503,11 +3569,12 @@ function fmGuideHTML(){
    '<div style="min-width:0;flex:1"><h4>'+badge+esc(x.t)+'</h4><p>'+x.d+'</p>'+
    (x.html||'')+(x.how||'')+btn+'</div></div>';
  }).join('');
- return '<div class="xcard hot" id="fmGuide"><h3><span class="tag">START</span>처음 설정 · 3단계</h3>'+
+ return '<div class="xcard hot" id="fmGuide'+sfx+'"><h3><span class="tag">START</span>처음 설정 · 3단계</h3>'+
   '<div class="xsmall">'+(left?('아직 '+left+'단계 남았습니다. 순서대로 하시면 됩니다.'):'설정이 끝났습니다. 이제 담기 → 일정 → 지금 여행 순서로 쓰시면 됩니다.')+
   '<br>넣은 것은 <b style="color:var(--text)">이 기기에만</b> 저장되고 어디로도 보내지 않습니다.</div>'+
   '<div class="fm-guide">'+steps+'</div>'+
-  (fmGuideNeeded()?'':'<div class="xactions"><button class="xaction sub" onclick="fmGuideToggle(false)">안내 닫기</button></div>')+
+  fmExtraHTML()+
+  ((sfx||fmGuideNeeded())?'':'<div class="xactions"><button class="xaction sub" onclick="fmGuideToggle(false)">안내 닫기</button></div>')+
   '</div>';
 }
 /* ── 여행 준비 링크: 제휴 링크를 붙일 수 있는 자리 ──
@@ -3782,6 +3849,9 @@ function fmClearDecision(){foodMap.decision=null;save('foodmap_v1',foodMap);rend
 renderFoodMap=function(){
  const cRoot=document.getElementById('fmCollect'),pRoot=document.getElementById('fmPlan'),nRoot=document.getElementById('fmNow');
  if(!cRoot||!pRoot||!nRoot)return;
+ /* 파일을 넣었으면 설정 화면은 할 일이 끝났다. */
+ const sw=document.getElementById('setupWrap');
+ if(sw&&sw.style.display==='block'&&foodMap.places.length)setupClose();
  fm2Init();
  const total=foodMap.places.length,fav=foodMap.places.filter(x=>x.fav).length,visited=foodMap.places.filter(x=>x.visited).length,origin=fmOrigin(),hotel=foodMap.hotel||{};
  const opts=FM_CATS.slice(4).map(x=>'<option value="'+x+'">'+x+'</option>').join('');

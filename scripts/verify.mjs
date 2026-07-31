@@ -190,7 +190,7 @@ requireTokens(sales, '판매용', [
   'const SJ_BANK=',
   'function fmPanel(',
   'function affUrl(k)',
-  'function fmGuideHTML()',
+  'function fmGuideHTML(sfx)',
   'async function fxFetch(quiet)',
   'function phRead(buf)',
   'function phNearest(',
