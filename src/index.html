@@ -442,7 +442,7 @@
   html{background:#F4F3F0}
   body{
     --bg:#F4F3F0;--surface:#FFFFFF;--surface2:#EDECE8;--raise:#E3E1DC;
-    --text:#1F252A;--muted:#616C75;--faint:#8D97A0;
+    --text:#1F252A;--muted:#5C666E;--faint:#717C85;
     --wasabi:#33718E;--wasabi-deep:#245A75;
     --ember:#C2621D;--ember-soft:#9E4D12;
     --accent:#33718E;
@@ -511,6 +511,31 @@
   #tab-jp .jp-voicebar{background:#FFFFFF;border-color:rgba(31,37,42,.12);box-shadow:0 -4px 20px rgba(31,37,42,.08)}
   #tab-jp .jp-voicecontrols button{border-color:rgba(107,79,168,.34);background:rgba(107,79,168,.07);color:#5C4293}
   #tab-jp .jp-devicevoice{border-top-color:rgba(31,37,42,.1)}
+
+  /* GPS 카드가 어두운 그라데이션을 그대로 갖고 있어 밝은 테마에서 글자가 안 읽혔다.
+     기능 CSS 쪽에 있어서 테마 교체 때 안 걸렸다. */
+  .fm-gps-card{border-color:rgba(51,113,142,.30);
+    background:linear-gradient(140deg,rgba(51,113,142,.07),#FFFFFF 58%);
+    box-shadow:0 2px 10px rgba(31,37,42,.05)}
+  .fm-gps-chip.good{color:#245A75;border-color:rgba(51,113,142,.45);background:rgba(51,113,142,.10)}
+  .fm-gps-chip.fair{color:#7A5C0E;border-color:rgba(160,120,20,.4);background:rgba(200,160,40,.10)}
+  .fm-gps-chip.weak,.fm-gps-chip.error{color:#9E4D12;border-color:rgba(194,98,29,.42);background:rgba(194,98,29,.08)}
+  .fm-gps-orb{background:rgba(51,113,142,.14)}
+  .fm-gps-readout{background:rgba(51,113,142,.06);border-color:rgba(31,37,42,.12)}
+  .fm-badge.good{color:#2F6B33;border-color:rgba(47,107,51,.35)}
+  .fm-badge.hot{color:#9E4D12}
+  .fm-score{color:#9E4D12}
+
+  /* 걸으면서 한 손으로 누르는 화면이다. 분류 칩·장소 버튼이 32px 대라 자주 빗나간다.
+     44px 은 애플이 권고하는 최소치이고, 이 앱에서는 그보다 아래로 내려가면 안 된다. */
+  .fm-cats button,.xmode button{min-height:44px;padding-left:13px;padding-right:13px}
+  .place-btns button,.place-btns a{min-height:44px;display:inline-flex;align-items:center;padding:0 13px}
+  .fm-status-actions button,.fm-status-actions a{min-height:44px;display:inline-flex;align-items:center;
+    padding:0 12px;font-size:12px}
+  .fm-gps-actions button{min-height:46px}
+  .fm-video-head button,.fm-video-links a{min-width:44px;min-height:44px;display:inline-flex;
+    align-items:center;justify-content:center}
+  .fm-quick button,.fm-decision button{min-height:44px}
 
   input,textarea,select{background:#FFFFFF}
   input::placeholder,textarea::placeholder{color:var(--faint);opacity:1}
@@ -1741,7 +1766,7 @@ function fmGpsDistance(a,b){if(!a||!b)return 0;const r=Math.PI/180,a1=a.lat*r,a2
 function fmGpsQuality(){if(fmGps.status==='error')return{cls:'error',label:'확인 필요'};if(fmGps.status==='acquiring')return{cls:'',label:'위치 찾는 중'};if(fmGps.status==='stopped')return{cls:'',label:'중지됨'};if(!fmGpsPoint())return{cls:'',label:'꺼짐'};if(!Number.isFinite(fmGps.accuracy))return{cls:'',label:'정확도 확인 중'};if(fmGps.accuracy<=20)return{cls:'good',label:'정확'};if(fmGps.accuracy<=50)return{cls:'fair',label:'보통'};return{cls:'weak',label:'신호 약함'};}
 function fmGpsTime(){if(!fmGps.updatedAt)return'아직 측정값 없음';const sec=Math.max(0,Math.round((Date.now()-fmGps.updatedAt)/1000));return sec<4?'방금 갱신':sec<60?sec+'초 전 갱신':Math.floor(sec/60)+'분 전 갱신';}
 function fmGpsPanelHTML(){const p=fmGpsPoint(),q=fmGpsQuality(),acc=p&&Number.isFinite(fmGps.accuracy)?'±'+Math.round(fmGps.accuracy)+'m':'정확도 대기',detail=fmGps.error||(!navigator.geolocation?'이 브라우저는 위치 기능을 지원하지 않습니다.':p?(fmGpsTime()+' · 현재 위치 기준 거리 계산 중'):'시작하면 위성·Wi-Fi·기지국 신호 중 기기가 제공하는 가장 정밀한 위치를 사용합니다.'),map=p?'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(p.lat+','+p.lng):'#';
- return'<div class="fm-gps-card"><div class="fm-gps-head"><div class="fm-gps-copy"><div class="xeyebrow" style="color:#86AEF7">LIVE GPS · HIGH ACCURACY</div><h3>실시간 고정밀 위치</h3><p>현재 위치를 기준으로 가까운 장소와 도보 길찾기를 계산합니다.</p></div><span class="fm-gps-chip '+q.cls+'">'+q.label+(p?' · '+acc:'')+'</span></div><div class="fm-gps-readout"><span class="fm-gps-orb"></span><div><div class="fm-gps-primary">'+(p?acc+' 범위의 실시간 위치':'GPS를 시작해 주세요')+'</div><div class="fm-gps-secondary">'+esc(detail)+'</div></div></div><div class="fm-gps-actions"><button class="primary" onclick="fmGpsToggle()">'+(fmGps.active?'■ GPS 중지':'● 고정밀 GPS 시작')+'</button><button onclick="fmGpsRecenter()" '+(p?'':'disabled')+'>⌖ 현재 위치 지도</button><button onclick="fmGpsNearest()" '+(p?'':'disabled')+'>↕ 가까운 순</button>'+(p?'<a href="'+map+'" target="_blank" rel="noopener">Google 지도</a><button onclick="fmGpsForget()">위치 지우기</button>':'')+'</div><div class="fm-gps-privacy">좌표는 이 화면의 메모리에서만 사용하며 저장소·백업 파일 어디에도 남기지 않습니다. 표시된 ±m는 브라우저가 보고한 실제 정확도입니다.</div></div>';}
+ return'<div class="fm-gps-card"><div class="fm-gps-head"><div class="fm-gps-copy"><div class="xeyebrow">LIVE GPS · HIGH ACCURACY</div><h3>실시간 고정밀 위치</h3><p>현재 위치를 기준으로 가까운 장소와 도보 길찾기를 계산합니다.</p></div><span class="fm-gps-chip '+q.cls+'">'+q.label+(p?' · '+acc:'')+'</span></div><div class="fm-gps-readout"><span class="fm-gps-orb"></span><div><div class="fm-gps-primary">'+(p?acc+' 범위의 실시간 위치':'GPS를 시작해 주세요')+'</div><div class="fm-gps-secondary">'+esc(detail)+'</div></div></div><div class="fm-gps-actions"><button class="primary" onclick="fmGpsToggle()">'+(fmGps.active?'■ GPS 중지':'● 고정밀 GPS 시작')+'</button><button onclick="fmGpsRecenter()" '+(p?'':'disabled')+'>⌖ 현재 위치 지도</button><button onclick="fmGpsNearest()" '+(p?'':'disabled')+'>↕ 가까운 순</button>'+(p?'<a href="'+map+'" target="_blank" rel="noopener">Google 지도</a><button onclick="fmGpsForget()">위치 지우기</button>':'')+'</div><div class="fm-gps-privacy">좌표는 이 화면의 메모리에서만 사용하며 저장소·백업 파일 어디에도 남기지 않습니다. 표시된 ±m는 브라우저가 보고한 실제 정확도입니다.</div></div>';}
 function fmGpsRefresh(){const el=document.getElementById('fmGpsPanel');if(el)el.innerHTML=fmGpsPanelHTML();if(document.getElementById('fmList'))fmRenderList();if(fmGps.follow&&document.getElementById('fmMap'))fmRenderMap();}
 function fmGpsToggle(){if(fmGps.active){fmGpsStop();return;}fmGpsStart();}
 function fmGpsStart(){if(!navigator.geolocation){fmGps.status='error';fmGps.error='이 브라우저는 위치 기능을 지원하지 않습니다.';fmGpsRefresh();return;}if(fmGps.watchId!==null)navigator.geolocation.clearWatch(fmGps.watchId);fmGps.active=true;fmGps.follow=true;fmGps.status='acquiring';fmGps.error='';foodMap.originMode='current';fmGpsRefresh();

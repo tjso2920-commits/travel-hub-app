@@ -20,7 +20,8 @@ scripts/
   build-sales.mjs        개인용 → 판매용 생성기
   verify.mjs             개인용·판매용 전체 검사(로컬)
   verify-sales-only.mjs  판매용만 검사(CI·배포 전)
-  test/                  JSDOM 기능 검사 12종 + 실행기
+  test/                  JSDOM 기능 검사 28종 + 실행기
+  audit.mjs              실제 브라우저 화면 검수(대비·터치영역·가로넘침·오류)
 docs/
   HANDOFF.md        전체 작업 이력. 새 작업자는 이것부터 읽는다
 ```
@@ -33,7 +34,12 @@ npm run build        # 개인용 → 판매용 생성
 npm run verify       # 개인용·판매용 무결성 검사
 npm test             # 기능 검사 (두 파일 전부)
 npm run check        # build + verify + test 한 번에
+npm run audit        # 실제 브라우저로 화면 검수 (대비·터치영역·오류)
 ```
+
+`npm run audit` 는 jsdom 이 못 잡는 것을 잡는다. 글자가 배경에 묻히거나 버튼이
+44px 보다 작으면 기능 검사는 전부 통과해도 실제로는 못 쓰는 화면이다.
+두 빌드를 실제 Chromium 으로 띄워 모든 탭을 훑는다. **화면을 고친 뒤에는 이걸 돌린다.**
 
 ## 절대 규칙
 
