@@ -296,6 +296,19 @@
   .tool-result{white-space:pre-wrap;background:var(--bg);border:1px solid var(--line);border-radius:11px;
     padding:12px;margin-top:10px;font-size:12.5px;color:var(--text);max-height:300px;overflow:auto}
   .fm-toolbar{display:flex;gap:7px;margin-bottom:10px}
+  .fm-selbar{margin:10px 0}
+  .fm-selbar.on{background:var(--surface2);border:1px solid var(--wasabi);border-radius:13px;padding:12px 13px}
+  .fm-selbar .fm-selcount{font-size:14px;font-weight:800;color:var(--text)}
+  .fm-selbar .fm-selcount b{color:var(--wasabi);font-size:17px}
+  .fm-selbar .fm-selcount span{font-weight:600;color:var(--muted);font-size:12px}
+  .fm-selbar .xactions{margin-top:10px}
+  .fm-selbar .xaction{min-height:46px}
+  .place.picking{padding-left:48px;position:relative}
+  .place.picking .fm-check{position:absolute;left:13px;top:50%;transform:translateY(-50%);
+    width:26px;height:26px;border-radius:7px;border:2px solid var(--line2);
+    display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:800;color:transparent}
+  .place.picking.on{border-color:var(--wasabi)}
+  .place.picking.on .fm-check{background:var(--wasabi);border-color:var(--wasabi);color:#1a1710}
   .fm-toolbar .xinput{flex:1}
   .fm-cats{display:flex;gap:6px;overflow-x:auto;padding-bottom:10px;scrollbar-width:none}
   .fm-cats::-webkit-scrollbar{display:none}
@@ -2971,7 +2984,8 @@ renderFoodMap=function(){
    '<div class="fm-toolbar"><input class="xinput" id="fmSearch" value="'+esc(foodMap.q||'')+'" placeholder="가게명·지역·음식·메모 검색" oninput="fmSearch(this.value)"><button class="btn" onclick="fmToggleAdd()">＋ 추가</button></div><div class="fm-cats">'+FM_CATS.map(x=>'<button class="'+((foodMap.filter||'전체')===x?'on':'')+'" onclick="fmSetFilter(\''+x+'\')">'+x+'</button>').join('')+'</div>'+
    '<div class="fm-filter-grid"><select class="xselect" onchange="fmSetRegion(this.value)">'+fm2Opts(FM_REGIONS,foodMap.region)+'</select><select class="xselect" onchange="fmSetKind(this.value)">'+fm2Opts(FM_KINDS,foodMap.kind)+'</select><select class="xselect" onchange="fmSetStatus(this.value)">'+fm2Opts(FM_STATUS,foodMap.status)+'</select><select class="xselect" onchange="fmSetSort(this.value)">'+fm2Opts(FM_SORTS,foodMap.sort)+'</select></div>'+
    '<div id="fmAddBox" style="display:none" class="xcard"><h3><span class="tag">NEW</span>장소 직접 추가</h3><div class="fm-grid"><input class="xinput wide" id="fmName" placeholder="장소 이름"><select class="xselect" id="fmCat">'+opts+'</select><select class="xselect" id="fmRegion">'+fm2Opts(FM_REGIONS.slice(1),'기타 지역')+'</select><input class="xinput wide" id="fmUrl" placeholder="구글맵 공유 URL"><input class="xinput" id="fmLat" type="number" step="any" placeholder="위도 (선택)"><input class="xinput" id="fmLng" type="number" step="any" placeholder="경도 (선택)"><textarea class="xta wide" id="fmNote" placeholder="먹을 메뉴·메모"></textarea></div><div class="xactions"><button class="xaction" onclick="fmAdd()">저장</button></div></div>'+
-  '<div id="fmOverview"></div><div class="fm-map" id="fmMap"></div><div id="fmList"></div>'+
+  '<div id="fmOverview"></div><div class="fm-map" id="fmMap"></div>'+
+   '<div id="fmSelBar">'+fmSelHTML()+'</div><div id="fmList"></div>'+
    '<details class="xcard" style="margin-top:12px"><summary style="font-size:13px;font-weight:800;cursor:pointer">선택 기능 · Places / YouTube API</summary><div class="xsmall" style="margin-top:10px">목록·거리·검색 링크는 API 키 없이 작동합니다. 키는 이 브라우저에만 저장되며 내보내는 파일에는 포함되지 않습니다.</div><input class="xinput" id="fmApiKey" type="password" value="'+esc(foodMap.apiKey||'')+'" placeholder="Google Maps Platform API key" style="margin-top:10px"><input class="xinput" id="fmYoutubeKey" type="password" value="'+esc(foodMap.youtubeKey||'')+'" placeholder="YouTube Data API key (선택)" style="margin-top:8px"><div class="xactions"><button class="xaction sub" onclick="fmSaveApi()">키 저장</button><button class="xaction" onclick="fmEnrichSelected()">선택 장소 보강</button><button class="xaction sub" onclick="fmYoutubeActual()">실제 영상 검색</button></div><div id="fmApiOut"></div>'+
     '<div class="xsmall" style="margin-top:14px"><b style="color:var(--text)">좌표 일괄 채우기</b><br>구글 저장목록 CSV에는 위경도가 없습니다. 좌표가 빈 장소를 한 번에 조회해 거리·정렬·지도를 쓸 수 있게 만듭니다. 실패한 곳은 목록으로 알려 줍니다.</div>'+
     '<div class="xactions"><button class="xaction" onclick="fmEnrichAll()">좌표 일괄 채우기 (남은 '+fmNoCoordCount()+'개)</button><button class="xaction" onclick="fmFillHours()">영업시간 채우기 (남은 '+fmNoHoursCount()+'개)</button><button class="xaction sub" onclick="fmBulkCancel()">중지</button></div><div id="fmBulkOut">'+fmBulkLast+'</div></details>';
@@ -2998,14 +3012,68 @@ function fmSetHotelFromSpot(){
  foodMap.originMode='hotel';save('foodmap_v1',foodMap);renderFoodMap();
  alert('“'+p.name+'”을 숙소 기준으로 지정했습니다.');}
 function fmSaveHotel(){const url=document.getElementById('fmHotelUrl').value.trim(),c=fm2UrlCoords(url)||{};foodMap.hotel={name:document.getElementById('fmHotelName').value.trim(),address:document.getElementById('fmHotelAddress').value.trim(),url:url,lat:+document.getElementById('fmHotelLat').value||c.lat||null,lng:+document.getElementById('fmHotelLng').value||c.lng||null};foodMap.originMode='hotel';save('foodmap_v1',foodMap);renderFoodMap();}
-fmRenderList=function(){const el=document.getElementById('fmList');if(!el)return;const a=fmFiltered(),show=a.slice(0,250);el.innerHTML='<div class="fm-count">조건 결과 '+a.length+' / 전체 '+foodMap.places.length+'</div>'+(show.length?show.map(p=>{const d=fm2DistTxt(p),badges=[p.kind,p.region,d,fm2EtaTxt(p),p.openNow===true?'영업 중':(p.openNow===false?'현재 영업 아님':''),p.priority?'우선 '+p.priority:'',p.reservation==='needed'?'예약 확인':(p.reservation==='booked'?'예약 완료':'')].filter(Boolean);
- return'<div class="place '+(p.id===foodMap.selected?'sel ':'')+(p.visited?'visited ':'')+(p.excluded?'visited':'')+'" onclick="fmSelect(\''+p.id+'\')"><div class="place-top"><div class="place-name">'+(p.fav?'★ ':'')+esc(p.name)+'</div><span class="place-cat">'+esc(p.cat||'기타')+'</span><span class="fm-score">아쉬움 '+fm2Regret(p)+'</span></div><div class="place-note">'+esc(p.note||p.address||(fm2HasCoords(p)?p.lat+', '+p.lng:'메모 없음'))+'</div><div class="fm-badges">'+badges.map((x,i)=>'<span class="fm-badge '+(String(x).includes('영업 중')?'good':String(x).includes('아님')?'hot':'')+'">'+esc(x)+'</span>').join('')+'</div><div class="place-btns"><button class="'+(p.fav?'fav':'')+'" onclick="event.stopPropagation();fmToggle(\''+p.id+'\',\'fav\')">'+(p.fav?'★ 저장':'☆ 저장')+'</button><button onclick="event.stopPropagation();fmToggle(\''+p.id+'\',\'visited\')">'+(p.visited?'↩ 미방문':'✓ 방문')+'</button><a href="'+esc(fmDirectionsLink(p))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">길찾기</a><button onclick="event.stopPropagation();fmSelect(\''+p.id+'\')">영상·관리</button></div></div>';}).join(''):'<div class="empty">조건에 맞는 장소가 없습니다.</div>');if(a.length>250)el.innerHTML+='<div class="empty">250개만 표시 중 · 필터나 검색어로 좁혀보세요.</div>';};
+fmRenderList=function(){const el=document.getElementById('fmList');if(!el)return;const a=fmFiltered(),show=a.slice(0,250);const pick=fmSel.on;el.innerHTML='<div class="fm-count">조건 결과 '+a.length+' / 전체 '+foodMap.places.length+'</div>'+(show.length?show.map(p=>{const d=fm2DistTxt(p),badges=[p.kind,p.region,d,fm2EtaTxt(p),p.openNow===true?'영업 중':(p.openNow===false?'현재 영업 아님':''),p.priority?'우선 '+p.priority:'',p.reservation==='needed'?'예약 확인':(p.reservation==='booked'?'예약 완료':'')].filter(Boolean);
+ return'<div class="place '+(pick?('picking '+(fmSel.ids.has(p.id)?'on ':'')):(p.id===foodMap.selected?'sel ':''))+(p.visited?'visited ':'')+(p.excluded?'visited':'')+'" onclick="'+(pick?'fmSelPick':'fmSelect')+'(\''+p.id+'\')">'+(pick?'<span class="fm-check">✓</span>':'')+'<div class="place-top"><div class="place-name">'+(p.fav?'★ ':'')+esc(p.name)+'</div><span class="place-cat">'+esc(p.cat||'기타')+'</span><span class="fm-score">아쉬움 '+fm2Regret(p)+'</span></div><div class="place-note">'+esc(p.note||p.address||(fm2HasCoords(p)?p.lat+', '+p.lng:'메모 없음'))+'</div><div class="fm-badges">'+badges.map((x,i)=>'<span class="fm-badge '+(String(x).includes('영업 중')?'good':String(x).includes('아님')?'hot':'')+'">'+esc(x)+'</span>').join('')+'</div>'+(pick?'':'<div class="place-btns"><button class="'+(p.fav?'fav':'')+'" onclick="event.stopPropagation();fmToggle(\''+p.id+'\',\'fav\')">'+(p.fav?'★ 저장':'☆ 저장')+'</button><button onclick="event.stopPropagation();fmToggle(\''+p.id+'\',\'visited\')">'+(p.visited?'↩ 미방문':'✓ 방문')+'</button><a href="'+esc(fmDirectionsLink(p))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">길찾기</a><button onclick="event.stopPropagation();fmSelect(\''+p.id+'\')">영상·관리</button></div>')+'</div>';}).join(''):'<div class="empty">조건에 맞는 장소가 없습니다.</div>');if(a.length>250)el.innerHTML+='<div class="empty">250개만 표시 중 · 필터나 검색어로 좁혀보세요.</div>';};
 fmRenderMap=function(){const el=document.getElementById('fmMap');if(!el)return;const live=fmGpsPoint();if(live&&fmGps.follow){const q=live.lat+','+live.lng,acc=Number.isFinite(fmGps.accuracy)?'현재 위치 · ±'+Math.round(fmGps.accuracy)+'m':'현재 위치';el.classList.add('gps-live');el.innerHTML='<iframe loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="실시간 현재 위치 지도" src="https://www.google.com/maps?q='+encodeURIComponent(q)+'&z=17&output=embed"></iframe><span class="fm-gps-mapdot" aria-hidden="true"></span><span class="fm-gps-maplabel">'+esc(acc)+'</span>';return;}el.classList.remove('gps-live');const p=foodMap.places.find(x=>x.id===foodMap.selected);if(!p){el.innerHTML='목록의 ‘영상·관리’를 누르면 지도·상태·영상·현장 일본어가 열립니다.';return;}const q=fm2HasCoords(p)?p.lat+','+p.lng:(p.name+' 福岡');el.innerHTML='<iframe loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="'+esc(p.name)+' 지도" src="https://www.google.com/maps?q='+encodeURIComponent(q)+'&output=embed"></iframe>';};
 fmSelect=function(id){foodMap.selected=id;fmGps.follow=false;save('foodmap_v1',foodMap);fmRenderList();fmRenderMap();fmRenderSpotTools();const el=document.getElementById('fmMap');if(el)el.scrollIntoView({behavior:'smooth',block:'nearest'});};
 fmToggle=function(id,k){const p=foodMap.places.find(x=>x.id===id);if(!p)return;p[k]=!p[k];
  /* 방문을 켤 때 시각을 남긴다 — 여행 일지가 날짜별로 묶으려면 필요하다. 끄면 지운다. */
  if(k==='visited')p.visitedAt=p.visited?(TODAY+' '+new Date().toTimeString().slice(0,5)):null;
  save('foodmap_v1',foodMap);renderFoodMap();};
+/* 여러 개 한 번에 방문 표시.
+   선택 상태는 저장하지 않는다 — 그 자리에서 쓰고 버리는 모드다.
+   되돌리기는 직전 한 번만. 여러 단계를 쌓으면 무엇을 되돌리는지 알 수 없어진다. */
+let fmSel={on:false,ids:new Set(),undo:null,undoTxt:''};
+function fmVisitStamp(){return TODAY+' '+new Date().toTimeString().slice(0,5);}
+function fmSelMode(on){fmSel.on=!!on;if(!on)fmSel.ids.clear();renderFoodMap();}
+function fmSelPick(id){if(fmSel.ids.has(id))fmSel.ids.delete(id);else fmSel.ids.add(id);fmRenderList();fmSelBar();}
+function fmSelAll(){fmFiltered().forEach(p=>fmSel.ids.add(p.id));fmRenderList();fmSelBar();}
+function fmSelNone(){fmSel.ids.clear();fmRenderList();fmSelBar();}
+function fmSelApply(v){
+ const ids=[...fmSel.ids];
+ if(!ids.length){alert('먼저 장소를 골라 주세요.\n\n“보이는 N곳 전부”를 누르면 목록에 나온 것을 한 번에 고를 수 있습니다.');return;}
+ const label=v?'방문함':'아직 안 감';
+ if(!confirm(ids.length+'곳을 “'+label+'”으로 바꿀까요?\n\n바로 뒤에 되돌리기 버튼이 나옵니다.'))return;
+ const undo=[],stamp=fmVisitStamp();
+ ids.forEach(id=>{
+  const p=foodMap.places.find(x=>x.id===id);if(!p)return;
+  undo.push({id:id,v:!!p.visited,at:p.visitedAt||null});
+  p.visited=v;
+  p.visited?(p.visitedAt=p.visitedAt||stamp):(p.visitedAt=null);
+ });
+ if(!undo.length)return;
+ fmSel.undo=undo;fmSel.undoTxt=undo.length+'곳 → '+label;fmSel.ids.clear();
+ save('foodmap_v1',foodMap);renderFoodMap();
+}
+function fmSelUndo(){
+ if(!fmSel.undo||!fmSel.undo.length)return;
+ fmSel.undo.forEach(u=>{
+  const p=foodMap.places.find(x=>x.id===u.id);if(!p)return;
+  p.visited=u.v;p.visitedAt=u.at;
+ });
+ fmSel.undo=null;fmSel.undoTxt='';
+ save('foodmap_v1',foodMap);renderFoodMap();
+}
+function fmSelHTML(){
+ if(!fmSel.on)
+  return '<div class="fm-selbar"><div class="xactions" style="margin-top:0">'+
+   '<button class="xaction sub" onclick="fmSelMode(true)">☑️ 여러 곳 한 번에 표시</button>'+
+   (fmSel.undo&&fmSel.undo.length?'<button class="xaction sub" onclick="fmSelUndo()">↩ 되돌리기 ('+esc(fmSel.undoTxt)+')</button>':'')+
+   '</div></div>';
+ const n=fmSel.ids.size,shown=fmFiltered().length;
+ return '<div class="fm-selbar on">'+
+  '<div class="fm-selcount"><b>'+n+'</b>곳 선택됨 <span>· 아래 목록에 '+shown+'곳 나와 있음</span></div>'+
+  '<div class="xsmall" style="margin-top:6px">위에서 검색·분류로 좁힌 다음 “보이는 '+shown+'곳 전부”를 누르면 빠릅니다.</div>'+
+  '<div class="xactions">'+
+   '<button class="xaction sub" onclick="fmSelAll()">보이는 '+shown+'곳 전부</button>'+
+   '<button class="xaction sub" onclick="fmSelNone()">선택 해제</button>'+
+   '<button class="xaction" onclick="fmSelApply(true)">✓ 방문함으로</button>'+
+   '<button class="xaction sub" onclick="fmSelApply(false)">↩ 아직 안 감으로</button>'+
+   '<button class="xaction sub" onclick="fmSelMode(false)">닫기</button>'+
+  '</div></div>';
+}
+function fmSelBar(){const el=document.getElementById('fmSelBar');if(el)el.innerHTML=fmSelHTML();}
+
 function fm2Reservation(id){const p=foodMap.places.find(x=>x.id===id);if(!p)return;p.reservation=p.reservation==='none'?'needed':p.reservation==='needed'?'booked':'none';save('foodmap_v1',foodMap);renderFoodMap();}
 function fm2Priority(id){const p=foodMap.places.find(x=>x.id===id);if(!p)return;p.priority=((+p.priority||0)+1)%4;save('foodmap_v1',foodMap);renderFoodMap();}
 function fm2Yt(q){return'https://www.youtube.com/results?search_query='+encodeURIComponent(q);}

@@ -42,8 +42,11 @@ let url=null;
 const pad=n=>String(n).padStart(2,'0');
 const hourAt=(offset)=>{const t=new Date(Date.now()+offset*3600*1000);
   return t.getFullYear()+'-'+pad(t.getMonth()+1)+'-'+pad(t.getDate())+'T'+pad(t.getHours())+':00';};
+/** 오늘로부터 n일 뒤. 날짜를 고정으로 적으면 그 날짜가 지나는 순간 검사가 깨진다. */
+const dayAfter=(n)=>{const d=new Date(T+'T00:00:00');d.setDate(d.getDate()+n);
+  return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());};
 const mk=(pop,soonPop)=>({ok:true,json:async()=>({daily:{
-  time:[T,'2026-07-31','2026-08-01'],
+  time:[T,dayAfter(1),dayAfter(2)],
   weather_code:[3,61,0],
   temperature_2m_max:[31.2,28.4,33.0],
   temperature_2m_min:[24.1,23.0,25.5],
