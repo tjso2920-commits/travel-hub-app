@@ -25,7 +25,13 @@ const ctx=w.eval('asContext()');
 console.log('--- 컨텍스트 미리보기 ---');
 console.log(ctx.split('\n').slice(0,9).join('\n'));
 t('컨텍스트에 시각', ctx.includes('[현재]'));
-t('컨텍스트에 D-day', ctx.includes('[여행 D-day]'));
+/* D-day 는 사용자가 여행 시작일을 정했을 때만 넣는다.
+   안 정했는데 넣으면 남의 날짜(판매자의 후쿠오카 출발일)를 근거로 답하게 된다. */
+t('날짜 안 정하면 D-day 없음', w.eval('dday()')===null ? !ctx.includes('[여행 D-day]') : ctx.includes('[여행 D-day]'));
+w.eval("foodMap.planStart='2027-03-10';");
+t('날짜 정하면 D-day 들어감', w.eval('asContext()').includes('[여행 D-day]'));
+t('정한 날짜로 계산됨', w.eval("ddayTxt()").startsWith('D-'), w.eval('ddayTxt()'));
+w.eval("delete foodMap.planStart;");
 t('컨텍스트에 기준점', ctx.includes('[거리 기준점]'));
 t('컨텍스트에 예산', ctx.includes('12,000엔'));
 t('컨텍스트에 장소 목록', ctx.includes('[가까운 저장 장소 목록]'));
