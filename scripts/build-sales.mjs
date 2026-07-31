@@ -83,7 +83,7 @@ for (const must of [
   'const SJ_BANK=', 'function sjTags(p)', 'function sjPick(p,limit)',
   'function fmPanel(', 'function fmPanelOpen(k)',
   'function affUrl(k)', 'const AFF_DEFAULT=',
-  'function fmGuideHTML()', 'const GUIDE_STEPS=',
+  'function fmGuideHTML()', 'function GUIDE_STEPS()',
   'async function fxFetch(quiet)', 'function fxHomeTxt(amount)',
   'function phRead(buf)', 'function phNearest(', 'function phAnalyze(kind)',
   "o['제목']", 'function fmAddVideo(', 'function fmDeleteVideo(',

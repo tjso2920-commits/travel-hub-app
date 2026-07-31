@@ -18,11 +18,12 @@ const guideTxt=()=>{const g=w.document.getElementById('fmGuide');return g?g.text
 const mapTxt=()=>['tab-collect','tab-plan','tab-now'].map(i=>{const e=w.document.getElementById(i);return e?e.textContent:'';}).join(' ');
 let body=guideTxt();
 t('장소 없으면 안내 자동 표시', w.document.getElementById('fmGuide')!==null);
-t('Takeout 주소 안내', body.includes('takeout.google.com'));
+const hrefs=()=>[...w.document.querySelectorAll('#fmGuide a[href]')].map(x=>x.href).join(' ');
+t('구글 목록 받는 주소 연결', hrefs().includes('takeout.google.com'));
 t('저장됨 항목 안내', body.includes('저장됨'));
-t('한국어 헤더 언급', body.includes('한국어 헤더')||body.includes('제목'));
-t('좌표 없어도 되는 기능 설명', body.includes('좌표가 없어도'));
-t('좌표가 필요한 기능 설명', body.includes('구역 자동 묶기'));
+t('어느 파일인지 알아보는 법', body.includes('.csv'));
+t('위치 값 없어도 되는 것 설명', body.includes('위치 값이 없어도'));
+t('위치 값이 필요한 것 설명', body.includes('오늘 동선 짜기'));
 t('데이터 로컬 저장 고지', body.includes('이 기기에만'));
 t('3단계 구성', w.document.querySelectorAll('#fmGuide .fm-guide-step').length===3);
 t('장소 0곳이면 닫기 버튼 없음', !/안내 닫기/.test(guideTxt()));
@@ -37,9 +38,8 @@ t('불러오기 버튼이 파일 선택 실행', clicked===1);
 
 // API 키 설정으로 이동
 w.eval('fmGuideSettings()');
-const apiEl=w.document.getElementById('fmApiKey');
-t('키 입력칸 존재', apiEl!==null);
-t('설정 details 자동 펼침', apiEl && apiEl.closest('details') && apiEl.closest('details').open===true);
+t('AI 키 입력칸 존재', w.document.getElementById('gemKey')!==null);
+t('설정 창이 열림', w.document.getElementById('ovSet').classList.contains('show'));
 
 // 장소가 생기면 안내가 접힌다
 w.fmMerge(w.fmCsv(csv));

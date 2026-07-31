@@ -41,7 +41,7 @@ if(isSale){
 } else {
   t('판매자에게는 판매용 스팟팩 보임', imp.textContent.includes('판매용 스팟팩'));
 }
-t('가져오기 버튼은 남아 있음', imp.textContent.includes('불러오기'));
+t('가져오기 버튼은 남아 있음', imp.textContent.includes('파일 넣기'));
 
 /* 구매자는 '판매용 스팟팩' 같은 판매자 용어의 뜻을 알 수 없다. 화면 문구에 남으면 안 된다. */
 if(isSale){
@@ -53,8 +53,8 @@ if(isSale){
 }
 
 /* 데이터가 없을 때 각 탭이 빈 화면으로 끝나지 않고 무엇을 하라고 알려 주는가 */
-t('시작 안내가 자동으로 열림', d.getElementById('fmCollect').textContent.includes('여기서 시작하세요'));
-t('Takeout 방법 안내', d.getElementById('fmCollect').textContent.includes('Takeout'));
+t('시작 안내가 자동으로 열림', d.getElementById('fmCollect').textContent.includes('처음 설정'));
+t('구글 목록 받는 방법 안내', [...d.querySelectorAll('#fmCollect a[href]')].some(x=>x.href.includes('takeout.google.com')));
 t('데이터가 기기에만 저장된다는 고지', d.getElementById('fmCollect').textContent.includes('이 기기에만 저장'));
 
 for(const [id,label] of [['fmPlan','일정'],['fmNow','지금 여행']]){
