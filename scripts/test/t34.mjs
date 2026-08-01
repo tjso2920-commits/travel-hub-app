@@ -42,6 +42,8 @@ t('아직 팩 없음', w.eval('jpHasPack()') === false);
 const need = d.getElementById('jpRoot').textContent;
 t('만들라고 안내', need.includes('회화팩 만들기'));
 t('AI가 만든다고 정직하게 밝힘', need.includes('AI가 만듭니다'));
+t('일본어도 감수 안 받았다고 밝힘', need.includes('원어민 감수는 받지 않았습니다'));
+t('사람이 썼다는 거짓말 없음', !need.includes('사람이 직접 쓰'));
 t('AI 꺼져 있으면 알려줌', need.includes('AI가 꺼져 있습니다'));
 t('팩 없어도 오류 0', errs.length === 0);
 
@@ -78,7 +80,8 @@ t('일본 전용 문구가 안 새어나옴', !pane.includes('하카타벤'));
 t('음성도 목적지 말로', w.eval("JP_TTS_LANG[jpLang()]") === 'th-TH');
 t('완료 버튼 있음', pane.includes('완료 → 다음 팩'));
 t('어색한 문장 고치는 버튼', pane.includes('어색해요'));
-t('사람 검수 아님을 밝힘', pane.includes('사람이 검수한 것은 아닙니다'));
+t('사람이 본 적 없음을 밝힘', pane.includes('사람이 본 적은 없습니다'));
+t('사람이 썼다고 주장하지 않음', !pane.includes('사람이 직접'));
 t('말하는 사람 표시', pane.includes('말하는 사람'));
 
 /* ── 품질 장치 ───────────────────────────────────────────────────────── */
