@@ -90,6 +90,28 @@ for (const n of ['찜질방 파라다이스', '유노야 온천', 'Onsen Yu']) {
   t('사우나·온천으로 분류: ' + n, w.eval('fmInfer(' + JSON.stringify(n) + ')') === '사우나·온천');
 }
 t('료칸은 숙소로', w.eval("fmInfer('료칸 하나')") === '숙소');
+for (const n of ['타이마사지 사바이', 'Wat Pho Massage', '발마사지 골목', '아로마 에스테']) {
+  t('마사지·스파로 분류: ' + n, w.eval('fmInfer(' + JSON.stringify(n) + ')') === '마사지·스파');
+}
+for (const n of ['마츠모토키요시 약국', 'Drug Store', '후쿠오카 병원', '치과 클리닉']) {
+  t('약국·병원으로 분류: ' + n, w.eval('fmInfer(' + JSON.stringify(n) + ')') === '약국·병원');
+}
+/* '스파' 는 양쪽에 걸린다. 온천 낱말이 있으면 온천이 이겨야 한다 */
+t('그냥 스파는 마사지로', w.eval("fmInfer('스파 리조트')") === '마사지·스파');
+t('온천 스파는 온천으로', w.eval("fmInfer('온천 스파 리조트')") === '사우나·온천');
+t('노천탕도 온천으로', w.eval("fmInfer('노천탕 있는 곳')") === '사우나·온천');
+t('새 분류가 목록에도 있음', w.eval("FM_CATS.indexOf('마사지·스파')") > 0 && w.eval("FM_CATS.indexOf('약국·병원')") > 0);
+/* 새 분류도 묶여야 한다 */
+w.eval(`
+  foodMap.places=[];
+  [['맛집·식당',3],['마사지·스파',2],['약국·병원',1]].forEach(function(x,gi){
+    for(let i=0;i<x[1];i++)foodMap.places.push({id:'c'+gi+i,name:'곳'+gi+i,cat:x[0]});
+  });
+  foodMap.groupBy='cat';renderFoodMap();
+`);
+const gg = [...d.getElementById('fmList').querySelectorAll('details.fm-grp summary')].map((x) => x.textContent);
+t('마사지 묶음 생김', gg.some((x) => x.includes('마사지·스파')));
+t('약국 묶음 생김', gg.some((x) => x.includes('약국·병원')));
 
 t('최종 런타임 오류 0', errs.length === 0);
 if (errs.length) console.log('  ', errs.slice(0, 3));

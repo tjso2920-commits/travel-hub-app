@@ -2702,12 +2702,15 @@ async function jpTranslate(){
 function jpVoiceTranslate(){const dir=document.getElementById('jpDir').value;jpRecognition(dir==='koja'?'ko-KR':'ja-JP',t=>{document.getElementById('jpTrIn').value=t;jpTranslate();});}
 
 /* ── 맛집지도 탭: Takeout 이식형 신규 모듈 ── */
-const FM_CATS=['전체','후쿠오카권','즐겨찾기','미방문','맛집·식당','바·이자카야','카페·디저트','관광·명소','쇼핑','숙소','교통','사우나·온천','기타'];
+const FM_CATS=['전체','후쿠오카권','즐겨찾기','미방문','맛집·식당','바·이자카야','카페·디저트','관광·명소','쇼핑','숙소','교통','사우나·온천','마사지·스파','약국·병원','기타'];
 let foodMap=load('foodmap_v1',{places:[],filter:'후쿠오카권',q:'',selected:null,apiKey:'',listName:'여행계획'});
 if(!foodMap||typeof foodMap!=='object')foodMap={places:[],filter:'후쿠오카권',q:'',selected:null,apiKey:'',listName:'여행계획'};
 if(!Array.isArray(foodMap.places))foodMap.places=[];
 function fmInfer(s){s=String(s||'').toLowerCase();if(/ホテル|hotel|旅館|民宿|호스텔|호텔|숙소|료칸/.test(s))return'숙소';
- if(/駅|空港|港|バス|station|airport|터미널|역|공항/.test(s))return'교통';if(/温泉|銭湯|サウナ|spa|onsen|온천|사우나|찜질|족욕/.test(s))return'사우나·온천';
+ if(/駅|空港|港|バス|station|airport|터미널|역|공항/.test(s))return'교통';/* '스파' 는 온천에도 마사지에도 붙는다. 온천 낱말이 있으면 온천이 이긴다 — 순서가 규칙이다. */
+ if(/温泉|銭湯|サウナ|onsen|sento|온천|사우나|찜질|족욕|열탕|노천탕/.test(s))return'사우나·온천';
+ if(/マッサージ|エステ|massage|spa|마사지|스파|에스테|아로마|경락|발마사지|타이마사지|foot ?massage|reflexolog/.test(s))return'마사지·스파';
+ if(/薬局|ドラッグ|病院|クリニック|pharmacy|drug ?store|hospital|clinic|약국|병원|의원|응급|치과|드럭스토어|메디컬/.test(s))return'약국·병원';
  if(/神社|寺|城|公園|展望|博物館|美術館|beach|shrine|temple|공원|신사|사찰|전망|박물관|미술관|해변/.test(s))return'관광·명소';
  if(/百貨店|モール|市場|ショップ|store|shop|market|쇼핑|시장|백화점|마트/.test(s))return'쇼핑';
  if(/居酒屋|酒場|屋台|バー|クラブ|パブ|bar|pub|club|lounge|이자카야|포차|술집|클럽|나이트|펍|라운지|와인바|위스키/.test(s))return'바·이자카야';if(/カフェ|珈琲|喫茶|coffee|cafe|카페|디저트|パン/.test(s))return'카페·디저트';
