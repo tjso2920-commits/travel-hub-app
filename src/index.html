@@ -76,7 +76,7 @@
   .tab{display:none;padding:20px 18px 8px}
   .tab.on{display:block}
   .sec-head .tools{margin-left:auto;display:flex;gap:7px}
-  .btn{font-size:12px;font-weight:700;padding:7px 12px;border-radius:20px;border:1px solid var(--line2);
+  .btn{font-size:12px;font-weight:700;min-height:44px;padding:7px 14px;border-radius:22px;border:1px solid var(--line2);
     background:var(--surface);color:var(--muted);cursor:pointer;transition:.15s}
   .btn:active{transform:scale(.96)}
   .btn.on{background:var(--wasabi);color:#1a1710;border-color:var(--wasabi)}
@@ -238,7 +238,8 @@
   .jline .ko{font-size:12.5px;color:var(--muted);margin-top:3px}
   .jline.compact .jp{font-size:15.5px}
   .jp-listen{margin-top:8px;border:1px solid var(--line2);background:var(--surface2);color:var(--text);border-radius:9px;
-    padding:6px 9px;font-size:11px;font-weight:750;cursor:pointer}
+    min-height:44px;padding:6px 12px;font-size:12px;font-weight:750;cursor:pointer;
+    display:inline-flex;align-items:center;justify-content:center}
   .jp-voicebar{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;
     background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:11px 12px;margin:0 0 11px}
   .jp-voicecopy b{display:block;font-size:12px;color:var(--text)}
@@ -278,7 +279,7 @@
   .jp-form-gloss strong{min-width:0}.jp-form-gloss b{display:block;color:var(--text);font-weight:800;overflow-wrap:anywhere}.jp-form-gloss small{display:block;margin-top:2px;color:var(--violet);font-size:9.5px;font-weight:650;overflow-wrap:anywhere}.jp-form-gloss em{color:var(--muted);font-style:normal;overflow-wrap:anywhere}
   .jp-book-note{padding:11px 12px;font-size:11px;line-height:1.55;color:var(--muted)}
   .xactions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
-  .xaction{flex:1;min-width:105px;border:none;border-radius:11px;padding:12px 10px;background:var(--wasabi);
+  .xaction{flex:1;min-width:105px;min-height:44px;border:none;border-radius:11px;padding:12px 10px;background:var(--wasabi);
     word-break:keep-all;
     color:#1a1710;font-size:13px;font-weight:850;cursor:pointer}
   .xaction.sub{background:var(--surface2);color:var(--text);border:1px solid var(--line2)}
@@ -295,8 +296,11 @@
     border-radius:12px;padding:16px;line-height:1.8;scroll-behavior:smooth}
   .reading p{margin-bottom:15px}.reading .speaker{color:var(--wasabi);font-weight:800}
   .reading .trans{display:block;color:var(--muted);font-size:12px;line-height:1.55}
+  /* 글씨 16px 아래로 내리지 말 것 — 아이폰 사파리가 탭할 때 화면을 확대해 버린다.
+     글자 넣을 때마다 화면이 튀고 손으로 다시 줄여야 한다. */
   .xinput,.xselect,.xta{width:100%;background:var(--bg);border:1px solid var(--line2);border-radius:10px;
-    padding:11px 12px;color:var(--text);font-size:14px;font-family:var(--sans)}
+    padding:11px 12px;color:var(--text);font-size:16px;font-family:var(--sans);min-height:44px}
+  .xta{font-size:16px}
   .xinput:focus,.xselect:focus,.xta:focus{outline:none;border-color:var(--wasabi)}
   .xta{min-height:82px;resize:vertical}
   .chatbox{max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
@@ -489,6 +493,11 @@
   .fm-view button{min-height:44px;padding:0 14px;border-radius:999px;border:1px solid var(--line2);
     background:transparent;color:var(--muted);font-size:12.5px;font-weight:800}
   .fm-view button.on{background:var(--wasabi);color:#fff;border-color:transparent}
+  /* 누르는 것은 전부 44px 이상. 새로 만드는 것도 여기서 자동으로 받쳐진다.
+     걸으면서 한 손으로 누르는 앱이라 42px 도 눈에 안 보이게 자꾸 헛눌린다. */
+  .tab summary,.tab button,.tab select,#ovSet summary,#ovSet button,#ovSet select,
+  #setupWrap button,#setupWrap select{min-height:44px}
+  .tab summary{display:flex;align-items:center}
   .fm-count{font-family:var(--mono);font-size:10.5px;color:var(--faint);text-align:right;margin:-3px 2px 8px}
   .importbox{border:1px dashed var(--line2);border-radius:13px;padding:14px;background:rgba(180,194,74,.04)}
   .homebtn{border:1px solid var(--line2);border-radius:16px;padding:5px 9px;background:rgba(237,230,214,.07);color:var(--text);
@@ -746,7 +755,7 @@
   .fm-guide-step p{margin:0;font-size:11.5px;line-height:1.6;color:var(--muted)}
   .fm-guide-step .xactions{margin-top:7px}
   .fm-panel{padding:0}
-  .fm-panel>summary{cursor:pointer;list-style:none;padding:13px 15px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .fm-panel>summary{cursor:pointer;list-style:none;min-height:44px;padding:13px 15px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   .fm-panel>summary::-webkit-details-marker{display:none}
   .fm-panel>summary::after{content:"▾";margin-left:auto;color:var(--faint);font-size:11px;transition:transform .15s}
   .fm-panel[open]>summary::after{transform:rotate(180deg)}
@@ -759,7 +768,7 @@
   .jp-spot-row i{font-style:normal;font-size:11.5px;color:var(--muted)}
   .jp-spot-row em{font-style:normal;font-size:12px;color:var(--accent)}
   .fm-plan-day{border-top:1px solid var(--line);padding:8px 0}
-  .fm-plan-day>summary{cursor:pointer;font-size:12px;color:var(--text);list-style:none}
+  .fm-plan-day>summary{cursor:pointer;font-size:12px;color:var(--text);list-style:none;min-height:44px;display:flex;align-items:center}
   .fm-plan-day>summary::-webkit-details-marker{display:none}
   .fm-plan-list{margin-top:8px;display:flex;flex-direction:column;gap:6px}
   .fm-course-list{margin-top:10px;display:flex;flex-direction:column;gap:6px}
