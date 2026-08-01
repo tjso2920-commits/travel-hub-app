@@ -77,6 +77,33 @@ t('AI가 만든 것이라고 표시', pane.includes('AI가 만든 회화팩'));
 t('일본 전용 문구가 안 새어나옴', !pane.includes('하카타벤'));
 t('음성도 목적지 말로', w.eval("JP_TTS_LANG[jpLang()]") === 'th-TH');
 t('완료 버튼 있음', pane.includes('완료 → 다음 팩'));
+t('어색한 문장 고치는 버튼', pane.includes('어색해요'));
+t('사람 검수 아님을 밝힘', pane.includes('사람이 검수한 것은 아닙니다'));
+t('말하는 사람 표시', pane.includes('말하는 사람'));
+
+/* ── 품질 장치 ───────────────────────────────────────────────────────── */
+t('성별 기본값 있음', ['m','f'].indexOf(w.eval('jpSpeaker()')) >= 0);
+w.eval("jpSetSpeaker('f')");
+t('성별 바뀜', w.eval('jpSpeaker()') === 'f' && w.eval('jpSpeakerTxt()') === '여성');
+t('시키는 말에 성별이 들어감', w.eval('jpGenRules()').includes('여성'));
+t('시키는 말이 번역투를 금지', w.eval('jpGenRules()').includes('번역투'));
+t('시키는 말이 로마자 표기를 금지', w.eval('jpGenRules()').includes('로마자'));
+w.eval("jpSetSpeaker('m')");
+
+/* 쓰레기 문장은 걸러져야 한다 */
+const cleaned = w.eval(`JSON.stringify(jpCleanLines([
+  {j:'สวัสดีครับ',k:'사왓디 캅',m:'안녕하세요'},
+  {j:'안녕하세요',k:'안녕',m:'한글이 섞임'},
+  {j:'สวัสดีครับ',k:'사왓디 캅',m:'앞과 겹침'},
+  {j:'',k:'',m:'빈 줄'},
+  {j:'ก'.repeat(90),k:'긴문장',m:'너무 김'},
+  {j:'ขอบคุณครับ',k:'컵쿤 캅',m:'감사합니다'}
+]))`);
+const arr = JSON.parse(cleaned);
+t('걸러내고 2개만 남음', arr.length === 2);
+t('한글 섞인 원문 제거', !arr.some((x) => /[가-힣]/.test(x.j)));
+t('겹치는 문장 제거', new Set(arr.map((x) => x.j)).size === arr.length);
+t('너무 긴 문장 제거', !arr.some((x) => x.j.length > 60));
 t('다시 만들기 있음', pane.includes('회화팩 지우고 다시 만들기'));
 
 /* 진도·복습이 같은 틀로 돌아가는가 */

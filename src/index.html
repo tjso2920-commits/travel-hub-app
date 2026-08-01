@@ -1905,7 +1905,11 @@ function jpLineHTML(x,compact){
  /* 후리가나와 한글 발음 변환은 일본어 전용이다. 다른 말은 AI가 준 읽는 법을 그대로 쓴다. */
  if(!jpIsJa())return '<div class="jline '+(compact?'compact':'')+'"><div class="jp">'+esc(x.v.j)+'</div>'+
   (jpState.showReading&&x.v.k?'<div class="sound">'+esc(x.v.k)+'</div>':'')+
-  '<div class="ko">'+esc(x.v.m)+'</div><button class="jp-listen" onclick="jpSpeakLine(\''+x.id+'\')">🔊 '+esc(jpLangName())+' 듣기</button></div>';
+  '<div class="ko">'+esc(x.v.m)+'</div>'+
+  '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+   '<button class="jp-listen" onclick="jpSpeakLine(\''+x.id+'\')">🔊 '+esc(jpLangName())+' 듣기</button>'+
+   '<button class="jp-listen" onclick="jpFixLine(\''+x.id+'\')" title="어색하면 이 문장만 다시 만듭니다">✎ 어색해요</button>'+
+  '</div></div>';
  return '<div class="jline '+(compact?'compact':'')+'"><div class="jp jp-rubyline">'+(jpState.showReading?jpRuby(x.v.j,x.v.k):esc(x.v.j))+'</div>'+
  (jpState.showReading?'<div class="kana">'+esc(x.v.k)+'</div><div class="sound">'+esc(jpKoSound(x.v.k))+'</div>':'')+'<div class="ko">'+esc(x.v.m)+'</div><button class="jp-listen" onclick="jpSpeakLine(\''+x.id+'\')">🔊 일본어 듣기</button></div>';}
 function jpGrammarCard(g,p,boost){const m=jpGrammarMeta(g),r=JP_GRAMMAR_KANA[p]||'';return'<div class="xcard"><h3><span class="tag">GRAMMAR</span>'+esc(g.g)+'</h3><div class="gdetail"><div class="grow"><b>핵심 기능</b>'+esc(g.m)+'</div><div class="grow"><b>접속 형태</b>'+esc(m.form)+'</div><div class="grow"><b>뉘앙스</b>'+esc(m.nuance)+'</div><div class="grow"><b>주의점</b>'+esc(m.caution)+'</div><div class="grow"><b>내 문장</b>예문의 장소·음식·시간을 오늘 내 상황으로 바꿔 소리 내어 말합니다.</div></div>'+jpGrammarBookHTML(g)+'<div class="jline"><div class="jp jp-rubyline">'+jpRuby(g.e,r)+'</div><div class="kana">'+esc(r)+'</div><div class="sound">'+esc(jpKoSound(r))+'</div><div class="ko">'+esc(g.k)+'</div><button class="jp-listen" onclick="jpSpeakGrammar('+p+')">🔊 문법 예문 듣기</button></div>'+jpN3BookHTML(boost)+'</div>';}
@@ -1929,6 +1933,86 @@ const LANG_THEMES=[
  ['사람과 친해지기','자기소개','어디서 왔는지','직업','여행 이유','연락처','같이 사진','인사말','다음에'],
  ['마무리 종합','하루 요약','고마웠던 것','다시 올 곳','추천 부탁','작별','연락','응원','인사']
 ];
+/* 말하는 사람. 태국어 ครับ/ค่ะ 처럼 성별로 어미가 갈리는 말이 있다.
+   안 물으면 여성이 남성 어미를 쓰게 된다. 어색한 게 아니라 틀린 것이다. */
+function jpSpeaker(){return jpState.speaker==='f'?'f':'m';}
+function jpSetSpeaker(v){jpState.speaker=(v==='f'?'f':'m');save('jp_state_v1',jpState);renderJapanese();}
+function jpSpeakerTxt(){return jpSpeaker()==='f'?'여성':'남성';}
+
+/* 기계로 걸러낼 수 있는 것은 전부 거른다. 사람 검수를 못 하니 이거라도 한다. */
+function jpBadLine(x,seen){
+ if(!x||!x.j||!x.m)return '빈 줄';
+ const j=String(x.j).trim(),m=String(x.m).trim();
+ if(!j||!m)return '빈 줄';
+ if(/[가-힣]/.test(j)&&jpLang()!=='ko')return '원문에 한글이 섞임';
+ if(j.length>60)return '문장이 너무 김';
+ if(m.length>40)return '뜻이 너무 김';
+ if(/^[A-Za-z ,.'!?-]+$/.test(j)&&['en'].indexOf(jpLang())<0)return '원문이 로마자뿐';
+ if(seen&&seen.has(j))return '앞 문장과 겹침';
+ return '';
+}
+/* AI 가 준 8줄을 검사해 쓸 만한 것만 남긴다. */
+function jpCleanLines(arr){
+ const seen=new Set(),out=[];
+ (arr||[]).forEach(function(x){
+  if(!x)return;
+  const v={j:String(x.j||'').trim(),k:String(x.k||'').trim(),m:String(x.m||'').trim()};
+  if(jpBadLine(v,seen))return;
+  seen.add(v.j);out.push(v);
+ });
+ return out.slice(0,8);
+}
+
+/* ── 시키는 말 ───────────────────────────────────────────────────────────
+   아마추어 문장이 나오는 가장 큰 이유는 프롬프트가 얇아서다.
+   금지할 것을 이름 붙여 적고, 좋은 예와 나쁜 예를 같이 준다. */
+function jpGenRules(){
+ const name=jpLangName(),sex=jpSpeakerTxt();
+ return '너는 '+name+' 원어민이자 여행 회화 교재를 만드는 사람이다.\n'+
+  '말하는 사람은 한국인 여행자이고 '+sex+'이다. 그 사람이 그대로 입으로 낼 문장을 쓴다.\n\n'+
+  '반드시 지킬 것\n'+
+  '1. 한국어 문장을 옮기지 마라. **현지 사람이 그 상황에서 실제로 쓰는 말**을 써라.\n'+
+  '   뜻이 조금 달라져도 실제로 쓰는 표현이 옳다.\n'+
+  '2. 교과서체·문어체·번역투 금지. 지나치게 격식 차린 문장 금지.\n'+
+  '   가게·길거리에서 처음 만난 사람에게 실례가 아닌 정도의 **일상 존댓말**로 통일한다.\n'+
+  '3. '+sex+' 화자에 맞는 어미·조사·인칭을 쓴다. 성별로 형태가 갈리는 말이면 반드시 맞춘다.\n'+
+  '4. 한 문장. 짧게. 외워서 바로 쓸 수 있는 길이.\n'+
+  '5. 원문(j)에는 한국어를 절대 섞지 않는다.\n'+
+  '6. k 는 한국인이 소리내어 읽을 수 있게 **한글로 적은 발음**이다. 로마자·병음 표기 금지.\n'+
+  '   실제 소리에 가깝게 적는다. 원문 철자를 글자 그대로 옮기지 마라.\n'+
+  '7. m 은 한국어 뜻. 딱딱한 사전 투 말고 사람이 말하듯이.\n\n'+
+  '나쁜 예 (이렇게 쓰지 마라)\n'+
+  '- "저는 이 음식을 주문하고 싶습니다" — 번역투. 아무도 이렇게 말 안 한다\n'+
+  '- "귀하의 추천을 부탁드립니다" — 과한 격식\n'+
+  '- k 를 로마자로 적는 것\n\n'+
+  '좋은 예 (이런 결로)\n'+
+  '- "이거 하나 주세요" 급의 짧고 실제 쓰는 말\n'+
+  '- "뭐가 제일 맛있어요?" 처럼 자연스럽게 묻는 말\n';
+}
+const JP_GEN_SCHEMA={responseMimeType:'application/json',responseSchema:{type:'OBJECT',properties:{lines:{type:'ARRAY',items:{
+ type:'OBJECT',properties:{j:{type:'STRING'},k:{type:'STRING'},m:{type:'STRING'}},required:['j','k','m']}}},required:['lines']}};
+
+/* 검수 — 만든 문장을 감수자 눈으로 다시 읽힌다. 자기가 쓴 걸 자기가 고치는 것보다
+   역할을 바꿔 새로 읽히는 쪽이 실제로 더 잘 잡는다. */
+async function jpReviewLines(lines,theme){
+ const name=jpLangName();
+ const prompt='너는 '+name+' 원어민 교재 감수자다. 아래는 한국인 여행자용 회화 문장 초안이다.\n'+
+  '주제: '+theme+' · 말하는 사람: 한국인 '+jpSpeakerTxt()+' 여행자\n\n'+
+  '각 문장을 소리내어 읽어 보고 판단해라.\n'+
+  '- 현지 사람이 실제로 그렇게 말하지 않으면 **실제로 쓰는 말로 고쳐라**\n'+
+  '- 번역투·교과서체·과한 격식이면 자연스럽게 고쳐라\n'+
+  '- 화자 성별에 안 맞는 어미가 있으면 고쳐라\n'+
+  '- 한글 발음 표기(k)가 실제 소리와 다르면 고쳐라\n'+
+  '- 이미 자연스러운 문장은 **그대로 두어라**. 바꾸기 위해 바꾸지 마라\n\n'+
+  '같은 개수, 같은 순서로 최종본만 JSON 으로 내라.\n\n'+
+  JSON.stringify(lines);
+ const t=await callGemini([{text:prompt}],JP_GEN_SCHEMA);
+ const j=JSON.parse(String(t).replace(/```json|```/g,'').trim());
+ const out=jpCleanLines(j.lines);
+ /* 검수가 오히려 망가뜨렸으면 초안을 쓴다 */
+ return out.length>=lines.length-1?out:lines;
+}
+
 let jpGenBusy=false;
 async function jpGenPack(){
  if(jpGenBusy)return;
@@ -1940,33 +2024,49 @@ async function jpGenPack(){
  try{
   for(let w=0;w<LANG_THEMES.length;w++){
    const th=LANG_THEMES[w];
-   const prompt='너는 한국인 여행자를 위한 '+name+' 회화 교재를 만든다. 여행지는 '+dest+'.\n'+
-    '주제: "'+th[0]+'". 아래 8가지 상황 각각에 대해 실제로 쓰는 짧은 문장을 하나씩 써라.\n'+
-    th.slice(1).map(function(x,i){return (i+1)+'. '+x;}).join('\n')+'\n\n'+
-    '규칙\n'+
-    '- j: '+name+' 원문. 현지에서 실제로 쓰는 자연스러운 표현. 한 문장, 짧게\n'+
-    '- k: 한국인이 소리내어 읽을 수 있게 한글로 적은 발음. 로마자 금지\n'+
-    '- m: 한국어 뜻\n'+
-    '- 존댓말 기준. 관광객이 처음 만난 사람에게 써도 실례가 아닌 정도\n'+
-    '- 정확히 8개. 설명·번호·따옴표 없이 JSON 만';
-   const cfg={responseMimeType:'application/json',responseSchema:{type:'OBJECT',properties:{lines:{type:'ARRAY',items:{
-     type:'OBJECT',properties:{j:{type:'STRING'},k:{type:'STRING'},m:{type:'STRING'}},required:['j','k','m']}}},required:['lines']}};
-   const t=await callGemini([{text:prompt}],cfg);
-   const j=JSON.parse(String(t).replace(/```json|```/g,'').trim());
-   const lines=(j.lines||[]).filter(function(x){return x&&x.j&&x.m;}).slice(0,8);
-   if(lines.length<4)throw new Error(th[0]+' 주차를 만들지 못했습니다.');
-   made.push({t:th[0],s:th.slice(1),l:lines.map(function(x){return{j:String(x.j),k:String(x.k||''),m:String(x.m)};})});
-   /* 한 주차 끝날 때마다 저장한다. 중간에 끊겨도 거기까지는 남는다. */
-   jpLangPack()[code]={weeks:made.slice(),at:TODAY,dest:dest,ai:true};
-   save('jp_packs_v1',jpAIPacks);
    const bar=document.getElementById('jpGenBar');
-   if(bar)bar.textContent=name+' 회화팩 만드는 중… '+made.length+' / '+LANG_THEMES.length+'주차';
+   if(bar)bar.textContent=name+' 회화팩 · '+(w+1)+'/'+LANG_THEMES.length+'주차 「'+th[0]+'」 쓰는 중…';
+   const prompt=jpGenRules()+'\n여행지: '+dest+'\n주제: "'+th[0]+'"\n\n'+
+    '아래 8가지 상황에 각각 하나씩, 순서대로 써라.\n'+
+    th.slice(1).map(function(x,i){return (i+1)+'. '+x;}).join('\n')+'\n\n'+
+    '정확히 8개. 설명 없이 JSON 만.';
+   const t=await callGemini([{text:prompt}],JP_GEN_SCHEMA);
+   const j=JSON.parse(String(t).replace(/```json|```/g,'').trim());
+   let lines=jpCleanLines(j.lines);
+   if(lines.length<4)throw new Error('「'+th[0]+'」 주차를 만들지 못했습니다.');
+   /* 감수 한 번 더. 실패해도 초안은 쓸 만하므로 넘어간다. */
+   if(bar)bar.textContent=name+' 회화팩 · '+(w+1)+'/'+LANG_THEMES.length+'주차 「'+th[0]+'」 감수 중…';
+   try{lines=await jpReviewLines(lines,th[0]);}catch(e){}
+   made.push({t:th[0],s:th.slice(1),l:lines});
+   /* 한 주차 끝날 때마다 저장한다. 중간에 끊겨도 거기까지는 남는다. */
+   jpLangPack()[code]={weeks:made.slice(),at:TODAY,dest:dest,ai:true,sex:jpSpeaker()};
+   save('jp_packs_v1',jpAIPacks);
   }
   alert(name+' 회화팩 '+made.length+'주차를 만들었습니다.\n이 기기에 저장돼서 비행기에서도 그대로 나옵니다.');
  }catch(e){
   alert(made.length?('여기까지 '+made.length+'주차를 만들어 저장했습니다.\n나머지는 다시 눌러 이어서 만들 수 있습니다.\n\n'+(e.message||e))
    :('회화팩을 만들지 못했습니다.\n'+(e.message||e)));
  }finally{jpGenBusy=false;renderJapanese();}
+}
+/* 그래도 이상한 문장이 보이면 그 줄만 새로 뽑는다. 팩 전체를 다시 만들 필요 없다. */
+async function jpFixLine(id){
+ if(jpIsJa())return;
+ const m=String(id).match(/^(?:[a-zA-Z-]+:)?w(\d+)l(\d+)$/);if(!m)return;
+ const w=+m[1],i=+m[2],a=LW(),wk=a[w];if(!wk||!wk.l[i])return;
+ if(!ai.key){alert('AI를 먼저 켜야 합니다.');return;}
+ const cur=wk.l[i];
+ if(!confirm('이 문장을 다시 만들까요?\n\n'+cur.j+'\n'+cur.m))return;
+ try{
+  const prompt=jpGenRules()+'\n여행지: '+affDest()+'\n주제: "'+wk.t+'" 중 "'+(wk.s[i%wk.s.length]||wk.t)+'"\n\n'+
+   '아래 문장이 어색하다는 지적을 받았다. 같은 상황에 쓰는 **다른 표현**으로 하나만 새로 써라.\n'+
+   '지적받은 문장: '+cur.j+' ('+cur.m+')\n\n'+
+   '1개만. 설명 없이 JSON 만.';
+  const t=await callGemini([{text:prompt}],JP_GEN_SCHEMA);
+  const j=JSON.parse(String(t).replace(/```json|```/g,'').trim());
+  const got=jpCleanLines(j.lines);
+  if(!got.length){alert('새 문장을 만들지 못했습니다. 다시 시도해 주세요.');return;}
+  wk.l[i]=got[0];save('jp_packs_v1',jpAIPacks);renderJapanese();
+ }catch(e){alert('실패: '+(e.message||e));}
 }
 function jpDropPack(){
  const code=jpLang();if(code==='ja')return;
@@ -1987,7 +2087,12 @@ function jpNeedPackHTML(){
   '<div class="xsmall" style="margin-top:8px">문장은 <b style="color:var(--ember-soft)">AI가 만듭니다.</b> '+
   '일본어 교재는 사람이 직접 쓰고 검수한 것이지만, 다른 나라 말은 그렇게 못 합니다. '+
   '뜻이 이상하면 현지에서 한 번 더 확인해 주세요.</div>'+
-  '<div class="xactions"><button class="xaction" onclick="jpGenPack()">✨ '+esc(name)+' 회화팩 만들기</button></div>'+
+  '<div class="xsmall" style="margin-top:12px"><b style="color:var(--text)">말하는 사람</b> — '+
+  '태국어처럼 <b style="color:var(--text)">성별에 따라 말끝이 달라지는</b> 언어가 있습니다. 맞게 골라 주세요.</div>'+
+  '<div class="fm-cats" style="margin-top:7px">'+
+   '<button class="'+(jpSpeaker()==='m'?'on':'')+'" onclick="jpSetSpeaker(\'m\')">남성</button>'+
+   '<button class="'+(jpSpeaker()==='f'?'on':'')+'" onclick="jpSetSpeaker(\'f\')">여성</button></div>'+
+  '<div class="xactions" style="margin-top:12px"><button class="xaction" onclick="jpGenPack()">✨ '+esc(name)+' 회화팩 만들기</button></div>'+
   (ai.key?'':'<div class="xsmall" style="margin-top:8px;color:var(--ember-soft)">AI가 꺼져 있습니다. 설정(⚙)에서 무료 키를 먼저 넣어 주세요.</div>')+
   '</div>';
 }
@@ -2004,7 +2109,9 @@ function jpTodayPane(pane){
    '<div class="xactions"><button class="xaction" onclick="jpPlaySession('+p+')">🔊 오늘 6문장 연속 듣기</button>'+
    '<button class="xaction sub" onclick="jpToggleReading()">'+(jpState.showReading?'읽는 법 숨기기':'읽는 법 보기')+'</button></div></div>'+
    '<div class="xcard"><h3><span class="tag">AI</span>AI가 만든 회화팩</h3>'+
-   '<div class="xsmall">이 문장들은 AI가 만든 것입니다. 뜻이 이상하면 현지에서 한 번 더 확인해 주세요.</div>'+
+   '<div class="xsmall">원어민 감수를 한 번 더 거쳐 만든 문장이지만, <b style="color:var(--text)">사람이 검수한 것은 아닙니다.</b> '+
+   '어색한 문장은 <b style="color:var(--text)">✎ 어색해요</b>를 눌러 그 줄만 다시 만들 수 있습니다.<br>'+
+   '말하는 사람: <b style="color:var(--text)">'+esc(jpSpeakerTxt())+'</b> 기준으로 만들었습니다.</div>'+
    '<div class="xactions"><button class="xaction" onclick="jpCompleteSession()">DAY '+(p+1)+' 완료 → 다음 팩</button>'+
    '<button class="xaction sub" onclick="jpDropPack()">회화팩 지우고 다시 만들기</button></div></div>';
   return;
