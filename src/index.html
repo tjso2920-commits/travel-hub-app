@@ -527,6 +527,19 @@
   .fm-resetup button{min-height:44px;padding:0 15px;border-radius:var(--pill,999px);
     border:1px solid var(--line2);background:transparent;color:var(--muted);font-size:12.5px;font-weight:800}
   /* 산 사람 이름. 늘 보이되 방해되지 않게. */
+  /* 통역 — 가게 앞에서 한 손으로 누른다. 버튼이 커야 한다. */
+  .tr-two{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:10px}
+  .tr-mic{min-height:72px;border:0;border-radius:18px;font-size:15px;font-weight:800;line-height:1.35;
+    background:var(--wasabi);color:#fff;padding:10px}
+  .tr-mic.alt{background:var(--surface2);color:var(--text);border:1px solid var(--line2)}
+  .tr-mic.rec{background:var(--ember,#C4551F);color:#fff}
+  .tr-mic small{display:block;font-size:11.5px;font-weight:700;opacity:.85;margin-top:3px}
+  .tr-out{margin-top:12px;border:1px solid var(--line);border-radius:16px;background:var(--surface);padding:14px}
+  .tr-src{font-size:12.5px;color:var(--muted);margin-bottom:7px;line-height:1.55}
+  .tr-big{font-size:22px;font-weight:800;color:var(--text);line-height:1.45;word-break:break-word}
+  .tr-read{font-size:13.5px;color:var(--wasabi);margin-top:5px;line-height:1.5}
+  .tr-note{font-size:12px;color:var(--faint);margin-top:8px;line-height:1.6}
+  .tr-busy{font-size:13px;color:var(--muted);padding:14px 0}
   #licBar{text-align:center;padding:18px 16px 26px;font-size:11.5px;line-height:1.6;color:var(--faint)}
   #licBar b{color:var(--muted);font-weight:800}
   #licBar .free{display:inline-block;border:1px solid var(--line2);border-radius:999px;
@@ -2203,12 +2216,10 @@ function jpBedPane(pane){
 function jpBedDone(){jpState.bed[TODAY]=true;save('jp_state_v1',jpState);alert('오늘 정리 완료. 푹 자세요.');}
 function jpToolsPane(pane){
  const chat=(jpChat||[]).slice(-10).map(x=>'<div class="bubble '+(x.r==='user'?'me':'ai')+'">'+esc(x.t)+'</div>').join('');
- pane.innerHTML='<div class="xcard hot"><h3><span class="tag">SIMULATION</span>이자카야 프리토킹</h3><div class="chatbox" id="jpChat">'+(chat||'<div class="empty">AI가 일본인 점원 역할을 합니다. 일본어로 먼저 말을 걸어보세요.</div>')+'</div>'+
+ pane.innerHTML='<div class="xcard hot"><h3><span class="tag">SIMULATION</span>이자카야 프리토킹</h3><div class="chatbox" id="jpChat">'+(chat||'<div class="empty">AI가 현지 점원 역할을 합니다. 먼저 말을 걸어보세요.</div>')+'</div>'+
   '<textarea class="xta" id="jpChatIn" placeholder="예: 今日のおすすめは何ですか。"></textarea><div class="xactions"><button class="xaction sub" onclick="jpSimMic()">🎙 말하기</button><button class="xaction" onclick="jpSimSend()">보내기</button></div></div>'+
-  '<div class="xcard"><h3><span class="tag">MENU VISION</span>메뉴판 사진 번역</h3><div class="xsmall">세로쓰기·필기 메뉴를 요리별로 정리하고, 읽는 법과 F&B 관점 설명을 붙입니다.</div>'+
-  '<input type="file" id="jpMenuFile" accept="image/*" capture="environment" style="display:none" onchange="jpMenuPhoto(this)"><div class="xactions"><button class="xaction" onclick="jpMenuFile.click()">📷 메뉴판 찍기·선택</button></div><div id="jpMenuOut"></div></div>'+
-  '<div class="xcard"><h3><span class="tag">TRANSLATE</span>한↔일 빠른 통역</h3><select class="xselect" id="jpDir"><option value="koja">한국어 → 일본어</option><option value="jako">일본어 → 한국어</option></select>'+
-  '<textarea class="xta" id="jpTrIn" style="margin-top:8px" placeholder="번역할 문장"></textarea><div class="xactions"><button class="xaction sub" onclick="jpVoiceTranslate()">🎙 음성</button><button class="xaction" onclick="jpTranslate()">번역</button></div><div id="jpTrOut"></div></div>';
+
+  '<div class="xsmall" style="margin-top:12px">통역은 <b style="color:var(--text)">지금 여행</b> 탭 맨 위에 있습니다. 말하기·사진·글 전부 거기서 됩니다.</div>';
  setTimeout(()=>{const el=document.getElementById('jpChat');if(el)el.scrollTop=el.scrollHeight;},0);
 }
 async function jpSimSend(){
@@ -2218,9 +2229,147 @@ async function jpSimSend(){
   const t=await callGemini([{text:prompt}]);jpChat.push({r:'ai',t:String(t).trim()});save('jp_chat_v1',jpChat);
  }catch(e){if(e)jpChat.push({r:'ai',t:'호출 실패: '+(e.message||e)});}renderJapanese();
 }
-function jpRecognition(lang,cb){const R=window.SpeechRecognition||window.webkitSpeechRecognition;if(!R){alert('이 브라우저는 음성 인식을 지원하지 않습니다. 크롬 또는 사파리에서 사용해 주세요.');return;}
- const r=new R();r.lang=lang;r.interimResults=false;r.maxAlternatives=1;r.onresult=e=>cb(e.results[0][0].transcript);r.onerror=e=>alert('음성 인식 실패: '+e.error);r.start();}
-function jpSimMic(){jpRecognition('ja-JP',t=>{const el=document.getElementById('jpChatIn');if(el){el.value=t;jpSimSend();}});}
+function jpRecognition(lang,cb,onfail){const R=window.SpeechRecognition||window.webkitSpeechRecognition;
+ if(!R){alert('이 브라우저는 음성 인식을 지원하지 않습니다.\n아이폰은 사파리에서, 안드로이드는 크롬에서 열어 주세요.\n\n대신 ⌨ 글로 쓰기를 쓰시면 됩니다.');if(onfail)onfail();return;}
+ const r=new R();r.lang=lang;r.interimResults=false;r.maxAlternatives=1;
+ r.onresult=function(e){cb(e.results[0][0].transcript);};
+ r.onerror=function(e){
+  alert(e.error==='not-allowed'
+   ? '마이크를 못 씁니다.\n아이폰 설정 → 사파리 → 마이크를 허용해 주세요.'
+   : '못 알아들었습니다. 조용한 곳에서 다시 눌러 보세요. ('+e.error+')');
+  if(onfail)onfail();
+ };
+ r.onend=function(){};
+ try{r.start();}catch(e){if(onfail)onfail();}}
+function jpSimMic(){jpRecognition(JP_TTS_LANG[jpLang()]||'ja-JP',t=>{const el=document.getElementById('jpChatIn');if(el){el.value=t;jpSimSend();}});}
+
+/* ── 통역 ────────────────────────────────────────────────────────────────
+   말·사진·글 셋 다 목적지 말을 따라간다. 결과는 소리내어 읽어 준다. */
+let trBusy=false,trLast=null;
+function trLangCode(){return JP_TTS_LANG[jpLang()]||'ja-JP';}
+function trHTML(){
+ const name=jpLangName();
+ return '<div class="xcard hot" id="trCard"><h3><span class="tag">통역</span>'+esc(name)+' 통역</h3>'+
+  '<div class="xsmall">버튼을 누르고 말하면 번역해서 <b style="color:var(--text)">소리내어 읽어 줍니다.</b> '+
+  '상대에게 폰을 보여줄 필요 없이 스피커로 들려주면 됩니다.</div>'+
+  '<div class="tr-two">'+
+   '<button class="tr-mic" id="trMicKo" onclick="trSpeak2(\'ko\')">🎤 한국어로 말하기<small>→ '+esc(name)+'로 들려줍니다</small></button>'+
+   '<button class="tr-mic alt" id="trMicLo" onclick="trSpeak2(\'lo\')">🎤 '+esc(name)+' 듣기<small>→ 한국어로 보여줍니다</small></button>'+
+  '</div>'+
+  '<div class="xactions" style="margin-top:10px">'+
+   '<button class="xaction" onclick="document.getElementById(\'trMenuFile\').click()">📷 메뉴판·간판 찍기</button>'+
+   '<button class="xaction sub" onclick="trToggleType()">⌨ 글로 쓰기</button></div>'+
+  '<input type="file" id="trMenuFile" accept="image/*" capture="environment" style="display:none" onchange="trPhoto(this)">'+
+  '<div id="trTypeBox" style="display:none;margin-top:10px">'+
+   '<textarea class="xta" id="trIn" placeholder="번역할 말을 적으세요 (한국어도 '+esc(name)+'도 됩니다)"></textarea>'+
+   '<div class="xactions"><button class="xaction" onclick="trText()">번역</button></div></div>'+
+  '<div id="trOut"></div></div>';
+}
+function trToggleType(){const el=document.getElementById('trTypeBox');if(el)el.style.display=el.style.display==='none'?'block':'none';}
+function trSet(html){const el=document.getElementById('trOut');if(el)el.innerHTML=html;}
+function trBusyOn(m){trBusy=true;trSet('<div class="tr-busy">'+esc(m)+'</div>');}
+/* 결과를 그리고, 목적지 말 쪽은 바로 읽어 준다. */
+function trShow(o,speakIt){
+ trLast=o;
+ trSet('<div class="tr-out">'+
+  (o.src?'<div class="tr-src">'+esc(o.src)+'</div>':'')+
+  '<div class="tr-big">'+esc(o.out)+'</div>'+
+  (o.read?'<div class="tr-read">'+esc(o.read)+'</div>':'')+
+  (o.note?'<div class="tr-note">'+esc(o.note)+'</div>':'')+
+  '<div class="xactions" style="margin-top:10px">'+
+   (o.speakable?'<button class="xaction sub" onclick="trReplay()">🔊 다시 들려주기</button>':'')+
+   '<button class="xaction sub" onclick="trCopy()">복사</button></div>'+
+  '</div>');
+ if(speakIt&&o.speakable)jpSpeakText(o.out);
+}
+function trReplay(){if(trLast&&trLast.speakable)jpSpeakText(trLast.out);}
+function trCopy(){
+ if(!trLast)return;
+ const t=trLast.out+(trLast.read?('\n'+trLast.read):'');
+ if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t);
+ alert('복사했습니다.');
+}
+/* 한 번의 번역. dir: 'ko2lo' 면 목적지 말로, 'lo2ko' 면 한국어로. */
+async function trRun(text,dir){
+ const name=jpLangName(),q=String(text||'').trim();
+ if(!q)return;
+ if(!ai.key){alert('통역은 AI를 켜야 씁니다.\n설정(⚙)에서 무료 키를 넣어 주세요.');return;}
+ trBusyOn('번역 중…');
+ try{
+  const toLocal=(dir==='ko2lo');
+  const prompt=toLocal
+   ? ('다음 한국어를 '+name+'로 옮겨라. 여행지는 '+affDest()+'.\n'+
+      '- 사전식 직역 말고 **현지에서 실제로 쓰는 말**로. 처음 만난 사람에게 쓰는 일상 존댓말\n'+
+      '- 말하는 사람은 한국인 '+jpSpeakerTxt()+' 여행자\n'+
+      '- out: '+name+' 문장 / read: 한글로 적은 발음(로마자 금지) / note: 알아둘 점이 있을 때만 한 줄, 없으면 빈 문자열\n\n'+q)
+   : ('다음 '+name+' 말을 한국어로 옮겨라. 여행지는 '+affDest()+'.\n'+
+      '- out: 한국어 뜻 / read: 빈 문자열 / note: 사투리·속뜻·주의할 점이 있을 때만 한 줄\n'+
+      '- 메뉴 이름이면 **그게 어떤 음식인지** 한 줄로 알려줘라\n\n'+q);
+  const cfg={responseMimeType:'application/json',responseSchema:{type:'OBJECT',properties:{
+   out:{type:'STRING'},read:{type:'STRING'},note:{type:'STRING'}},required:['out']}};
+  const t=await callGemini([{text:prompt}],cfg);
+  const j=JSON.parse(String(t).replace(/```json|```/g,'').trim());
+  trShow({src:q,out:String(j.out||'').trim(),read:String(j.read||'').trim(),note:String(j.note||'').trim(),speakable:toLocal},toLocal);
+ }catch(e){if(e)trSet('<div class="tr-out"><div class="tr-note">번역 실패: '+esc(e.message||e)+'</div></div>');}
+ finally{trBusy=false;}
+}
+/* 버튼 하나로 듣고→번역하고→읽어 준다 */
+function trSpeak2(which){
+ if(trBusy)return;
+ const koSide=(which==='ko');
+ const btn=document.getElementById(koSide?'trMicKo':'trMicLo');
+ if(btn)btn.classList.add('rec');
+ trBusyOn('듣는 중… 말씀하세요');
+ jpRecognition(koSide?'ko-KR':trLangCode(),function(t){
+  if(btn)btn.classList.remove('rec');
+  trRun(t,koSide?'ko2lo':'lo2ko');
+ },function(){
+  if(btn)btn.classList.remove('rec');
+  trBusy=false;trSet('');
+ });
+}
+/* 글로 쓴 것은 어느 쪽 말인지 글자로 판단한다 */
+function trText(){
+ const el=document.getElementById('trIn'),q=el&&el.value.trim();if(!q)return;
+ trRun(q,/[가-힣]/.test(q)?'ko2lo':'lo2ko');
+}
+/* 사진 — 파파고는 글자를 옮긴다. 우리는 그게 뭔지도 적는다. */
+async function trPhoto(inp){
+ const f=inp.files&&inp.files[0];inp.value='';if(!f)return;
+ if(!ai.key){alert('사진 번역은 AI를 켜야 씁니다.\n설정(⚙)에서 무료 키를 넣어 주세요.');return;}
+ trBusyOn('사진 읽는 중… 메뉴가 길면 조금 걸립니다');
+ try{
+  const b64=await new Promise(function(res,rej){const r=new FileReader();
+   r.onload=function(){res(String(r.result).split(',')[1]);};r.onerror=function(){rej(new Error('사진을 읽지 못했습니다'));};r.readAsDataURL(f);});
+  const name=jpLangName();
+  const prompt='이 사진은 '+affDest()+'의 메뉴판이나 간판이다. 적힌 '+name+'를 빠짐없이 읽어라.\n\n'+
+   '항목마다 이렇게 정리해라.\n'+
+   '- ko: 한국어 이름 (사람이 알아듣는 말로)\n'+
+   '- src: 원문 그대로\n'+
+   '- read: 한글로 적은 발음 (로마자 금지)\n'+
+   '- price: 가격이 적혀 있으면 그대로, 없으면 빈 문자열\n'+
+   '- what: **이게 어떤 음식·물건인지 한 줄.** 이름만 옮기지 마라. '+
+     '재료·조리법·맵기·날것 여부처럼 시켜야 할지 판단이 되는 정보를 적어라\n\n'+
+   '글자가 흐리면 추측하지 말고 ko 에 "(글자 흐림)" 이라고 적어라. 20개까지.';
+  const cfg={responseMimeType:'application/json',responseSchema:{type:'OBJECT',properties:{items:{type:'ARRAY',items:{
+   type:'OBJECT',properties:{ko:{type:'STRING'},src:{type:'STRING'},read:{type:'STRING'},price:{type:'STRING'},what:{type:'STRING'}},
+   required:['ko','src']}}},required:['items']}};
+  const t=await callGemini([{text:prompt},{inline_data:{mime_type:f.type||'image/jpeg',data:b64}}],cfg);
+  const j=JSON.parse(String(t).replace(/```json|```/g,'').trim());
+  const items=(j.items||[]).slice(0,20);
+  if(!items.length){trSet('<div class="tr-out"><div class="tr-note">글자를 찾지 못했습니다. 더 밝은 곳에서 가까이 찍어 보세요.</div></div>');return;}
+  trLast={out:items.map(function(x){return x.ko+(x.price?(' '+x.price):'');}).join('\n'),read:'',speakable:false};
+  trSet('<div class="tr-out"><div class="tr-src">사진에서 '+items.length+'개를 읽었습니다</div>'+
+   items.map(function(x){
+    return '<div style="padding:11px 0;border-top:1px solid var(--line)">'+
+     '<div class="tr-big" style="font-size:17px">'+esc(x.ko||'')+(x.price?' <span style="font-size:14px;color:var(--muted)">'+esc(x.price)+'</span>':'')+'</div>'+
+     '<div class="tr-src" style="margin:4px 0 0">'+esc(x.src||'')+(x.read?(' · '+esc(x.read)):'')+'</div>'+
+     (x.what?'<div class="tr-note" style="margin-top:4px">'+esc(x.what)+'</div>':'')+
+     '</div>';}).join('')+
+   '<div class="xactions" style="margin-top:10px"><button class="xaction sub" onclick="trCopy()">전체 복사</button></div></div>');
+ }catch(e){if(e)trSet('<div class="tr-out"><div class="tr-note">사진 번역 실패: '+esc(e.message||e)+'</div></div>');}
+ finally{trBusy=false;}
+}
 async function jpMenuPhoto(inp){const f=inp.files&&inp.files[0];inp.value='';if(!f)return;const out=document.getElementById('jpMenuOut');out.innerHTML='<div class="tool-result">분석 중…</div>';
  try{const b64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=()=>rej(new Error('읽기 실패'));r.readAsDataURL(f);});
   const p='이 일본어 메뉴판을 빠짐없이 읽어 다음 형식으로 한국어로 정리해: [원문 / 히라가나 읽기 / 한국어 뜻 / 가격]. 생선·조리법·부위·숙성·아부리 등은 F&B 실무자 관점 설명도 한 줄 추가해. 불확실한 글자는 추정이라고 표시해.';
@@ -4358,7 +4507,7 @@ renderFoodMap=function(){
  pRoot.innerHTML='<details class="xcard"><summary style="font-size:13px;font-weight:800;cursor:pointer">거리 기준 · '+esc(foodMap.originMode==='hotel'?(hotel.name||'호텔 미설정'):(fmGpsPoint()?'실시간 GPS 연결됨':origin?'현재 위치 저장됨':'현재 위치 미설정'))+'</summary><div class="fm-origin"><select class="xselect" onchange="fmSetOriginMode(this.value)">'+fm2Opts([['current','현재 위치 기준'],['hotel','호텔 기준']],foodMap.originMode)+'</select><button class="xaction" onclick="fmUseCurrent()">현재 위치 가져오기</button>'+fmField('숙소 이름','<input class="xinput" id="fmHotelName" value="'+esc(hotel.name||'')+'" placeholder="나중에 넣어도 됩니다">','',1)+fmField('숙소 주소','<input class="xinput" id="fmHotelAddress" value="'+esc(hotel.address||'')+'" placeholder="주소">','',1)+fmField('숙소 구글 지도 링크','<input class="xinput" id="fmHotelUrl" value="'+esc(hotel.url||'')+'" placeholder="공유 → 링크 복사해서 붙여넣기">','',1)+fmField('위도','<input class="xinput" id="fmHotelLat" type="number" step="any" value="'+esc(hotel.lat??'')+'">','링크를 넣으면 대개 자동으로 채워집니다')+fmField('경도','<input class="xinput" id="fmHotelLng" type="number" step="any" value="'+esc(hotel.lng??'')+'">','거리 계산에 쓰는 값입니다')+'<button class="xaction wide" onclick="fmSaveHotel()">호텔 기준 저장</button><button class="xaction wide sub" onclick="fmSetHotelFromSpot()">선택한 장소를 숙소로 지정</button></div></details>'+
   plHTML()+csHTML()+bgHTML()+fxHTML()+affHTML();
  /* 지금 여행 — 현장에서 다음 행동을 정하는 곳 */
- nRoot.innerHTML='<div id="fmGpsPanel">'+fmGpsPanelHTML()+'</div>'+
+ nRoot.innerHTML=trHTML()+'<div id="fmGpsPanel">'+fmGpsPanelHTML()+'</div>'+
   asHTML()+wxHTML()+lvHTML()+
    '<div class="xcard"><h3><span class="tag">SMART</span>오늘의 자동 선택</h3><div class="xsmall">현재 위치/호텔, 영업상태, 우선순위, 평점, 방문 여부를 함께 봅니다.</div><div class="fm-quick"><button onclick="fmDecision(\'now\')">⚡ 지금 어디 가지?</button><button onclick="fmDecision(\'crawl\')">🍶 술집 3차 코스</button><button onclick="fmDecision(\'balanced\')">🧭 균형 코스</button><button onclick="fmDecision(\'rain\')">☔ 비 오는 날</button><button onclick="fmDecision(\'region\')">📍 한 지역 공략</button><button onclick="fmDecision(\'spare\')">⏱ 빈 시간 코스</button></div><select class="xselect" style="margin-top:8px" onchange="fmSetSpare(this.value)">'+fm2Opts([[30,'빈 시간 30분'],[60,'빈 시간 60분'],[90,'빈 시간 90분'],[120,'빈 시간 120분']],+foodMap.spare)+'</select></div>'+
   fm2DecisionHTML()+
