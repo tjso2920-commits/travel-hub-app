@@ -1017,7 +1017,7 @@ function showLanding(){
    <button class="landing-card" onclick="landingOpen('collect')"><b>담기</b><span>저장 장소 ${Array.isArray(fm.places)?fm.places.length:0}개 · 인박스·가져오기</span></button>
    <button class="landing-card" onclick="landingOpen('plan')"><b>일정 짜기</b><span>일정 배분 · 오늘 동선 · 예산</span></button>
    <button class="landing-card" onclick="landingOpen('now')"><b>지금 여행</b><span>어시스턴트 · 추천 · 현장 기록</span></button>
-   <button class="landing-card" onclick="landingOpen('jp')"><b>일본어공부</b><span>진도 ${Math.min(jpLimit(),+js.pointer||0)}/${jpLimit()} · 오늘 ${jpToday}팩 완료</span></button>
+   <button class="landing-card" onclick="landingOpen('jp')"><b>${jpLangName()} 공부</b><span>진도 ${Math.min(jpLimit(),+js.pointer||0)}/${jpLimit()} · 오늘 ${jpToday}팩 완료</span></button>
   </div><div class="g-btns"><button class="g-btn r" onclick="landingOpen(landingReturnTab)">방금 보던 화면으로</button></div></div>`;
  g.style.display='block';document.getElementById('app').style.display='none';
 }
@@ -1532,7 +1532,7 @@ if('speechSynthesis'in window&&speechSynthesis.addEventListener)speechSynthesis.
 function renderJapanese(){
  const root=document.getElementById('jpRoot');if(!root)return;
  /* 탭 이름이 목적지 말을 따라간다. 태국 가는 사람에게 '일본어' 탭은 쓸모가 없다. */
- const tb=document.getElementById('tabJp');if(tb)tb.textContent=jpLangName();
+ jpSyncTabName();
  if(!jpHasPack()){
   root.innerHTML='<div class="xhero"><div class="xhero-top"><div><div class="xeyebrow">'+esc(affDest())+' · LOCAL PHRASES</div>'+
    '<div class="xtitle">'+esc(jpLangName())+'</div></div></div>'+
@@ -1985,6 +1985,12 @@ function jpSpeakText(t,onend){const s=String(t||'').trim();if(!s)return;jpCancel
  if(jpVoiceCfg().mode==='gemini'&&ai.key){jpSpeakNatural(s,token,onend);return;}if(jpVoiceCfg().mode==='gemini'&&!ai.key){const n=document.getElementById('jpVoiceName');if(n)n.textContent='Gemini 키 없음 · 추천 기기 음성으로 재생 중';}jpSpeakDevice(s,token,onend);}
 function jpSpeakLine(id){const v=jpFindLine(id);if(v)jpSpeakText(v.j);}function jpSpeakGrammar(p){const g=JP_GRAMMAR[p];if(g)jpSpeakText(g.e);}
 function jpSpeakChain(w,t,i){const c=JP_CHAINS[w];if(!c)return;const v=t==='q'?c.q:t==='next'?c.next:c.a[i];if(v)jpSpeakText(v.j);}
+/* 후리가나와 한글소리 변환은 가나 전용이다. 프랑스어에 걸면 글자가 깨진다.
+   일본어가 아니면 원문을 그대로 쓰고, 읽는 법은 AI가 준 것을 쓴다. */
+function jpTextHTML(j,k){return jpIsJa()?jpRuby(j,k):esc(j);}
+function jpSoundTxt(k){return jpIsJa()?jpKoSound(k):(k||'');}
+/* 탭 이름을 목적지 말로 맞춘다. 공부 탭을 한 번도 안 열어도 맞아야 한다. */
+function jpSyncTabName(){const tb=document.getElementById('tabJp');if(tb)tb.textContent=jpLangName();}
 function jpLineHTML(x,compact){
  /* 후리가나와 한글 발음 변환은 일본어 전용이다. 다른 말은 AI가 준 읽는 법을 그대로 쓴다. */
  if(!jpIsJa())return '<div class="jline '+(compact?'compact':'')+'"><div class="jp">'+esc(x.v.j)+'</div>'+
@@ -2247,7 +2253,7 @@ function jpReviewPane(pane){
  if(!jpReviewQueue.length){pane.innerHTML='<div class="xcard"><h3><span class="tag">SRS</span>오늘 복습 완료</h3><div class="empty">밀린 카드가 없습니다. 새 세션을 진행해도 좋아요.</div></div>';return;}
  const id=jpReviewQueue[0],v=jpFindLine(id);if(!v){jpReviewQueue.shift();jpReviewPane(pane);return;}
  pane.innerHTML='<div class="xcard"><h3><span class="tag">SRS '+(jpDue().length-jpReviewQueue.length+1)+' / '+jpDue().length+'</span>뜻을 떠올려 보세요</h3>'+
-  '<div class="reviewq"><div class="jp jp-rubyline">'+(jpReviewOpen?jpRuby(v.j,v.k):esc(v.j))+'</div>'+(jpReviewOpen?'<div class="answer"><div class="kana">'+esc(v.k)+'</div><div class="sound">'+esc(jpKoSound(v.k))+'</div><div class="ko">'+esc(v.m)+'</div><button class="jp-listen" onclick="jpSpeakLine(\''+id+'\')">🔊 듣기</button></div>':'')+'</div>'+
+  '<div class="reviewq"><div class="jp jp-rubyline">'+(jpReviewOpen?jpTextHTML(v.j,v.k):esc(v.j))+'</div>'+(jpReviewOpen?'<div class="answer">'+(jpIsJa()?'<div class="kana">'+esc(v.k)+'</div>':'')+'<div class="sound">'+esc(jpSoundTxt(v.k))+'</div><div class="ko">'+esc(v.m)+'</div><button class="jp-listen" onclick="jpSpeakLine(\''+id+'\')">🔊 듣기</button></div>':'')+'</div>'+
   (jpReviewOpen?'<div class="xactions"><button class="xaction ember" onclick="jpRate(\''+id+'\',0)">다시</button><button class="xaction" onclick="jpRate(\''+id+'\',1)">알아요</button></div>':
   '<div class="xactions"><button class="xaction" onclick="jpReviewOpen=true;renderJapanese()">정답 보기</button></div>')+'</div>';
 }
@@ -2257,7 +2263,7 @@ function jpRate(id,ok){const x=jpState.srs[id]||{box:0,due:TODAY,seen:0};x.seen=
 function jpAudioPane(pane){
  const cur=jpSession(Math.min(89,jpState.pointer||0)).lines,seen=new Set(),arr=[];
  [...jpDue().map(id=>({id:id,v:jpFindLine(id)})),...cur].forEach(x=>{if(x.v&&!seen.has(x.id)){seen.add(x.id);arr.push(x);}});
- pane.innerHTML='<div class="xcard"><h3><span class="tag">HANDS FREE</span>운동·주방 오디오</h3><div class="xsmall">복습 문장부터 오늘 표현까지 일본어로 두 번씩 읽습니다. 위에서 자연음성 또는 기기 고품질 음성을 선택할 수 있습니다.</div>'+
+ pane.innerHTML='<div class="xcard"><h3><span class="tag">HANDS FREE</span>운동·주방 오디오</h3><div class="xsmall">복습 문장부터 오늘 표현까지 '+esc(jpLangName())+'로 두 번씩 읽습니다. 위에서 자연음성 또는 기기 고품질 음성을 선택할 수 있습니다.</div>'+
   '<div class="audio-now" id="jpAudioNow">'+(jpAudioStop?'재생을 누르면 시작합니다':'재생 중…')+'</div><div class="xactions"><button class="xaction" onclick="jpStartAudio()">▶ 처음부터 재생</button>'+
   '<button class="xaction sub" onclick="jpStopAudio()">■ 정지</button></div><div class="xsmall" style="margin-top:10px">재생 목록 '+arr.length+'개 · 화면을 잠그면 기기에 따라 음성이 멈출 수 있습니다.</div></div>';
  jpAudio=arr;
@@ -2268,8 +2274,10 @@ function jpSpeakNext(){if(jpAudioStop||jpAudioAt>=jpAudio.length){jpStopAudio();
 function jpStopAudio(){jpAudioStop=true;jpCancelSpeech();const el=document.getElementById('jpAudioNow');if(el)el.textContent='재생이 정지되었습니다.';}
 function jpInfoPane(pane){
  const s=jpSession(Math.min(89,jpState.pointer||0)),w=LW()[s.w],pos=jpState.read[String(s.w)]||0;if(!w){pane.innerHTML='';return;}
- let body='<p><span class="speaker">상황</span><br>후쿠오카의 작은 가게 카운터에서 사장님과 손님이 이번 주 표현으로 대화를 이어갑니다.<span class="trans">손님 응대로 끊겨도 이 위치가 자동 저장됩니다.</span></p>';
- w.l.forEach((v,i)=>{body+='<p><span class="speaker">'+(i%2?'店主':'학습자')+'</span> <span class="jp-rubyline">'+jpRuby(v.j,v.k)+'</span><span class="trans">'+esc(v.k)+'<br><span class="sound">'+esc(jpKoSound(v.k))+'</span><br>'+esc(v.m)+'</span></p>';});
+ /* 화자 이름도 그 나라 말로. 프랑스 가는 사람 화면에 '店主' 가 뜨면 안 된다. */
+ const who=jpIsJa()?['학습자','店主']:['나','점원'];
+ let body='<p><span class="speaker">상황</span><br>'+esc(affDest())+'의 작은 가게 카운터에서 사장님과 손님이 이번 주 표현으로 대화를 이어갑니다.<span class="trans">손님 응대로 끊겨도 이 위치가 자동 저장됩니다.</span></p>';
+ w.l.forEach((v,i)=>{body+='<p><span class="speaker">'+esc(who[i%2])+'</span> <span class="jp-rubyline">'+jpTextHTML(v.j,v.k)+'</span><span class="trans">'+(jpIsJa()?esc(v.k)+'<br>':'')+'<span class="sound">'+esc(jpSoundTxt(v.k))+'</span><br>'+esc(v.m)+'</span></p>';});
  pane.innerHTML='<div class="xcard"><h3><span class="tag">INFO MODE</span>W'+(s.w+1)+' 이어읽기</h3><div class="reading" id="jpReading" onscroll="jpSaveScroll(this,'+s.w+')">'+body+'</div>'+
   '<div class="xsmall" style="margin-top:9px">스크롤 위치 자동 저장 · 듣기/말하기 없음</div></div>';
  setTimeout(()=>{const el=document.getElementById('jpReading');if(el)el.scrollTop=pos;},0);
@@ -2287,8 +2295,8 @@ function jpBedPane(pane){
 function jpBedDone(){jpState.bed[TODAY]=true;save('jp_state_v1',jpState);alert('오늘 정리 완료. 푹 자세요.');}
 function jpToolsPane(pane){
  const chat=(jpChat||[]).slice(-10).map(x=>'<div class="bubble '+(x.r==='user'?'me':'ai')+'">'+esc(x.t)+'</div>').join('');
- pane.innerHTML='<div class="xcard hot"><h3><span class="tag">SIMULATION</span>이자카야 프리토킹</h3><div class="chatbox" id="jpChat">'+(chat||'<div class="empty">AI가 현지 점원 역할을 합니다. 먼저 말을 걸어보세요.</div>')+'</div>'+
-  '<textarea class="xta" id="jpChatIn" placeholder="예: 今日のおすすめは何ですか。"></textarea><div class="xactions"><button class="xaction sub" onclick="jpSimMic()">🎙 말하기</button><button class="xaction" onclick="jpSimSend()">보내기</button></div></div>'+
+ pane.innerHTML='<div class="xcard hot"><h3><span class="tag">SIMULATION</span>'+esc(jpIsJa()?'이자카야 프리토킹':(affDest()+' 가게 프리토킹'))+'</h3><div class="chatbox" id="jpChat">'+(chat||'<div class="empty">AI가 현지 점원 역할을 합니다. 먼저 말을 걸어보세요.</div>')+'</div>'+
+  '<textarea class="xta" id="jpChatIn" placeholder="'+esc(jpIsJa()?'예: 今日のおすすめは何ですか。':('오늘 배운 '+jpLangName()+' 문장을 그대로 쳐 보세요'))+'"></textarea><div class="xactions"><button class="xaction sub" onclick="jpSimMic()">🎙 말하기</button><button class="xaction" onclick="jpSimSend()">보내기</button></div></div>'+
 
   '<div class="xsmall" style="margin-top:12px">통역은 <b style="color:var(--text)">지금 여행</b> 탭 맨 위에 있습니다. 말하기·사진·글 전부 거기서 됩니다.</div>';
  setTimeout(()=>{const el=document.getElementById('jpChat');if(el)el.scrollTop=el.scrollHeight;},0);
@@ -2296,7 +2304,10 @@ function jpToolsPane(pane){
 async function jpSimSend(){
  const el=document.getElementById('jpChatIn'),q=el&&el.value.trim();if(!q)return;jpChat.push({r:'user',t:q});save('jp_chat_v1',jpChat);renderJapanese();
  try{const hist=jpChat.slice(-8).map(x=>(x.r==='user'?'사용자: ':'점원: ')+x.t).join('\n');
-  const prompt='후쿠오카 이자카야의 친근한 일본인 점원 역할을 해. 사용자는 일본어 회화를 연습하며 음식과 술에 관심이 많은 한국인 여행자다. 한 번에 일본어 1~3문장으로 자연스럽게 답하고, 가끔 품절·추천·되묻기 같은 예상 밖 변수를 줘. 사용자 일본어가 부자연스러우면 답변 뒤에 짧게 [교정] 자연스러운 표현과 한국어 이유를 적어. 대화:\n'+hist;
+  const L=jpLangName(),D=affDest();
+  const prompt=D+'의 친근한 현지 가게 점원 역할을 해. 사용자는 '+L+' 회화를 연습하는 한국인 여행자다. '+
+   '한 번에 '+L+' 1~3문장으로 자연스럽게 답하고, 가끔 품절·추천·되묻기 같은 예상 밖 변수를 줘. '+
+   '사용자 '+L+'가 부자연스러우면 답변 뒤에 짧게 [교정] 자연스러운 표현과 한국어 이유를 적어. 대화:\n'+hist;
   const t=await callGemini([{text:prompt}]);jpChat.push({r:'ai',t:String(t).trim()});save('jp_chat_v1',jpChat);
  }catch(e){if(e)jpChat.push({r:'ai',t:'호출 실패: '+(e.message||e)});}renderJapanese();
 }
@@ -4826,7 +4837,7 @@ function fmDecision(mode){let a=fm2Candidates(),title='',sub='';if(!a.length){al
  if(mode==='region'){const g={};a.forEach(p=>{const k=p.region||'기타 지역';if(!g[k])g[k]={n:0,s:0,a:[]};g[k].n++;g[k].s+=fm2Score(p);g[k].a.push(p);});const k=Object.keys(g).sort((x,y)=>(g[y].s/g[y].n)-(g[x].s/g[x].n))[0];a=(g[k]&&g[k].a||[]).slice(0,4);title=k+' 집중 공략';sub='한 지역에서 우선순위가 높은 장소를 묶었습니다.';}
  foodMap.decision={title:title,sub:sub,ids:a.map(p=>p.id)};save('foodmap_v1',foodMap);renderFoodMap();}
 function fmClearDecision(){foodMap.decision=null;save('foodmap_v1',foodMap);renderFoodMap();}
-renderFoodMap=function(){
+renderFoodMap=function(){jpSyncTabName();
  renderLicBar();
  const cRoot=document.getElementById('fmCollect'),pRoot=document.getElementById('fmPlan'),nRoot=document.getElementById('fmNow');
  if(!cRoot||!pRoot||!nRoot)return;
@@ -4846,7 +4857,7 @@ renderFoodMap=function(){
    : fmGuideHTML())+ibHTML()+
    '<div'+(total?'':' style="display:none"')+'>'+
    '<div class="fm-toolbar"><input class="xinput" id="fmSearch" value="'+esc(foodMap.q||'')+'" placeholder="검색하거나 링크를 붙여넣으세요" oninput="fmOneInput(this.value)"><button class="btn" onclick="fmOneGo()">담기</button><button class="btn" onclick="fmToggleAdd()">＋</button></div>'+
-   '<div class="xsmall" id="fmOneHint" style="margin:-4px 0 8px 2px;color:var(--wasabi)"></div><div class="fm-cats">'+FM_CATS.map(x=>'<button class="'+((foodMap.filter||'전체')===x?'on':'')+'" onclick="fmSetFilter(\''+x+'\')">'+x+'</button>').join('')+'</div>'+
+   '<div class="xsmall" id="fmOneHint" style="margin:-4px 0 8px 2px;color:var(--wasabi)"></div><div class="fm-cats">'+FM_CATS.map(x=>'<button class="'+((foodMap.filter||'전체')===x?'on':'')+'" onclick="fmSetFilter(\''+x+'\')">'+esc(fmCatLabel(x))+'</button>').join('')+'</div>'+
    '<div class="fm-filter-grid"><select class="xselect" onchange="fmSetRegion(this.value)">'+fm2Opts(FM_REGIONS_NOW(),foodMap.region)+'</select><select class="xselect" onchange="fmSetKind(this.value)">'+fm2Opts(FM_KINDS_NOW(),foodMap.kind)+'</select><select class="xselect" onchange="fmSetStatus(this.value)">'+fm2Opts(FM_STATUS,foodMap.status)+'</select><select class="xselect" onchange="fmSetSort(this.value)">'+fm2Opts(FM_SORTS,foodMap.sort)+'</select></div>'+
    '<div id="fmAddBox" style="display:none" class="xcard"><h3><span class="tag">NEW</span>장소 직접 추가</h3><div class="fm-grid"><input class="xinput wide" id="fmName" placeholder="장소 이름"><select class="xselect" id="fmCat">'+opts+'</select><select class="xselect" id="fmRegion">'+fm2Opts(FM_REGIONS_NOW().slice(1),'기타 지역')+'</select><input class="xinput wide" id="fmUrl" placeholder="구글맵 공유 URL"><input class="xinput" id="fmLat" type="number" step="any" placeholder="위도 (선택)"><input class="xinput" id="fmLng" type="number" step="any" placeholder="경도 (선택)"><textarea class="xta wide" id="fmNote" placeholder="먹을 메뉴·메모"></textarea></div><div class="xactions"><button class="xaction" onclick="fmAdd()">저장</button></div></div>'+
   '</div>'+
