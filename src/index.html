@@ -2251,7 +2251,8 @@ function trHTML(){
  const name=jpLangName();
  return '<div class="xcard hot" id="trCard"><h3><span class="tag">통역</span>'+esc(name)+' 통역</h3>'+
   '<div class="xsmall">버튼을 누르고 말하면 번역해서 <b style="color:var(--text)">소리내어 읽어 줍니다.</b> '+
-  '상대에게 폰을 보여줄 필요 없이 스피커로 들려주면 됩니다.</div>'+
+  '상대에게 폰을 보여줄 필요 없이 스피커로 들려주면 됩니다.<br>'+
+  '<b style="color:var(--text)">인터넷이 있어야 합니다.</b> 데이터가 끊기면 미리 받아 둔 회화팩을 쓰세요.</div>'+
   '<div class="tr-two">'+
    '<button class="tr-mic" id="trMicKo" onclick="trSpeak2(\'ko\')">🎤 한국어로 말하기<small>→ '+esc(name)+'로 들려줍니다</small></button>'+
    '<button class="tr-mic alt" id="trMicLo" onclick="trSpeak2(\'lo\')">🎤 '+esc(name)+' 듣기<small>→ 한국어로 보여줍니다</small></button>'+

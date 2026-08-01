@@ -33,6 +33,7 @@ t('말하기 버튼 둘', !!d.getElementById('trMicKo') && !!d.getElementById('t
 t('사진 버튼', now.textContent.includes('메뉴판·간판 찍기'));
 t('글로 쓰기', now.textContent.includes('글로 쓰기'));
 t('소리내어 읽어준다고 안내', now.textContent.includes('소리내어 읽어 줍니다'));
+t('인터넷이 필요하다고 밝힘', now.textContent.includes('인터넷이 있어야 합니다'));
 
 /* ── 목적지 말을 따라가는가 ─────────────────────────────────────────── */
 t('일본이면 일본어 통역', d.getElementById('trCard').textContent.includes('일본어 통역'));
