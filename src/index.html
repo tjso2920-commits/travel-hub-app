@@ -1521,7 +1521,10 @@ function jpSession(n){
  n=Math.max(0,Math.min(jpLimit()-1,n));
  const w=jpWeekSafe(jpWeekFor(n)),d=n%7,a=LW(),out=[];
  if(!a.length)return{w:0,d:d,lines:[]};
- const src=a[w].l;
+ /* 주차 안이 비어 있으면 나눗셈이 NaN 이 되고 없는 문장을 읽다 죽는다.
+    만들다 끊긴 팩에서 나올 수 있다 — 빈 화면이 낫지 죽으면 안 된다. */
+ const src=(a[w]&&Array.isArray(a[w].l))?a[w].l:[];
+ if(!src.length)return{w:w,d:d,lines:[]};
  for(let x=0;x<6;x++){const i=(d*2+x)%src.length;out.push({id:jpLineId(w,i),v:src[i]});}
  return{w:w,d:d,lines:out};
 }
@@ -3157,13 +3160,42 @@ function fm2Score(p){let s=fm2Regret(p)+(p.openNow===true?14:(p.openNow===false?
 function fm2Reason(p){const r=[];const d=fm2DistTxt(p);if(d)r.push(d);if(p.openNow===true)r.push('영업 중');if(p.priority)r.push('우선 '+p.priority);if(p.rating)r.push('★ '+p.rating);if(!p.visited)r.push('미방문');return r.join(' · ')||'저장한 후보';}
 /* 권역 판정. 일본이면 기존 좌표 범위를 그대로 쓰고(쌓인 데이터 호환),
    다른 나라면 기준점(숙소·현위치)에서 60km 안인지로 본다. 도시 이름이 주소에 있어도 인정한다. */
+/* 도시 이름은 구글맵 주소에 현지어나 영어로 적힌다.
+   '도쿄'로 찾으면 東京·Tokyo 가 안 걸린다. 같이 봐야 권역 필터가 쓸모가 있다. */
+const FM_CITY_ALT={
+ '후쿠오카':'福岡|fukuoka|hakata|博多','도쿄':'東京|tokyo|shibuya|shinjuku','오사카':'大阪|osaka|namba|umeda',
+ '교토':'京都|kyoto','삿포로':'札幌|sapporo','오키나와':'沖縄|okinawa|naha|那覇','나고야':'名古屋|nagoya',
+ '서울':'서울|seoul','부산':'부산|busan','제주':'제주|jeju',
+ '타이베이':'台北|taipei','타이중':'台中|taichung','가오슝':'高雄|kaohsiung',
+ '홍콩':'香港|hong ?kong|kowloon','상하이':'上海|shanghai','베이징':'北京|beijing',
+ '방콕':'bangkok|กรุงเทพ|krung ?thep','치앙마이':'chiang ?mai|เชียงใหม่',
+ '하노이':'hà ?nội|ha ?noi|hanoi','호치민':'hồ ?chí ?minh|ho ?chi ?minh|saigon|sài ?gòn',
+ '다낭':'đà ?nẵng|da ?nang','후에':'huế|hue',
+ '싱가포르':'singapore','쿠알라룸푸르':'kuala ?lumpur|\\bkl\\b','세부':'cebu','보라카이':'boracay',
+ '발리':'bali|denpasar|ubud|seminyak','뉴욕':'new ?york|manhattan|brooklyn',
+ '파리':'paris','로마':'roma|rome','바르셀로나':'barcelona','런던':'london',
+ '시드니':'sydney','이스탄불':'istanbul|i̇stanbul','두바이':'dubai|دبي'
+};
+function fmCityRe(){
+ const dest=affDest(),alt=FM_CITY_ALT[dest];
+ const parts=[dest.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g,'\\$&')];
+ if(alt)parts.push(alt);
+ try{return new RegExp(parts.join('|'),'i');}catch(e){return null;}
+}
 function fmInArea(p){
- if(fmCountry()==='JP')return fmInFukuoka(p);
+ /* 후쿠오카 좌표 범위는 **목적지가 후쿠오카일 때만** 쓴다.
+    도쿄 가는 사람에게 후쿠오카 범위를 들이대면 담은 곳이 전부 사라진다. */
+ if(fmCountry()==='JP'&&/후쿠오카|하카타|fukuoka/i.test(affDest()))return fmInFukuoka(p);
  const d=String((p.address||'')+' '+(p.note||'')).toLowerCase();
- if(d&&d.indexOf(affDest().toLowerCase())>=0)return true;
+ const re=fmCityRe();
+ if(d&&re&&re.test(d))return true;
  const o=fmOrigin();
  if(o&&fm2HasCoords(o)&&fm2HasCoords(p))return fmGpsDistance(o,p)<=60000;
- return false;
+ /* 잴 근거가 없으면 **빼지 않는다.**
+    "이 권역인지 모르겠다" 와 "이 권역이 아니다" 는 다르다.
+    숙소를 아직 안 넣은 사람이 목록을 가져오면 여기로 온다. 여기서 false 를 주면
+    137곳이 통째로 사라져 빈 화면이 뜬다 — 산 사람은 앱이 고장 난 줄 안다. */
+ return true;
 }
 function fm2InFukuoka(p){if(fmInArea(p))return true;return!fm2HasCoords(p)&&!(p.address||'').trim();}
 function fm2ClusterRadius(){return Math.max(200,Math.min(3000,+foodMap.clusterR||700));}
@@ -3290,7 +3322,16 @@ function fm2RenderOverview(){
    (csPlaces().length?'파란 번호와 선 = <b style="color:var(--text)">오늘 동선</b> 순서 · 빨간 원 = 숙소<br>':'')+
    '지도 © OpenStreetMap 기여자</div>'+
   '<div class="xsmall" style="margin-top:8px">점 하나가 장소 하나입니다. 배경 지도가 아니라 상대 위치 분포도입니다. 실제 지도는 아래 ‘지도 열기’로 봅니다.</div>');}
-fmFiltered=function(){const q=String(foodMap.q||'').toLowerCase().trim(),f=foodMap.filter||'전체',reg=foodMap.region||'전체 지역',kind=foodMap.kind||'전체 음식·술',st=foodMap.status||'기본 상태';
+/* 저장된 값이 깨져도 앱이 죽으면 안 된다. 여행지에서 하얀 화면이 뜨면 손 쓸 방법이 없다.
+   목록이 배열이 아니면 빈 목록으로 되돌리고, 장소가 아닌 것은 걸러 낸다. */
+function fmSafePlaces(){
+ if(!Array.isArray(foodMap.places)){
+  foodMap.places=[];
+  try{save('foodmap_v1',foodMap);}catch(e){}
+ }
+ return foodMap.places;
+}
+fmFiltered=function(){fmSafePlaces();const q=String(foodMap.q||'').toLowerCase().trim(),f=foodMap.filter||'전체',reg=foodMap.region||'전체 지역',kind=foodMap.kind||'전체 음식·술',st=foodMap.status||'기본 상태';
  const clSet=fm2ClusterSet();
  const a=foodMap.places.filter(p=>{fm2Normalize(p);if(clSet&&!clSet.has(p.id))return false;const txt=(p.name+' '+p.note+' '+p.address+' '+p.cat+' '+p.kind+' '+p.region).toLowerCase();if(q&&!txt.includes(q))return false;
   if(st!=='제외한 장소'&&p.excluded)return false;if(f==='후쿠오카권'&&!fm2InFukuoka(p))return false;if(f==='즐겨찾기'&&!p.fav)return false;if(f==='미방문'&&p.visited)return false;if(!['전체','후쿠오카권','즐겨찾기','미방문'].includes(f)&&p.cat!==f)return false;
@@ -4965,7 +5006,7 @@ function fmDecision(mode){let a=fm2Candidates(),title='',sub='';if(!a.length){al
  if(mode==='region'){const g={};a.forEach(p=>{const k=p.region||'기타 지역';if(!g[k])g[k]={n:0,s:0,a:[]};g[k].n++;g[k].s+=fm2Score(p);g[k].a.push(p);});const k=Object.keys(g).sort((x,y)=>(g[y].s/g[y].n)-(g[x].s/g[x].n))[0];a=(g[k]&&g[k].a||[]).slice(0,4);title=k+' 집중 공략';sub='한 지역에서 우선순위가 높은 장소를 묶었습니다.';}
  foodMap.decision={title:title,sub:sub,ids:a.map(p=>p.id)};save('foodmap_v1',foodMap);renderFoodMap();}
 function fmClearDecision(){foodMap.decision=null;save('foodmap_v1',foodMap);renderFoodMap();}
-renderFoodMap=function(){jpSyncTabName();
+renderFoodMap=function(){fmSafePlaces();jpSyncTabName();
  renderLicBar();
  const cRoot=document.getElementById('fmCollect'),pRoot=document.getElementById('fmPlan'),nRoot=document.getElementById('fmNow');
  if(!cRoot||!pRoot||!nRoot)return;
