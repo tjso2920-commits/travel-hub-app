@@ -83,7 +83,7 @@ for (const must of [
   'const SJ_BANK=', 'function sjTags(p)', 'function sjPick(p,limit)',
   'function fmPanel(', 'function fmPanelOpen(k)',
   'function affUrl(k)', 'const AFF_DEFAULT=',
-  'function fmGuideHTML(sfx)', 'function GUIDE_STEPS()', 'function setupShow(mode)', 'function setupFinish()', 'function fmFileToolsHTML()',
+  'function fmGrouped()', 'function fmGrpOrder(keys)', 'function fmGuideHTML(sfx)', 'function GUIDE_STEPS()', 'function setupShow(mode)', 'function setupFinish()', 'function fmFileToolsHTML()',
   'function licParse(code)', 'function licRoom()', 'function renderLicBar()', 'const FREE_LIMIT=',
   'async function jpGenPack()', 'const LANG_THEMES=', 'function jpLangName()', 'function LW()',
   'function trHTML()', 'async function trRun(text,dir,tone)', 'function trLiveType()', 'function trBigOn()', 'function trDictate()', 'function trDictStart(R)', 'async function trPhoto(inp)', 'function trSpeak2(which)',
