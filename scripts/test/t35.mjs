@@ -85,6 +85,40 @@ t('결과에 원문 표시', out.includes('메뉴 주세요'));
 t('결과에 번역 표시', out.includes('ขอเมนูหน่อยครับ'));
 t('결과에 읽는 법 표시', out.includes('커 메누 너이 캅'));
 
+/* ── 사진 읽기 — 손글씨·세로쓰기를 각오한 지시인가 ──────────────────── */
+const ocr = w.eval('trOcrPrompt()');
+t('손글씨를 각오함', ocr.includes('손글씨') && ocr.includes('붓글씨'));
+t('세로쓰기와 읽는 방향', ocr.includes('세로쓰기') && ocr.includes('오른쪽에서 왼쪽'));
+t('지어내지 말라고 못박음', ocr.includes('절대 지어내지 마라'));
+t('확신 여부를 받음', ocr.includes('sure'));
+t('음식이 뭔지도 적게 함', ocr.includes('날것'));
+
+const cfg = w.eval('JSON.stringify(trOcrCfg(false))');
+const cfgHard = w.eval('JSON.stringify(trOcrCfg(true))');
+t('눈 작업은 온도 0', JSON.parse(cfg).temperature === 0);
+t('생각할 시간을 줌', JSON.parse(cfg).thinkingConfig.thinkingBudget > 0);
+t('꼼꼼히 읽기는 더 오래 생각', JSON.parse(cfgHard).thinkingConfig.thinkingBudget > JSON.parse(cfg).thinkingConfig.thinkingBudget);
+t('다시 읽기 모델이 따로 있음', typeof w.eval('TR_MODEL_HARD') === 'string' && w.eval('TR_MODEL_HARD') !== w.eval('ai.model'));
+
+/* 결과 화면 — 흐린 글자 표시와 다시 읽기 버튼 */
+w.eval(`trPhotoB64='x';trPhotoTried=false;trShowMenu([
+  {ko:'모츠나베',src:'もつ鍋',read:'모츠나베',price:'1,650円',what:'곱창전골',sure:true},
+  {ko:'고마사바',src:'ごまさば',read:'고마사바',price:'',what:'생고등어 회',sure:false}
+],false)`);
+const menu = d.getElementById('trOut').textContent;
+t('읽은 개수 표시', menu.includes('2개'));
+t('확실하지 않은 것 개수 표시', menu.includes('확실하지 않은 것 1개'));
+t('흐린 글자 표시', menu.includes('글자 흐림'));
+t('더 꼼꼼히 다시 읽기 버튼', menu.includes('더 꼼꼼히 다시 읽기'));
+t('다시 찍을 필요 없다고 안내', menu.includes('다시 찍지 않아도'));
+t('음식 설명 표시', menu.includes('생고등어 회'));
+
+/* 이미 꼼꼼히 읽었으면 그 버튼은 사라진다 */
+w.eval(`trPhotoTried=true;trShowMenu([{ko:'모츠나베',src:'もつ鍋',sure:true}],true)`);
+const menu2 = d.getElementById('trOut').textContent;
+t('꼼꼼히 읽은 뒤엔 버튼 없음', !menu2.includes('더 꼼꼼히 다시 읽기'));
+t('꼼꼼히 읽었다고 표시', menu2.includes('꼼꼼히 읽기'));
+
 t('최종 런타임 오류 0', errs.length === 0);
 if (errs.length) console.log('  ', errs.slice(0, 3));
 console.log(fail ? ('\n실패 ' + fail + '건') : '\n전체 통과');

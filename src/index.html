@@ -1014,9 +1014,10 @@ async function testAI(){
 }
 /* cfg 는 generationConfig. JSON 스키마 강제·온도 지정에 쓴다.
    옛 모델은 이 필드들을 몰라 400 을 뱉으므로, 그때는 cfg 없이 한 번 더 시도한다. */
-async function callGemini(parts,cfg){
+async function callGemini(parts,cfg,model){
  if(!ai.key){alert('설정(⚙)에서 Gemini API 키를 먼저 저장해줘.\n(aistudio.google.com → Get API key, 무료)');throw 0;}
- const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(ai.model)}:generateContent?key=${encodeURIComponent(ai.key)}`;
+ /* 어려운 눈 작업은 더 좋은 모델을 부를 수 있게 한다. 안 주면 평소 쓰던 것. */
+ const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model||ai.model)}:generateContent?key=${encodeURIComponent(ai.key)}`;
  let last,noCfg=false;
  for(let attempt=0;attempt<3;attempt++){
   try{
@@ -2334,42 +2335,134 @@ function trText(){
  const el=document.getElementById('trIn'),q=el&&el.value.trim();if(!q)return;
  trRun(q,/[가-힣]/.test(q)?'ko2lo':'lo2ko');
 }
-/* 사진 — 파파고는 글자를 옮긴다. 우리는 그게 뭔지도 적는다. */
+/* ── 사진 읽기 ───────────────────────────────────────────────────────────
+   파파고는 글자를 옮긴다. 우리는 그게 뭔지도 적는다.
+   그리고 이자카야 메뉴판은 나무판에 붓으로 세로로 쓴 것이다. 그걸 전제로 읽힌다. */
+const TR_MODEL_HARD='gemini-2.5-pro';   /* 다시 읽기용. 느리지만 눈이 좋다 */
+let trPhotoB64=null,trPhotoMime='image/jpeg',trPhotoTried=false;
+
+/* 폰 사진은 4000px 이다. 그대로 보내면 느리고, 작게 줄이면 붓글씨가 뭉갠다.
+   긴 변 2048 로 맞추고 화질을 높게 잡는다. */
+function trShrink(file){
+ return new Promise(function(res){
+  const fr=new FileReader();
+  fr.onload=function(){
+   const raw=String(fr.result);
+   const img=new Image();
+   img.onload=function(){
+    const MAX=2048,w=img.naturalWidth||img.width,h=img.naturalHeight||img.height;
+    if(!w||!h||Math.max(w,h)<=MAX){res({b64:raw.split(',')[1],mime:file.type||'image/jpeg'});return;}
+    const r=MAX/Math.max(w,h),cw=Math.round(w*r),ch=Math.round(h*r);
+    try{
+     const c=document.createElement('canvas');c.width=cw;c.height=ch;
+     const x=c.getContext('2d');x.imageSmoothingQuality='high';x.drawImage(img,0,0,cw,ch);
+     res({b64:c.toDataURL('image/jpeg',.92).split(',')[1],mime:'image/jpeg'});
+    }catch(e){res({b64:raw.split(',')[1],mime:file.type||'image/jpeg'});}
+   };
+   img.onerror=function(){res({b64:raw.split(',')[1],mime:file.type||'image/jpeg'});};
+   img.src=raw;
+  };
+  fr.onerror=function(){res(null);};
+  fr.readAsDataURL(file);
+ });
+}
+const TR_OCR_SCHEMA={responseMimeType:'application/json',responseSchema:{type:'OBJECT',properties:{items:{type:'ARRAY',items:{
+ type:'OBJECT',properties:{ko:{type:'STRING'},src:{type:'STRING'},read:{type:'STRING'},price:{type:'STRING'},
+ what:{type:'STRING'},sure:{type:'BOOLEAN'}},required:['ko','src']}}},required:['items']}};
+
+function trOcrPrompt(){
+ const name=jpLangName();
+ return '이 사진은 '+affDest()+'의 메뉴판·간판이다. 적힌 '+name+'를 빠짐없이 읽어라.\n\n'+
+  '**어려운 사진일 수 있다. 다음을 각오하고 읽어라.**\n'+
+  '- 인쇄가 아니라 **손글씨·붓글씨**일 수 있다. 흘려 쓴 획을 앞뒤 문맥으로 맞춰 읽어라\n'+
+  '- **세로쓰기**일 수 있다. 그러면 위에서 아래로 읽고, **줄은 오른쪽에서 왼쪽으로** 넘어간다\n'+
+  '- 나무판·칠판·천에 쓴 것, 조명이 어둡거나 비스듬히 찍힌 것일 수 있다\n'+
+  '- 가게에서 쓰는 줄임말·옛 글자·사투리 표기가 섞일 수 있다\n'+
+  '- 가격은 숫자 뒤에 통화 기호나 円·฿·元 이 붙거나 아예 없을 수 있다\n\n'+
+  '항목마다 이렇게 적어라.\n'+
+  '- ko: 한국어 이름. 사람이 알아듣는 말로\n'+
+  '- src: 원문 그대로 (읽은 그대로. 고쳐 쓰지 마라)\n'+
+  '- read: 한글로 적은 발음. 로마자 금지\n'+
+  '- price: 적혀 있으면 그대로, 없으면 빈 문자열\n'+
+  '- what: **이게 어떤 음식·물건인지 한 줄.** 이름만 옮기지 마라. '+
+    '재료·조리법·맵기·**날것인지**처럼 시켜야 할지 판단이 되는 것을 적어라\n'+
+  '- sure: 글자를 확실히 읽었으면 true, 자신 없으면 false\n\n'+
+  '**절대 지어내지 마라.** 못 읽은 글자는 sure 를 false 로 두고 읽은 만큼만 적어라.\n'+
+  '메뉴가 아니라 간판·안내판이면 그것도 그대로 항목으로 적어라. 30개까지.';
+}
+function trOcrCfg(hard){
+ const c=JSON.parse(JSON.stringify(TR_OCR_SCHEMA));
+ c.temperature=0;                                  /* 눈으로 읽는 일에 창의력은 해롭다 */
+ c.thinkingConfig={thinkingBudget:hard?8192:2048}; /* 어려운 사진일수록 생각할 시간을 준다 */
+ return c;
+}
+/* 읽은 뒤 사진과 한 번 더 대조한다. 빠뜨린 것과 잘못 읽은 것을 그 자리에서 잡는다. */
+async function trOcrVerify(items,hard){
+ const prompt='아래는 이 사진에서 읽어 낸 목록이다. **사진을 다시 보고** 확인해라.\n'+
+  '- 빠뜨린 항목이 있으면 **추가**해라\n'+
+  '- 잘못 읽은 글자가 있으면 **고쳐라**\n'+
+  '- 사진에 없는 것을 지어냈으면 **빼라**\n'+
+  '- 확실하지 않은 항목은 sure 를 false 로 두어라\n'+
+  '- 맞는 항목은 그대로 두어라. 바꾸기 위해 바꾸지 마라\n\n'+
+  '최종 목록만 JSON 으로 내라.\n\n'+JSON.stringify(items);
+ const t=await callGemini([{text:prompt},{inline_data:{mime_type:trPhotoMime,data:trPhotoB64}}],
+  trOcrCfg(hard),hard?TR_MODEL_HARD:null);
+ const j=JSON.parse(String(t).replace(/```json|```/g,'').trim());
+ const out=(j.items||[]).filter(function(x){return x&&x.ko;});
+ return out.length?out:items;      /* 대조가 망가뜨렸으면 원래 것을 쓴다 */
+}
 async function trPhoto(inp){
- const f=inp.files&&inp.files[0];inp.value='';if(!f)return;
+ const f=inp.files&&inp.files[0];if(inp)inp.value='';if(!f)return;
  if(!ai.key){alert('사진 번역은 AI를 켜야 씁니다.\n설정(⚙)에서 무료 키를 넣어 주세요.');return;}
- trBusyOn('사진 읽는 중… 메뉴가 길면 조금 걸립니다');
+ trBusyOn('사진 준비 중…');
+ const got=await trShrink(f);
+ if(!got){trSet('<div class="tr-out"><div class="tr-note">사진을 읽지 못했습니다.</div></div>');trBusy=false;return;}
+ trPhotoB64=got.b64;trPhotoMime=got.mime;trPhotoTried=false;
+ await trOcrRun(false);
+}
+/* hard=true 면 더 좋은 모델로 다시 읽는다. 사진을 들고 있으니 다시 찍을 필요가 없다. */
+async function trOcrRun(hard){
+ if(!trPhotoB64)return;
+ trBusy=true;
+ trBusyOn(hard?'더 꼼꼼히 다시 읽는 중… 30초쯤 걸립니다':'사진 읽는 중… 손글씨 메뉴판은 조금 걸립니다');
  try{
-  const b64=await new Promise(function(res,rej){const r=new FileReader();
-   r.onload=function(){res(String(r.result).split(',')[1]);};r.onerror=function(){rej(new Error('사진을 읽지 못했습니다'));};r.readAsDataURL(f);});
-  const name=jpLangName();
-  const prompt='이 사진은 '+affDest()+'의 메뉴판이나 간판이다. 적힌 '+name+'를 빠짐없이 읽어라.\n\n'+
-   '항목마다 이렇게 정리해라.\n'+
-   '- ko: 한국어 이름 (사람이 알아듣는 말로)\n'+
-   '- src: 원문 그대로\n'+
-   '- read: 한글로 적은 발음 (로마자 금지)\n'+
-   '- price: 가격이 적혀 있으면 그대로, 없으면 빈 문자열\n'+
-   '- what: **이게 어떤 음식·물건인지 한 줄.** 이름만 옮기지 마라. '+
-     '재료·조리법·맵기·날것 여부처럼 시켜야 할지 판단이 되는 정보를 적어라\n\n'+
-   '글자가 흐리면 추측하지 말고 ko 에 "(글자 흐림)" 이라고 적어라. 20개까지.';
-  const cfg={responseMimeType:'application/json',responseSchema:{type:'OBJECT',properties:{items:{type:'ARRAY',items:{
-   type:'OBJECT',properties:{ko:{type:'STRING'},src:{type:'STRING'},read:{type:'STRING'},price:{type:'STRING'},what:{type:'STRING'}},
-   required:['ko','src']}}},required:['items']}};
-  const t=await callGemini([{text:prompt},{inline_data:{mime_type:f.type||'image/jpeg',data:b64}}],cfg);
+  const t=await callGemini([{text:trOcrPrompt()},{inline_data:{mime_type:trPhotoMime,data:trPhotoB64}}],
+   trOcrCfg(hard),hard?TR_MODEL_HARD:null);
   const j=JSON.parse(String(t).replace(/```json|```/g,'').trim());
-  const items=(j.items||[]).slice(0,20);
-  if(!items.length){trSet('<div class="tr-out"><div class="tr-note">글자를 찾지 못했습니다. 더 밝은 곳에서 가까이 찍어 보세요.</div></div>');return;}
-  trLast={out:items.map(function(x){return x.ko+(x.price?(' '+x.price):'');}).join('\n'),read:'',speakable:false};
-  trSet('<div class="tr-out"><div class="tr-src">사진에서 '+items.length+'개를 읽었습니다</div>'+
-   items.map(function(x){
-    return '<div style="padding:11px 0;border-top:1px solid var(--line)">'+
-     '<div class="tr-big" style="font-size:17px">'+esc(x.ko||'')+(x.price?' <span style="font-size:14px;color:var(--muted)">'+esc(x.price)+'</span>':'')+'</div>'+
-     '<div class="tr-src" style="margin:4px 0 0">'+esc(x.src||'')+(x.read?(' · '+esc(x.read)):'')+'</div>'+
-     (x.what?'<div class="tr-note" style="margin-top:4px">'+esc(x.what)+'</div>':'')+
-     '</div>';}).join('')+
-   '<div class="xactions" style="margin-top:10px"><button class="xaction sub" onclick="trCopy()">전체 복사</button></div></div>');
- }catch(e){if(e)trSet('<div class="tr-out"><div class="tr-note">사진 번역 실패: '+esc(e.message||e)+'</div></div>');}
+  let items=(j.items||[]).filter(function(x){return x&&x.ko;}).slice(0,30);
+  if(!items.length){
+   trSet('<div class="tr-out"><div class="tr-note">글자를 찾지 못했습니다.<br>'+
+    '메뉴판이 화면에 꽉 차게, 밝은 곳에서, 정면으로 다시 찍어 보세요.</div></div>');
+   return;
+  }
+  trBusyOn('사진과 다시 대조하는 중…');
+  try{items=await trOcrVerify(items,hard);}catch(e){}
+  if(hard)trPhotoTried=true;
+  trShowMenu(items,hard);
+ }catch(e){if(e)trSet('<div class="tr-out"><div class="tr-note">사진 번역 실패: '+esc(e.message||e)+
+   (hard?'<br>더 좋은 모델은 무료 한도가 빨리 찹니다. 잠시 뒤 다시 해보세요.':'')+'</div></div>');}
  finally{trBusy=false;}
+}
+function trShowMenu(items,hard){
+ const unsure=items.filter(function(x){return x.sure===false;}).length;
+ trLast={out:items.map(function(x){return x.ko+(x.price?(' '+x.price):'');}).join('\n'),read:'',speakable:false};
+ trSet('<div class="tr-out">'+
+  '<div class="tr-src">사진에서 <b style="color:var(--text)">'+items.length+'개</b>를 읽었습니다'+
+   (hard?' · 꼼꼼히 읽기':'')+(unsure?(' · 확실하지 않은 것 '+unsure+'개'):'')+'</div>'+
+  items.map(function(x){
+   return '<div style="padding:11px 0;border-top:1px solid var(--line)">'+
+    '<div class="tr-big" style="font-size:17px">'+esc(x.ko||'')+
+     (x.price?' <span style="font-size:14px;color:var(--muted)">'+esc(x.price)+'</span>':'')+
+     (x.sure===false?' <span style="font-size:11.5px;color:var(--ember,#C4551F);font-weight:800">글자 흐림</span>':'')+'</div>'+
+    '<div class="tr-src" style="margin:4px 0 0">'+esc(x.src||'')+(x.read?(' · '+esc(x.read)):'')+'</div>'+
+    (x.what?'<div class="tr-note" style="margin-top:4px">'+esc(x.what)+'</div>':'')+
+    '</div>';}).join('')+
+  '<div class="xactions" style="margin-top:10px">'+
+   (trPhotoTried?'':'<button class="xaction" onclick="trOcrRun(true)">🔍 더 꼼꼼히 다시 읽기</button>')+
+   '<button class="xaction sub" onclick="trCopy()">전체 복사</button></div>'+
+  (trPhotoTried?'':'<div class="tr-note" style="margin-top:8px">손글씨·세로쓰기라 빠진 게 있으면 '+
+   '<b style="color:var(--text)">🔍 더 꼼꼼히 다시 읽기</b>를 눌러 보세요. 다시 찍지 않아도 됩니다.</div>')+
+  '</div>');
 }
 async function jpMenuPhoto(inp){const f=inp.files&&inp.files[0];inp.value='';if(!f)return;const out=document.getElementById('jpMenuOut');out.innerHTML='<div class="tool-result">분석 중…</div>';
  try{const b64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=()=>rej(new Error('읽기 실패'));r.readAsDataURL(f);});
