@@ -1988,12 +1988,21 @@ function jpSpeakChain(w,t,i){const c=JP_CHAINS[w];if(!c)return;const v=t==='q'?c
 /* 후리가나와 한글소리 변환은 가나 전용이다. 프랑스어에 걸면 글자가 깨진다.
    일본어가 아니면 원문을 그대로 쓰고, 읽는 법은 AI가 준 것을 쓴다. */
 function jpTextHTML(j,k){return jpIsJa()?jpRuby(j,k):esc(j);}
+/* 현지 말이 들어가는 칸에 붙인다.
+   lang — 한자 모양을 그 나라 기준으로 고르게 한다 (한국·일본·중국이 서로 다르다)
+   dir  — 아랍어처럼 오른쪽에서 왼쪽으로 쓰는 말을 바로 세운다.
+   auto 로 두면 브라우저가 첫 글자를 보고 알아서 정한다 */
+const FM_RTL={ar:1,he:1,fa:1,ur:1};
+function jpAttr(code){
+ const c=code||jpLang();
+ return ' lang="'+c+'"'+(FM_RTL[c]?' dir="rtl"':' dir="auto"');
+}
 function jpSoundTxt(k){return jpIsJa()?jpKoSound(k):(k||'');}
 /* 탭 이름을 목적지 말로 맞춘다. 공부 탭을 한 번도 안 열어도 맞아야 한다. */
 function jpSyncTabName(){const tb=document.getElementById('tabJp');if(tb)tb.textContent=jpLangName();}
 function jpLineHTML(x,compact){
  /* 후리가나와 한글 발음 변환은 일본어 전용이다. 다른 말은 AI가 준 읽는 법을 그대로 쓴다. */
- if(!jpIsJa())return '<div class="jline '+(compact?'compact':'')+'"><div class="jp">'+esc(x.v.j)+'</div>'+
+ if(!jpIsJa())return '<div class="jline '+(compact?'compact':'')+'"><div class="jp"'+jpAttr()+'>'+esc(x.v.j)+'</div>'+
   (jpState.showReading&&x.v.k?'<div class="sound">'+esc(x.v.k)+'</div>':'')+
   '<div class="ko">'+esc(x.v.m)+'</div>'+
   '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
@@ -2175,9 +2184,8 @@ function jpNeedPackHTML(){
   '주문·길 묻기·숙소·리액션·곤란할 때까지 <b style="color:var(--text)">13주차 분량</b>을 한 번에 만들고 이 기기에 저장합니다. '+
   '한 번 만들면 <b style="color:var(--text)">비행기 안에서도</b> 그대로 나옵니다.</div>'+
   '<div class="xsmall" style="margin-top:8px">문장은 <b style="color:var(--ember-soft)">AI가 만듭니다.</b> '+
-  '일본어는 미리 만들어 파일에 넣어 둔 교재라 누구에게나 같은 내용이 나가지만, '+
-  '다른 나라 말은 지금 이 자리에서 만듭니다. <b style="color:var(--text)">둘 다 원어민 감수는 받지 않았습니다.</b> '+
-  '뜻이 이상하면 현지에서 한 번 더 확인해 주세요.</div>'+
+  'AI가 쓰고 AI가 한 번 더 다듬지만 <b style="color:var(--text)">원어민 감수는 받지 않았습니다.</b> '+
+  '뜻이 이상하면 현지에서 한 번 더 확인해 주세요. 어색한 문장은 그 줄만 다시 만들 수 있습니다.</div>'+
   '<div class="xsmall" style="margin-top:12px"><b style="color:var(--text)">말하는 사람</b> — '+
   '태국어처럼 <b style="color:var(--text)">성별에 따라 말끝이 달라지는</b> 언어가 있습니다. 맞게 골라 주세요.</div>'+
   '<div class="fm-cats" style="margin-top:7px">'+
@@ -2253,7 +2261,7 @@ function jpReviewPane(pane){
  if(!jpReviewQueue.length){pane.innerHTML='<div class="xcard"><h3><span class="tag">SRS</span>오늘 복습 완료</h3><div class="empty">밀린 카드가 없습니다. 새 세션을 진행해도 좋아요.</div></div>';return;}
  const id=jpReviewQueue[0],v=jpFindLine(id);if(!v){jpReviewQueue.shift();jpReviewPane(pane);return;}
  pane.innerHTML='<div class="xcard"><h3><span class="tag">SRS '+(jpDue().length-jpReviewQueue.length+1)+' / '+jpDue().length+'</span>뜻을 떠올려 보세요</h3>'+
-  '<div class="reviewq"><div class="jp jp-rubyline">'+(jpReviewOpen?jpTextHTML(v.j,v.k):esc(v.j))+'</div>'+(jpReviewOpen?'<div class="answer">'+(jpIsJa()?'<div class="kana">'+esc(v.k)+'</div>':'')+'<div class="sound">'+esc(jpSoundTxt(v.k))+'</div><div class="ko">'+esc(v.m)+'</div><button class="jp-listen" onclick="jpSpeakLine(\''+id+'\')">🔊 듣기</button></div>':'')+'</div>'+
+  '<div class="reviewq"><div class="jp jp-rubyline"'+jpAttr()+'>'+(jpReviewOpen?jpTextHTML(v.j,v.k):esc(v.j))+'</div>'+(jpReviewOpen?'<div class="answer">'+(jpIsJa()?'<div class="kana">'+esc(v.k)+'</div>':'')+'<div class="sound">'+esc(jpSoundTxt(v.k))+'</div><div class="ko">'+esc(v.m)+'</div><button class="jp-listen" onclick="jpSpeakLine(\''+id+'\')">🔊 듣기</button></div>':'')+'</div>'+
   (jpReviewOpen?'<div class="xactions"><button class="xaction ember" onclick="jpRate(\''+id+'\',0)">다시</button><button class="xaction" onclick="jpRate(\''+id+'\',1)">알아요</button></div>':
   '<div class="xactions"><button class="xaction" onclick="jpReviewOpen=true;renderJapanese()">정답 보기</button></div>')+'</div>';
 }
@@ -2277,7 +2285,7 @@ function jpInfoPane(pane){
  /* 화자 이름도 그 나라 말로. 프랑스 가는 사람 화면에 '店主' 가 뜨면 안 된다. */
  const who=jpIsJa()?['학습자','店主']:['나','점원'];
  let body='<p><span class="speaker">상황</span><br>'+esc(affDest())+'의 작은 가게 카운터에서 사장님과 손님이 이번 주 표현으로 대화를 이어갑니다.<span class="trans">손님 응대로 끊겨도 이 위치가 자동 저장됩니다.</span></p>';
- w.l.forEach((v,i)=>{body+='<p><span class="speaker">'+esc(who[i%2])+'</span> <span class="jp-rubyline">'+jpTextHTML(v.j,v.k)+'</span><span class="trans">'+(jpIsJa()?esc(v.k)+'<br>':'')+'<span class="sound">'+esc(jpSoundTxt(v.k))+'</span><br>'+esc(v.m)+'</span></p>';});
+ w.l.forEach((v,i)=>{body+='<p><span class="speaker">'+esc(who[i%2])+'</span> <span class="jp-rubyline"'+jpAttr()+'>'+jpTextHTML(v.j,v.k)+'</span><span class="trans">'+(jpIsJa()?esc(v.k)+'<br>':'')+'<span class="sound">'+esc(jpSoundTxt(v.k))+'</span><br>'+esc(v.m)+'</span></p>';});
  pane.innerHTML='<div class="xcard"><h3><span class="tag">INFO MODE</span>W'+(s.w+1)+' 이어읽기</h3><div class="reading" id="jpReading" onscroll="jpSaveScroll(this,'+s.w+')">'+body+'</div>'+
   '<div class="xsmall" style="margin-top:9px">스크롤 위치 자동 저장 · 듣기/말하기 없음</div></div>';
  setTimeout(()=>{const el=document.getElementById('jpReading');if(el)el.scrollTop=pos;},0);
@@ -2367,11 +2375,14 @@ function trClearType(){
 function trSet(html){const el=document.getElementById('trOut');if(el)el.innerHTML=html;}
 function trBusyOn(m){trBusy=true;trSet('<div class="tr-busy">'+esc(m)+'</div>');}
 /* 결과를 그리고, 목적지 말 쪽은 바로 읽어 준다. */
+/* 어느 쪽 말이 결과로 나왔는지에 따라 붙인다 */
+function trOutAttr(o){return jpAttr((o&&o.dir==='lo2ko')?'ko':jpLang());}
+function trSrcAttr(o){return jpAttr((o&&o.dir==='lo2ko')?jpLang():'ko');}
 function trShow(o,speakIt){
  trLast=o;
  trSet('<div class="tr-out">'+
-  (o.src?'<div class="tr-src">'+esc(o.src)+'</div>':'')+
-  '<div class="tr-big">'+esc(o.out)+'</div>'+
+  (o.src?'<div class="tr-src"'+trSrcAttr(o)+'>'+esc(o.src)+'</div>':'')+
+  '<div class="tr-big"'+trOutAttr(o)+'>'+esc(o.out)+'</div>'+
   (o.read?'<div class="tr-read">'+esc(o.read)+'</div>':'')+
   (o.note?'<div class="tr-note">'+esc(o.note)+'</div>':'')+
   '<div class="xactions" style="margin-top:10px">'+
@@ -2429,7 +2440,7 @@ async function trRun(text,dir,tone){
    temperature:.3,thinkingConfig:{thinkingBudget:1024}};
   const t=await callGemini([{text:prompt}],cfg);
   const j=JSON.parse(String(t).replace(/```json|```/g,'').trim());
-  trShow({src:q,out:String(j.out||'').trim(),read:String(j.read||'').trim(),note:String(j.note||'').trim(),speakable:toLocal},toLocal);
+  trShow({dir:dir,src:q,out:String(j.out||'').trim(),read:String(j.read||'').trim(),note:String(j.note||'').trim(),speakable:toLocal},toLocal);
  }catch(e){if(e)trSet('<div class="tr-out"><div class="tr-note">번역 실패: '+esc(e.message||e)+'</div></div>');}
  finally{trBusy=false;}
 }
@@ -2539,7 +2550,9 @@ function trDictateStop(){
 function trBigOn(){
  if(!trLast||!trLast.out)return;
  const a=document.getElementById('trBig1'),b=document.getElementById('trBig2');
- if(a)a.textContent=trLast.out;
+ /* 상대에게 보여주는 화면이다. 글자 모양과 방향이 여기서 틀리면 제일 티가 난다. */
+ const lc=(trLast.dir==='lo2ko')?'ko':jpLang();
+ if(a){a.textContent=trLast.out;a.setAttribute('lang',lc);a.setAttribute('dir',FM_RTL[lc]?'rtl':'auto');}
  if(b)b.textContent=trLast.read||trLast.src||'';
  const w=document.getElementById('trBig');if(w)w.classList.add('on');
 }
@@ -2688,10 +2701,11 @@ function trShowMenu(items,hard,meta){
    (hard?' · 꼼꼼히 읽기':'')+(unsure?(' · 확실하지 않은 것 '+unsure+'개'):'')+'</div>'+
   items.map(function(x){
    return '<div style="padding:11px 0;border-top:1px solid var(--line)">'+
-    '<div class="tr-big" style="font-size:17px">'+esc(x.ko||'')+
+    '<div class="tr-big" style="font-size:17px" lang="ko">'+esc(x.ko||'')+
      (x.price?' <span style="font-size:14px;color:var(--muted)">'+esc(x.price)+'</span>':'')+
      (x.sure===false?' <span style="font-size:11.5px;color:var(--ember,#C4551F);font-weight:800">글자 흐림</span>':'')+'</div>'+
-    '<div class="tr-src" style="margin:4px 0 0">'+esc(x.src||'')+(x.read?(' · '+esc(x.read)):'')+'</div>'+
+    '<div class="tr-src" style="margin:4px 0 0"'+jpAttr()+'>'+esc(x.src||'')+'</div>'+
+    (x.read?'<div class="tr-src" style="margin:2px 0 0" lang="ko">'+esc(x.read)+'</div>':'')+
     (x.what?'<div class="tr-note" style="margin-top:4px">'+esc(x.what)+'</div>':'')+
     '</div>';}).join('')+
   '<div class="xactions" style="margin-top:10px">'+
@@ -2723,7 +2737,7 @@ function fmFiltered(){const q=String(foodMap.q||'').toLowerCase().trim(),f=foodM
  const hit=!q||(p.name+' '+p.note+' '+p.address+' '+p.cat).toLowerCase().includes(q);if(!hit)return false;if(f==='전체')return true;if(f==='후쿠오카권')return fmInFukuoka(p);if(f==='즐겨찾기')return!!p.fav;if(f==='미방문')return!p.visited;return p.cat===f;}).sort((a,b)=>(+!!b.fav-+!!a.fav)||(a.name||'').localeCompare(b.name||''));}
 function renderFoodMap(){
  const root=document.getElementById('fmRoot');if(!root)return;const total=foodMap.places.length,fav=foodMap.places.filter(x=>x.fav).length,visited=foodMap.places.filter(x=>x.visited).length;
- const opts=FM_CATS.slice(4).map(x=>'<option value="'+x+'">'+x+'</option>').join('');
+ const opts=FM_CATS.slice(4).map(x=>'<option value="'+esc(x)+'">'+esc(fmCatLabel(x))+'</option>').join('');
  root.innerHTML='<div class="xhero"><div class="xhero-top"><div><div class="xeyebrow">GOOGLE MAPS · SAVED LIST</div><div class="xtitle">'+esc(foodMap.listName||'여행계획')+'</div></div><div class="xmeta">'+total+' PLACES<br>후쿠오카 여행지도</div></div>'+
   '<div class="xsmall" style="margin-top:12px">구글맵에 만든 ‘여행계획’ 저장목록을 그대로 옮깁니다. 음식점뿐 아니라 관광·쇼핑·숙소·교통까지 모두 표시합니다.</div></div>'+
   '<div class="xstats"><div class="xstat"><b>'+total+'</b><span>전체</span></div><div class="xstat"><b>'+fav+'</b><span>즐겨찾기</span></div><div class="xstat"><b>'+visited+'</b><span>방문 완료</span></div></div>'+
@@ -2777,7 +2791,7 @@ function fmSetFilter(v){foodMap.filter=v;save('foodmap_v1',foodMap);renderFoodMa
 function fmToggleAdd(){const el=document.getElementById('fmAddBox');if(el)el.style.display=el.style.display==='none'?'block':'none';}
 function fmRenderList(){const el=document.getElementById('fmList');if(!el)return;const a=fmFiltered(),show=a.slice(0,250);
  el.innerHTML=show.length?show.map(p=>'<div class="place '+(p.id===foodMap.selected?'sel ':'')+(p.visited?'visited':'')+'" onclick="fmSelect(\''+p.id+'\')">'+
-  '<div class="place-top"><div class="place-name">'+(p.fav?'★ ':'')+esc(p.name||'이름 없음')+'</div><span class="place-cat">'+esc(p.cat||'기타')+'</span></div>'+
+  '<div class="place-top"><div class="place-name">'+(p.fav?'★ ':'')+esc(p.name||'이름 없음')+'</div><span class="place-cat">'+esc(fmCatLabel(p.cat||'기타'))+'</span></div>'+
   '<div class="place-note">'+esc(p.note||p.address||((p.lat&&p.lng)?(p.lat+', '+p.lng):'메모 없음'))+'</div>'+
   ((p.rating||p.openNow!==undefined)?'<div class="xsmall" style="margin-top:5px">'+(p.rating?'★ '+p.rating+' ('+(p.ratingCount||0)+')':'')+(p.openNow!==undefined?' · '+(p.openNow?'영업 중':'현재 영업 아님'):'')+'</div>':'')+'<div class="place-btns">'+
   '<button class="'+(p.fav?'fav':'')+'" onclick="event.stopPropagation();fmToggle(\''+p.id+'\',\'fav\')">'+(p.fav?'★ 저장':'☆ 즐겨찾기')+'</button>'+
@@ -4601,7 +4615,14 @@ function fmCountry(){
 }
 function fmCountryRow(){return FM_COUNTRIES.find(x=>x[0]===fmCountry())||FM_COUNTRIES[0];}
 /* 분류 칩 이름. 저장되는 값은 그대로 두고 보이는 글자만 목적지에 맞춘다. */
-function fmCatLabel(x){return x==='후쿠오카권'?(affDest()+'권'):x;}
+/* 저장되는 값은 절대 안 바꾼다. 화면에 보이는 글자만 목적지에 맞춘다.
+   '바·이자카야'가 파리 화면에 뜨면 그것만으로 산 사람이 등을 돌린다. */
+const FM_CAT_ETC={'바·이자카야':'바·술집','사우나·온천':'사우나·스파'};
+function fmCatLabel(x){
+ if(x==='후쿠오카권')return affDest()+'권';
+ if(fmCountry()!=='JP'&&FM_CAT_ETC[x])return FM_CAT_ETC[x];
+ return x;
+}
 function fmRegionCode(){return fmCountryRow()[0];}
 function fmPlaceLang(){return fmCountryRow()[2];}
 function fmSetCountry(v){foodMap.destCountry=String(v||'').toUpperCase();save('foodmap_v1',foodMap);renderFoodMap();}
@@ -4844,7 +4865,7 @@ renderFoodMap=function(){jpSyncTabName();
 
  fm2Init();
  const total=foodMap.places.length,fav=foodMap.places.filter(x=>x.fav).length,visited=foodMap.places.filter(x=>x.visited).length,origin=fmOrigin(),hotel=foodMap.hotel||{};
- const opts=FM_CATS.slice(4).map(x=>'<option value="'+x+'">'+x+'</option>').join('');
+ const opts=FM_CATS.slice(4).map(x=>'<option value="'+esc(x)+'">'+esc(fmCatLabel(x))+'</option>').join('');
  /* 담기 — 장소를 모으고 확인하는 곳.
     장소가 0곳이면 첫 실행 화면만 보여준다. 통계·필터·지도·API 설정은 아직 쓸 일이 없다. */
  cRoot.innerHTML='<div class="xhero"><div class="xhero-top"><div><div class="xeyebrow">SAVED PLACES</div><div class="xtitle">'+esc(foodMap.listName||'여행계획')+'</div></div><div class="xmeta">'+total+' PLACES<br>'+esc(affDest())+' 여행지도</div></div><div class="xsmall" style="margin-top:12px">저장해 둔 장소를 숙소·날짜·영업시간·거리에 맞춰 실제로 갈 수 있는 일정으로 바꿉니다. 장소별 현지 회화는 현장에서 꺼내 쓰는 보조 카드입니다.</div></div>'+
@@ -4912,7 +4933,7 @@ function fmGrpOrder(keys){
 fmRenderList=function(){const el=document.getElementById('fmList');if(!el)return;const a=fmFiltered(),show=a.slice(0,250);const pick=fmSel.on;
  /* 카드 한 장 그리는 것은 그대로 두고, 묶는 것만 바깥에서 한다 */
  const card=function(p){const d=fm2DistTxt(p),badges=[p.kind,p.region,d,fm2EtaTxt(p),p.openNow===true?'영업 중':(p.openNow===false?'현재 영업 아님':''),p.priority?'우선 '+p.priority:'',p.reservation==='needed'?'예약 확인':(p.reservation==='booked'?'예약 완료':'')].filter(Boolean);
- return'<div class="place '+(pick?('picking '+(fmSel.ids.has(p.id)?'on ':'')):(p.id===foodMap.selected?'sel ':''))+(p.visited?'visited ':'')+(p.excluded?'visited':'')+'" onclick="'+(pick?'fmSelPick':'fmSelect')+'(\''+p.id+'\')">'+(pick?'<span class="fm-check">✓</span>':'')+(p.photo&&!pick?'<img class="place-thumb" src="'+esc(p.photo)+'" alt="">':'')+'<div class="place-top"><div class="place-name">'+(p.fav?'★ ':'')+esc(p.name)+'</div><span class="place-cat">'+esc(p.cat||'기타')+'</span>'+fm2Tier(p)+'</div><div class="place-note">'+esc(p.note||p.address||'메모 없음')+'</div><div class="fm-badges">'+badges.map((x,i)=>'<span class="fm-badge '+(String(x).includes('영업 중')?'good':String(x).includes('아님')?'hot':'')+'">'+esc(x)+'</span>').join('')+'</div>'+(pick?'':'<div class="place-btns"><button class="'+(p.fav?'fav':'')+'" onclick="event.stopPropagation();fmToggle(\''+p.id+'\',\'fav\')">'+(p.fav?'★ 저장':'☆ 저장')+'</button><button onclick="event.stopPropagation();fmToggle(\''+p.id+'\',\'visited\')">'+(p.visited?'↩ 미방문':'✓ 방문')+'</button><a href="'+esc(fmDirectionsLink(p))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">길찾기</a><button onclick="event.stopPropagation();fmSelect(\''+p.id+'\')">영상·관리</button></div>')+'</div>';};
+ return'<div class="place '+(pick?('picking '+(fmSel.ids.has(p.id)?'on ':'')):(p.id===foodMap.selected?'sel ':''))+(p.visited?'visited ':'')+(p.excluded?'visited':'')+'" onclick="'+(pick?'fmSelPick':'fmSelect')+'(\''+p.id+'\')">'+(pick?'<span class="fm-check">✓</span>':'')+(p.photo&&!pick?'<img class="place-thumb" src="'+esc(p.photo)+'" alt="">':'')+'<div class="place-top"><div class="place-name">'+(p.fav?'★ ':'')+esc(p.name)+'</div><span class="place-cat">'+esc(fmCatLabel(p.cat||'기타'))+'</span>'+fm2Tier(p)+'</div><div class="place-note">'+esc(p.note||p.address||'메모 없음')+'</div><div class="fm-badges">'+badges.map((x,i)=>'<span class="fm-badge '+(String(x).includes('영업 중')?'good':String(x).includes('아님')?'hot':'')+'">'+esc(x)+'</span>').join('')+'</div>'+(pick?'':'<div class="place-btns"><button class="'+(p.fav?'fav':'')+'" onclick="event.stopPropagation();fmToggle(\''+p.id+'\',\'fav\')">'+(p.fav?'★ 저장':'☆ 저장')+'</button><button onclick="event.stopPropagation();fmToggle(\''+p.id+'\',\'visited\')">'+(p.visited?'↩ 미방문':'✓ 방문')+'</button><a href="'+esc(fmDirectionsLink(p))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">길찾기</a><button onclick="event.stopPropagation();fmSelect(\''+p.id+'\')">영상·관리</button></div>')+'</div>';};
  /* 위에 보기 방식 고르는 칸. 장소가 몇 개 없으면 굳이 안 보여준다. */
  const grouped=fmGrouped();
  const viewBar=foodMap.places.length>6
@@ -5245,7 +5266,7 @@ function fmSpotJapanese(id){
  if(!jpIsJa()){
   out.innerHTML='<div class="xsmall" style="margin-bottom:8px"><b style="color:var(--text)">'+esc(p.name)+'</b>'+
    (p.kind&&p.kind!=='기타'?' · '+esc(p.kind):'')+
-   '<br>미리 들어 있는 문장은 일본어뿐입니다. '+esc(jpLangName())+' 문장은 이 가게에 맞춰 그 자리에서 만듭니다.</div>'+
+   '<br>'+esc(jpLangName())+' 문장은 이 가게 업종·메모에 맞춰 <b style="color:var(--text)">그 자리에서 만듭니다.</b> AI가 만드는 문장입니다.</div>'+
    '<div class="xactions"><button class="xaction" onclick="sjAskAI(\''+p.id+'\')">'+esc(jpLangName())+' 문장 만들기</button></div>';
   return;
  }
