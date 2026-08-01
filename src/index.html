@@ -2690,16 +2690,6 @@ function trShowMenu(items,hard,meta){
    '<b style="color:var(--text)">🔍 더 꼼꼼히 다시 읽기</b>를 눌러 보세요. 다시 찍지 않아도 됩니다.</div>')+
   '</div>');
 }
-async function jpMenuPhoto(inp){const f=inp.files&&inp.files[0];inp.value='';if(!f)return;const out=document.getElementById('jpMenuOut');out.innerHTML='<div class="tool-result">분석 중…</div>';
- try{const b64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=()=>rej(new Error('읽기 실패'));r.readAsDataURL(f);});
-  const p='이 일본어 메뉴판을 빠짐없이 읽어 다음 형식으로 한국어로 정리해: [원문 / 히라가나 읽기 / 한국어 뜻 / 가격]. 생선·조리법·부위·숙성·아부리 등은 F&B 실무자 관점 설명도 한 줄 추가해. 불확실한 글자는 추정이라고 표시해.';
-  const t=await callGemini([{text:p},{inline_data:{mime_type:f.type||'image/jpeg',data:b64}}]);out.innerHTML='<div class="tool-result">'+esc(t)+'</div>';
- }catch(e){if(e)out.innerHTML='<div class="tool-result">분석 실패: '+esc(e.message||e)+'</div>';}}
-async function jpTranslate(){
- const q=(document.getElementById('jpTrIn').value||'').trim();if(!q)return;const dir=document.getElementById('jpDir').value,out=document.getElementById('jpTrOut');out.innerHTML='<div class="tool-result">번역 중…</div>';
- const p=dir==='koja'?'다음 한국어를 일본 현지에서 자연스러운 존댓말 일본어로 번역해. 일본어, 히라가나 읽기, 짧은 뉘앙스 설명 순서로: ':'다음 일본어를 자연스러운 한국어로 번역하고, 중요한 뉘앙스나 사투리가 있으면 짧게 설명해: ';
- try{const t=await callGemini([{text:p+q}]);out.innerHTML='<div class="tool-result">'+esc(t)+'</div>';}catch(e){if(e)out.innerHTML='<div class="tool-result">번역 실패: '+esc(e.message||e)+'</div>';}}
-function jpVoiceTranslate(){const dir=document.getElementById('jpDir').value;jpRecognition(dir==='koja'?'ko-KR':'ja-JP',t=>{document.getElementById('jpTrIn').value=t;jpTranslate();});}
 
 /* ── 맛집지도 탭: Takeout 이식형 신규 모듈 ── */
 const FM_CATS=['전체','후쿠오카권','즐겨찾기','미방문','맛집·식당','바·이자카야','카페·디저트','관광·명소','쇼핑','숙소','교통','사우나·온천','마사지·스파','약국·병원','기타'];
@@ -2963,8 +2953,35 @@ async function fmEnrichSelected(){fmSaveApi();const p=foodMap.places.find(x=>x.i
 function fmExport(){const b=new Blob([JSON.stringify({v:1,exported:TODAY,places:foodMap.places},null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='후쿠오카_맛집지도_'+TODAY+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
 
 /* ── 후쿠오카 지도 고급 레이어: 기존 모듈·저장 키와 분리 없이 하위 호환 확장 ── */
-const FM_REGIONS=['전체 지역','하카타','텐진','나카스','다이묘','야쿠인','기온·쿠시다','오호리·모모치','이토시마','기타 지역'];
-const FM_KINDS=['전체 음식·술','스시·사시미','해산물','라멘','우동·소바','야키토리','야키니쿠·호르몬','모츠나베','명란','교자','튀김·장어','이자카야','야타이','니혼슈','쇼추','맥주','칵테일','와인','카페·디저트','기타'];
+/* 후쿠오카 동네 이름은 후쿠오카에서만 쓴다. 다른 나라에서는 좌표로 묶는
+   '구역 자동 묶기' 가 대신한다 — 도시 이름을 몰라도 동작하도록 만들어 둔 것이다. */
+const FM_REGIONS_JP=['전체 지역','하카타','텐진','나카스','다이묘','야쿠인','기온·쿠시다','오호리·모모치','이토시마','기타 지역'];
+function FM_REGIONS_NOW(){
+ if(fmCountry()==='JP')return FM_REGIONS_JP;
+ const out=['전체 지역'];
+ (foodMap.places||[]).forEach(function(p){
+  if(p.region&&p.region!=='기타 지역'&&out.indexOf(p.region)<0)out.push(p.region);
+ });
+ if(foodMap.region&&out.indexOf(foodMap.region)<0)out.push(foodMap.region);
+ if(out.indexOf('기타 지역')<0)out.push('기타 지역');
+ return out;
+}
+const FM_REGIONS=FM_REGIONS_JP;
+/* 일본은 지금 그대로. 다른 나라는 어디서나 통하는 목록으로 바꾼다.
+   저장된 값은 안 건드린다 — 고르는 목록만 달라진다. */
+const FM_KINDS_JP=['전체 음식·술','스시·사시미','해산물','라멘','우동·소바','야키토리','야키니쿠·호르몬','모츠나베','명란','교자','튀김·장어','이자카야','야타이','니혼슈','쇼추','맥주','칵테일','와인','카페·디저트','기타'];
+const FM_KINDS_ETC=['전체 음식·술','해산물','고기·구이','국수·면','밥·덮밥','국물·탕','튀김','길거리 음식','디저트','현지 술','맥주','칵테일','와인','카페·디저트','기타'];
+/* 목록은 목적지를 따라가되, 이미 저장해 둔 값이 목록에 없으면 뒤에 붙여 준다.
+   안 그러면 필터를 걸었을 때 고를 수가 없어진다. */
+function FM_KINDS_NOW(){
+ const base=(fmCountry()==='JP')?FM_KINDS_JP:FM_KINDS_ETC,out=base.slice();
+ (foodMap.places||[]).forEach(function(p){
+  if(p.kind&&out.indexOf(p.kind)<0)out.push(p.kind);
+ });
+ if(foodMap.kind&&out.indexOf(foodMap.kind)<0)out.push(foodMap.kind);
+ return out;
+}
+const FM_KINDS=FM_KINDS_JP;
 const FM_STATUS=['기본 상태','영업 중','예약 확인','예약 완료','우선순위 2+','미방문','비 오는 날','제외한 장소','좌표 없음'];
 const FM_SORTS=[['smart','스마트 추천순'],['distance','가까운 순'],['regret','놓치면 아쉬운 순'],['rating','평점순'],['name','이름순']];
 function fm2Pick(v,d){return v===undefined||v===null?d:v;}
@@ -4141,8 +4158,17 @@ function wxHTML(){
   '<div class="xactions"><button class="xaction sub" onclick="wxFetch(false)">'+(days.length?'날씨 다시 가져오기':'날씨 가져오기')+'</button></div>'+
   '<div id="wxOut"></div>');
 }
-const FX_DEFAULT={cur:'JPY',home:'KRW',sym:'엔',homeSym:'원'};
-function fxCur(){return String(foodMap.fxCur||FX_DEFAULT.cur).toUpperCase();}
+/* 나라별 통화. 목적지가 바뀌면 예산·지출·환율 단위가 같이 바뀐다. */
+const FM_MONEY={
+ JP:['JPY','엔'],KR:['KRW','원'],TW:['TWD','대만달러'],HK:['HKD','홍콩달러'],
+ TH:['THB','바트'],VN:['VND','동'],SG:['SGD','싱가포르달러'],MY:['MYR','링깃'],
+ PH:['PHP','페소'],ID:['IDR','루피아'],CN:['CNY','위안'],US:['USD','달러'],
+ FR:['EUR','유로'],IT:['EUR','유로'],ES:['EUR','유로'],DE:['EUR','유로'],
+ GB:['GBP','파운드'],AU:['AUD','호주달러'],TR:['TRY','리라'],AE:['AED','디르함']
+};
+function fmMoney(){return FM_MONEY[fmCountry()]||['JPY','엔'];}
+const FX_DEFAULT={home:'KRW',homeSym:'원'};
+function fxCur(){return String(foodMap.fxCur||fmMoney()[0]).toUpperCase();}
 function fxHome(){return String(foodMap.fxHome||FX_DEFAULT.home).toUpperCase();}
 function fxRate(){const r=+((foodMap.fx||{}).rate);return Number.isFinite(r)&&r>0?r:null;}
 function fxAt(){return (foodMap.fx||{}).at||'';}
@@ -4192,7 +4218,7 @@ function fxHomeTxt(amount){
  return '약 '+v.toLocaleString()+FX_DEFAULT.homeSym;
 }
 function fxBoth(amount){
- const base=(Math.round(+amount||0)).toLocaleString()+FX_DEFAULT.sym;
+ const base=(Math.round(+amount||0)).toLocaleString()+fmMoney()[1];
  const home=fxHomeTxt(amount);
  return home?base+' ('+home+')':base;
 }
@@ -4263,7 +4289,7 @@ function GUIDE_STEPS(){
     '<li><b>사진 분석</b> — 찍은 사진에서 가게·먹은 것 알아보기</li>'+
     '<li><b>링크만 붙여넣어도 가게 이름 알아내기</b></li>'+
     '<li><b>그 가게에서 쓸 현지 회화</b> 즉석 생성</li>'+
-    '<li><b>일본어 원어민 음성</b>과 오늘 어휘·퀴즈</li>'+
+    '<li><b>현지어 음성 읽어주기</b>와 오늘 어휘·퀴즈</li>'+
    '</ol></div>'+
 
    '<div class="fm-how"><b>안 켜도 되는 것</b>'+
@@ -4623,7 +4649,8 @@ function bgLeft(){return bgTotal()-bgSpent();}
 function bgSpentToday(){return bgSpends().filter(x=>x.d===TODAY).reduce((a,x)=>a+(+x.amt||0),0);}
 function bgDaysLeft(){return Math.max(0,Math.floor(+foodMap.tripDays||0));}
 function bgPerDay(){const d=bgDaysLeft();return d>0?Math.floor(bgLeft()/d):null;}
-function bgYen(n){return (Math.round(+n||0)).toLocaleString()+'엔';}
+/* 이름은 그대로 두되(부르는 데가 많다) 단위는 목적지를 따라간다. */
+function bgYen(n){return (Math.round(+n||0)).toLocaleString()+fmMoney()[1];}
 function bgBoth(n){return (typeof fxBoth==='function')?fxBoth(n):bgYen(n);}
 function bgSetTotal(v){foodMap.budget=Math.max(0,+v||0);save('foodmap_v1',foodMap);renderFoodMap();}
 function bgSetDays(v){foodMap.tripDays=Math.max(0,Math.floor(+v||0));save('foodmap_v1',foodMap);renderFoodMap();}
@@ -4720,7 +4747,7 @@ function asContext(){
  const visitedToday=foodMap.places.filter(p=>p.visited).length;
  lines.push('[저장 장소] 총 '+foodMap.places.length+'곳 · 방문 표시 '+visitedToday+'곳');
  const jl=Object.keys(jpState.done||{}).length;
- lines.push('[일본어 진도] '+Math.min(jpLimit(),jpState.pointer||0)+'/'+jpLimit()+'회차('+jpPlan().n+')');
+ lines.push('['+jpLangName()+' 진도] '+Math.min(jpLimit(),jpState.pointer||0)+'/'+jpLimit()+'회차('+jpPlan().n+')');
  const c=foodMap.course;
  if(c&&c.stops&&c.stops.length){
   lines.push('[짜여 있는 오늘 동선] '+c.stops.map((s,i)=>(i+1)+'. '+csHM(s.at)+' '+s.name+'('+s.goal+')').join(' → ')+' · 종료 예상 '+csHM(c.endAt));
@@ -4734,16 +4761,18 @@ function asContext(){
  asCandidates(18).forEach(p=>lines.push(asPlaceLine(p)));
  return lines.join('\n');
 }
-const AS_RULES=[
+function AS_RULES_NOW(){return [
  '너는 이 사용자의 여행 앱 안에서 동작하는 어시스턴트다. 한국어로 답한다.',
  '아래 [상황]에 주어진 데이터만 사실로 취급한다.',
  '가격, 메뉴, 영업시간, 좌석 수처럼 데이터에 없는 정보는 절대 지어내지 말고 "저장된 정보에 없다"고 말한다.',
  '거리와 도보 시간은 주어진 값을 그대로 인용한다. 직접 계산하거나 추정하지 않는다.',
  '장소를 추천할 때는 반드시 [가까운 저장 장소 목록]에 있는 이름만 사용한다. 목록 밖 가게를 새로 만들어내지 않는다.',
  '예산 질문에는 데이터에 가격이 없다는 점을 밝히고, 판단에 필요한 정보를 사용자에게 되묻는다.',
- '일본어 문장을 알려줄 때는 한 줄에 일본어, 다음 줄에 히라가나 읽기, 다음 줄에 한국어 뜻을 쓴다.',
+ (jpIsJa()
+  ? '일본어 문장을 알려줄 때는 한 줄에 일본어, 다음 줄에 히라가나 읽기, 다음 줄에 한국어 뜻을 쓴다.'
+  : (jpLangName()+' 문장을 알려줄 때는 한 줄에 '+jpLangName()+', 다음 줄에 한글로 읽는 소리, 다음 줄에 한국어 뜻을 쓴다.')),
  '답은 짧게. 불릿 5개 이내. 인사말과 사족은 쓰지 않는다.'
-].join('\n');
+].join('\n');}
 function asRender(){
  const el=document.getElementById('asOut');if(!el)return;
  if(!asChat.length){el.innerHTML='<div class="xsmall">저장한 장소·거리·예산·학습 진도를 함께 보고 답합니다. 데이터에 없는 것은 지어내지 않습니다.</div>';return;}
@@ -4763,7 +4792,7 @@ async function asAsk(){
   save('as_chat_v1',asChat);asRender();return;}
  asBusy=true;asRender();
  const hist=asChat.slice(-7,-1).map(x=>(x.r==='user'?'사용자: ':'어시스턴트: ')+x.t).join('\n');
- const prompt=AS_RULES+'\n\n[상황]\n'+asContext()+(hist?'\n\n[직전 대화]\n'+hist:'')+'\n\n[질문]\n'+q;
+ const prompt=AS_RULES_NOW()+'\n\n[상황]\n'+asContext()+(hist?'\n\n[직전 대화]\n'+hist:'')+'\n\n[질문]\n'+q;
  try{
   const t=await callGemini([{text:prompt}]);
   asChat.push({r:'ai',t:String(t).trim()});
@@ -4777,7 +4806,7 @@ function asHTML(){
   '<div class="xsmall">지금 시각·기준점·저장 장소·거리·예산·학습 진도를 함께 넘겨 답합니다.</div>'+
   '<div class="fm-quick" style="margin-top:8px">'+
   '<button onclick="asQuick(\'지금 갈 만한 곳 3개만 골라줘\')">지금 뭐 하지</button>'+
-  '<button onclick="asQuick(\'선택한 가게에서 쓸 일본어 문장 5개\')">이 가게 일본어</button>'+
+  '<button onclick="asQuick(\'선택한 가게에서 쓸 현지 말 문장 5개\')">이 가게 '+esc(jpLangName())+'</button>'+
   '<button onclick="asQuick(\'남은 예산으로 살 만한 곳 알려줘\')">남은 돈 쓰기</button>'+
   '<button onclick="asQuick(\'오늘 동선 짜줘\')">오늘 동선</button></div>'+
   
@@ -4818,8 +4847,8 @@ renderFoodMap=function(){
    '<div'+(total?'':' style="display:none"')+'>'+
    '<div class="fm-toolbar"><input class="xinput" id="fmSearch" value="'+esc(foodMap.q||'')+'" placeholder="검색하거나 링크를 붙여넣으세요" oninput="fmOneInput(this.value)"><button class="btn" onclick="fmOneGo()">담기</button><button class="btn" onclick="fmToggleAdd()">＋</button></div>'+
    '<div class="xsmall" id="fmOneHint" style="margin:-4px 0 8px 2px;color:var(--wasabi)"></div><div class="fm-cats">'+FM_CATS.map(x=>'<button class="'+((foodMap.filter||'전체')===x?'on':'')+'" onclick="fmSetFilter(\''+x+'\')">'+x+'</button>').join('')+'</div>'+
-   '<div class="fm-filter-grid"><select class="xselect" onchange="fmSetRegion(this.value)">'+fm2Opts(FM_REGIONS,foodMap.region)+'</select><select class="xselect" onchange="fmSetKind(this.value)">'+fm2Opts(FM_KINDS,foodMap.kind)+'</select><select class="xselect" onchange="fmSetStatus(this.value)">'+fm2Opts(FM_STATUS,foodMap.status)+'</select><select class="xselect" onchange="fmSetSort(this.value)">'+fm2Opts(FM_SORTS,foodMap.sort)+'</select></div>'+
-   '<div id="fmAddBox" style="display:none" class="xcard"><h3><span class="tag">NEW</span>장소 직접 추가</h3><div class="fm-grid"><input class="xinput wide" id="fmName" placeholder="장소 이름"><select class="xselect" id="fmCat">'+opts+'</select><select class="xselect" id="fmRegion">'+fm2Opts(FM_REGIONS.slice(1),'기타 지역')+'</select><input class="xinput wide" id="fmUrl" placeholder="구글맵 공유 URL"><input class="xinput" id="fmLat" type="number" step="any" placeholder="위도 (선택)"><input class="xinput" id="fmLng" type="number" step="any" placeholder="경도 (선택)"><textarea class="xta wide" id="fmNote" placeholder="먹을 메뉴·메모"></textarea></div><div class="xactions"><button class="xaction" onclick="fmAdd()">저장</button></div></div>'+
+   '<div class="fm-filter-grid"><select class="xselect" onchange="fmSetRegion(this.value)">'+fm2Opts(FM_REGIONS_NOW(),foodMap.region)+'</select><select class="xselect" onchange="fmSetKind(this.value)">'+fm2Opts(FM_KINDS_NOW(),foodMap.kind)+'</select><select class="xselect" onchange="fmSetStatus(this.value)">'+fm2Opts(FM_STATUS,foodMap.status)+'</select><select class="xselect" onchange="fmSetSort(this.value)">'+fm2Opts(FM_SORTS,foodMap.sort)+'</select></div>'+
+   '<div id="fmAddBox" style="display:none" class="xcard"><h3><span class="tag">NEW</span>장소 직접 추가</h3><div class="fm-grid"><input class="xinput wide" id="fmName" placeholder="장소 이름"><select class="xselect" id="fmCat">'+opts+'</select><select class="xselect" id="fmRegion">'+fm2Opts(FM_REGIONS_NOW().slice(1),'기타 지역')+'</select><input class="xinput wide" id="fmUrl" placeholder="구글맵 공유 URL"><input class="xinput" id="fmLat" type="number" step="any" placeholder="위도 (선택)"><input class="xinput" id="fmLng" type="number" step="any" placeholder="경도 (선택)"><textarea class="xta wide" id="fmNote" placeholder="먹을 메뉴·메모"></textarea></div><div class="xactions"><button class="xaction" onclick="fmAdd()">저장</button></div></div>'+
   '</div>'+
   '<div id="fmOverview"'+(total?'':' style="display:none"')+'></div><div class="fm-map" id="fmMap"'+(total?'':' style="display:none"')+'></div>'+
    '<div id="fmSelBar"'+(total?'':' style="display:none"')+'>'+fmSelHTML()+'</div><div id="fmList"'+(total?'':' style="display:none"')+'></div>'+
@@ -4969,10 +4998,10 @@ function fm2Reservation(id){const p=foodMap.places.find(x=>x.id===id);if(!p)retu
 function fm2Priority(id){const p=foodMap.places.find(x=>x.id===id);if(!p)return;p.priority=((+p.priority||0)+1)%4;save('foodmap_v1',foodMap);renderFoodMap();}
 function fm2Yt(q){return'https://www.youtube.com/results?search_query='+encodeURIComponent(q);}
 function fmEnsureVideos(p){if(p.videos.length)return;p.videos=[{name:'자동 검색',short:fm2Yt(p.name+' '+fmAreaHint()+' shorts'),long:fm2Yt(p.name+' '+fmAreaHint()+' vlog review')}];save('foodmap_v1',foodMap);}
-function fmRenderSpotTools(){const el=document.getElementById('fmSpotTools');if(!el)return;const p=foodMap.places.find(x=>x.id===foodMap.selected);if(!p){el.innerHTML='';return;}fmEnsureVideos(p);el.innerHTML='<div class="xcard hot"><h3><span class="tag">SPOT</span>'+esc(p.name)+'</h3><div class="xsmall">'+esc(p.address||p.note||'장소 정보')+'</div><div class="fm-status-actions"><button class="'+(p.priority?'on':'')+'" onclick="fm2Priority(\''+p.id+'\')">우선 '+p.priority+'/3</button><button class="'+(p.reservation!=='none'?'on':'')+'" onclick="fm2Reservation(\''+p.id+'\')">'+(p.reservation==='needed'?'예약 확인':p.reservation==='booked'?'예약 완료':'예약 없음')+'</button><button class="'+(p.rain?'on':'')+'" onclick="fmToggle(\''+p.id+'\',\'rain\')">☔ 비 추천</button><button class="'+(p.excluded?'warn':'')+'" onclick="fmToggle(\''+p.id+'\',\'excluded\')">'+(p.excluded?'제외 해제':'후보 제외')+'</button><a href="'+esc(fmLink(p))+'" target="_blank" rel="noopener">지도 열기</a><a href="'+esc(fmDirectionsLink(p,'walking'))+'" target="_blank" rel="noopener">🚶 도보</a><a href="'+esc(fmDirectionsLink(p,'transit'))+'" target="_blank" rel="noopener">🚃 대중교통</a><a href="'+esc(fmDirectionsLink(p,'bicycling'))+'" target="_blank" rel="noopener">🚲 자전거</a></div>'+(fm2EtaTxt(p)?'<div class="xsmall" style="margin-top:8px">직선거리 기준 추정 · '+esc(fm2EtaTxt(p))+' · 실제 경로·환승·다음 차 시각은 위 버튼으로 구글맵에서 확인</div>':'')+'</div><div class="xcard"><h3><span class="tag">VIDEO</span>이 장소가 나오는 영상</h3><div class="xsmall">기본 검색 링크는 무료입니다. 정확한 영상 URL을 그룹으로 붙이거나 Gemini로 일본어 검색어를 확장할 수 있습니다.</div>'+p.videos.map((v,i)=>'<div class="fm-video"><div class="fm-video-head"><span>'+esc(v.name||('영상 '+(i+1)))+'</span><button onclick="fmDeleteVideo(\''+p.id+'\','+i+')">✕</button></div><div class="fm-video-links">'+(v.short?'<a class="short" href="'+esc(v.short)+'" target="_blank" rel="noopener">▶ 숏폼</a>':'')+(v.long?'<a href="'+esc(v.long)+'" target="_blank" rel="noopener">▶ 롱폼</a>':'')+'</div></div>').join('')+'<div class="xactions"><button class="xaction sub" onclick="fmAddVideo(\''+p.id+'\')">＋ 영상 그룹</button><button class="xaction sub" onclick="fmAiVideos(\''+p.id+'\')">✨ Gemini 검색어</button></div><div id="fmVideoOut"></div></div>'+spCardHTML(p)+'<div class="xcard"><h3><span class="tag">JAPANESE</span>이 장소에서 바로 쓸 말</h3><button class="xaction sub" onclick="fmSpotJapanese(\''+p.id+'\')">현장 일본어 카드 열기</button><div id="fmJpOut"></div></div>';}
+function fmRenderSpotTools(){const el=document.getElementById('fmSpotTools');if(!el)return;const p=foodMap.places.find(x=>x.id===foodMap.selected);if(!p){el.innerHTML='';return;}fmEnsureVideos(p);el.innerHTML='<div class="xcard hot"><h3><span class="tag">SPOT</span>'+esc(p.name)+'</h3><div class="xsmall">'+esc(p.address||p.note||'장소 정보')+'</div><div class="fm-status-actions"><button class="'+(p.priority?'on':'')+'" onclick="fm2Priority(\''+p.id+'\')">우선 '+p.priority+'/3</button><button class="'+(p.reservation!=='none'?'on':'')+'" onclick="fm2Reservation(\''+p.id+'\')">'+(p.reservation==='needed'?'예약 확인':p.reservation==='booked'?'예약 완료':'예약 없음')+'</button><button class="'+(p.rain?'on':'')+'" onclick="fmToggle(\''+p.id+'\',\'rain\')">☔ 비 추천</button><button class="'+(p.excluded?'warn':'')+'" onclick="fmToggle(\''+p.id+'\',\'excluded\')">'+(p.excluded?'제외 해제':'후보 제외')+'</button><a href="'+esc(fmLink(p))+'" target="_blank" rel="noopener">지도 열기</a><a href="'+esc(fmDirectionsLink(p,'walking'))+'" target="_blank" rel="noopener">🚶 도보</a><a href="'+esc(fmDirectionsLink(p,'transit'))+'" target="_blank" rel="noopener">🚃 대중교통</a><a href="'+esc(fmDirectionsLink(p,'bicycling'))+'" target="_blank" rel="noopener">🚲 자전거</a></div>'+(fm2EtaTxt(p)?'<div class="xsmall" style="margin-top:8px">직선거리 기준 추정 · '+esc(fm2EtaTxt(p))+' · 실제 경로·환승·다음 차 시각은 위 버튼으로 구글맵에서 확인</div>':'')+'</div><div class="xcard"><h3><span class="tag">VIDEO</span>이 장소가 나오는 영상</h3><div class="xsmall">기본 검색 링크는 무료입니다. 정확한 영상 URL을 그룹으로 붙이거나 Gemini로 현지어 검색어를 확장할 수 있습니다.</div>'+p.videos.map((v,i)=>'<div class="fm-video"><div class="fm-video-head"><span>'+esc(v.name||('영상 '+(i+1)))+'</span><button onclick="fmDeleteVideo(\''+p.id+'\','+i+')">✕</button></div><div class="fm-video-links">'+(v.short?'<a class="short" href="'+esc(v.short)+'" target="_blank" rel="noopener">▶ 숏폼</a>':'')+(v.long?'<a href="'+esc(v.long)+'" target="_blank" rel="noopener">▶ 롱폼</a>':'')+'</div></div>').join('')+'<div class="xactions"><button class="xaction sub" onclick="fmAddVideo(\''+p.id+'\')">＋ 영상 그룹</button><button class="xaction sub" onclick="fmAiVideos(\''+p.id+'\')">✨ Gemini 검색어</button></div><div id="fmVideoOut"></div></div>'+spCardHTML(p)+'<div class="xcard"><h3><span class="tag">PHRASE</span>이 장소에서 바로 쓸 말</h3><button class="xaction sub" onclick="fmSpotJapanese(\''+p.id+'\')">현장 '+esc(jpLangName())+' 카드 열기</button><div id="fmJpOut"></div></div>';}
 function fmAddVideo(id){const p=foodMap.places.find(x=>x.id===id);if(!p)return;const name=prompt('영상 그룹 이름','직접 찾은 영상');if(name===null)return;const sh=prompt('숏폼 URL (비우면 자동 검색)','')||fm2Yt(p.name+' '+name+' shorts'),lo=prompt('롱폼 URL (비우면 자동 검색)','')||fm2Yt(p.name+' '+name+' vlog');p.videos.push({name:name||'추가 영상',short:sh,long:lo});save('foodmap_v1',foodMap);fmRenderSpotTools();}
 function fmDeleteVideo(id,i){const p=foodMap.places.find(x=>x.id===id);if(!p||!confirm('이 영상 그룹을 삭제할까요?'))return;p.videos.splice(i,1);save('foodmap_v1',foodMap);fmRenderSpotTools();}
-async function fmAiVideos(id){const p=foodMap.places.find(x=>x.id===id),out=document.getElementById('fmVideoOut');if(!p)return;if(out)out.innerHTML='<div class="tool-result">일본어 검색어 생성 중…</div>';try{const prompt='후쿠오카 장소의 유튜브 검색어를 만든다. 장소명: '+p.name+', 주소: '+p.address+', 종류: '+p.kind+'. 실제 영상 URL을 추측하지 말고 일본어 검색어 조합 3개를 JSON 배열로만 답해. 형식: [{"name":"관점","short":"숏폼 검색어","long":"롱폼 검색어"}]';const t=await callGemini([{text:prompt}]),m=String(t).replace(/```json|```/g,'').match(/\[[\s\S]*\]/),a=m?JSON.parse(m[0]):[];a.forEach(x=>p.videos.push({name:x.name||'AI 검색',short:fm2Yt(x.short||p.name+' shorts'),long:fm2Yt(x.long||p.name+' vlog')}));save('foodmap_v1',foodMap);fmRenderSpotTools();}catch(e){if(out)out.innerHTML='<div class="tool-result">생성 실패: '+esc(e.message||e)+'</div>';}}
+async function fmAiVideos(id){const p=foodMap.places.find(x=>x.id===id),out=document.getElementById('fmVideoOut');if(!p)return;if(out)out.innerHTML='<div class="tool-result">검색어 생성 중…</div>';try{const prompt=affDest()+' 장소의 유튜브 검색어를 만든다. 장소명: '+p.name+', 주소: '+p.address+', 종류: '+p.kind+'. 실제 영상 URL을 추측하지 말고 현지어('+jpLangName()+') 검색어 조합 3개를 JSON 배열로만 답해. 형식: [{"name":"관점","short":"숏폼 검색어","long":"롱폼 검색어"}]';const t=await callGemini([{text:prompt}]),m=String(t).replace(/```json|```/g,'').match(/\[[\s\S]*\]/),a=m?JSON.parse(m[0]):[];a.forEach(x=>p.videos.push({name:x.name||'AI 검색',short:fm2Yt(x.short||p.name+' shorts'),long:fm2Yt(x.long||p.name+' vlog')}));save('foodmap_v1',foodMap);fmRenderSpotTools();}catch(e){if(out)out.innerHTML='<div class="tool-result">생성 실패: '+esc(e.message||e)+'</div>';}}
 async function fmYoutubeActual(){fmSaveApi(true);const p=foodMap.places.find(x=>x.id===foodMap.selected),out=document.getElementById('fmApiOut');if(!p){alert('먼저 장소를 선택해 주세요.');return;}if(!foodMap.youtubeKey){alert('YouTube Data API 키를 입력해 주세요. 무료 검색 링크는 키 없이도 사용 가능합니다.');return;}if(out)out.innerHTML='<div class="tool-result">YouTube에서 실제 영상 검색 중…</div>';try{const get=async q=>{const u='https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=3&q='+encodeURIComponent(q)+'&key='+encodeURIComponent(foodMap.youtubeKey),r=await fetch(u),j=await r.json();if(!r.ok)throw new Error(j.error&&j.error.message||('HTTP '+r.status));return j.items||[];};const z=await Promise.all([get(p.name+' '+fmAreaHint()+' shorts'),get(p.name+' '+fmAreaHint()+' vlog')]);for(let i=0;i<Math.max(z[0].length,z[1].length);i++){const s=z[0][i],l=z[1][i];p.videos.push({name:(l||s).snippet.title,short:s?'https://www.youtube.com/watch?v='+s.id.videoId:'',long:l?'https://www.youtube.com/watch?v='+l.id.videoId:''});}save('foodmap_v1',foodMap);renderFoodMap();}catch(e){if(out)out.innerHTML='<div class="tool-result">영상 검색 실패: '+esc(e.message||e)+'</div>';}}
 /* ── 스팟 핵심정보 요약: 앱이 아는 것만 근거로 정리한다 ──
    34절 "AI가 게시물에서 추출할 정보"의 구현. 지어내기를 막는 것이 이 기능의 핵심이다.
@@ -5201,6 +5230,14 @@ function sjPick(p,limit){
 function fmSpotJapanese(id){
  const p=foodMap.places.find(x=>x.id===id),out=document.getElementById('fmJpOut');
  if(!p||!out)return;
+ /* 미리 파일에 들어 있는 문장은 일본어뿐이다. 다른 나라는 그 자리에서 만든다. */
+ if(!jpIsJa()){
+  out.innerHTML='<div class="xsmall" style="margin-bottom:8px"><b style="color:var(--text)">'+esc(p.name)+'</b>'+
+   (p.kind&&p.kind!=='기타'?' · '+esc(p.kind):'')+
+   '<br>미리 들어 있는 문장은 일본어뿐입니다. '+esc(jpLangName())+' 문장은 이 가게에 맞춰 그 자리에서 만듭니다.</div>'+
+   '<div class="xactions"><button class="xaction" onclick="sjAskAI(\''+p.id+'\')">'+esc(jpLangName())+' 문장 만들기</button></div>';
+  return;
+ }
  const rows=sjPick(p,12),show=jpState.showReading!==false;
  const ht=fmHoursTodayTxt(p),ct=fmClosedTxt(p);
  out.innerHTML='<div class="xsmall" style="margin-bottom:8px"><b style="color:var(--text)">'+esc(p.name)+'</b>'+
@@ -5216,7 +5253,7 @@ function fmSpotJapanese(id){
 function sjAskAI(id){
  const p=foodMap.places.find(x=>x.id===id);if(!p)return;
  foodMap.selected=id;save('foodmap_v1',foodMap);
- const q='선택한 가게에서 쓸 일본어 문장을 5개만 더 알려줘. 이미 아는 기본 인사말 말고, 이 가게 업종과 메모에 맞는 것으로.';
+ const q='선택한 가게에서 쓸 '+jpLangName()+' 문장을 5개만 더 알려줘. 이미 아는 기본 인사말 말고, 이 가게 업종과 메모에 맞는 것으로.';
  renderFoodMap();
  const el=document.getElementById('asIn');
  if(el){el.value=q;asAsk();el.scrollIntoView({behavior:'smooth',block:'center'});}
@@ -5324,7 +5361,7 @@ async function fmEnrichAll(){
  fmBulkOut(html);renderFoodMap();}
 fmEnrichSelected=async function(){fmSaveApi(true);const p=foodMap.places.find(x=>x.id===foodMap.selected),out=document.getElementById('fmApiOut');if(!p){alert('먼저 목록에서 장소를 선택해 주세요.');return;}if(!foodMap.apiKey){alert('Places API 키를 입력해 주세요.');return;}if(out)out.innerHTML='<div class="tool-result">Places API에서 확인 중…</div>';try{const body={textQuery:p.name+' '+(p.address||fmAreaHint()),languageCode:fmPlaceLang(),regionCode:fmRegionCode(),maxResultCount:1};if(fm2HasCoords(p))body.locationBias={circle:{center:{latitude:+p.lat,longitude:+p.lng},radius:2000}};const r=await fetch('https://places.googleapis.com/v1/places:searchText',{method:'POST',headers:{'Content-Type':'application/json','X-Goog-Api-Key':foodMap.apiKey,'X-Goog-FieldMask':'places.id,places.displayName,places.formattedAddress,places.location,places.primaryType,places.primaryTypeDisplayName,places.rating,places.userRatingCount,places.googleMapsUri,places.regularOpeningHours.openNow,places.regularOpeningHours.weekdayDescriptions,places.businessStatus'},body:JSON.stringify(body)}),j=await r.json();if(!r.ok)throw new Error(j.error&&j.error.message||('HTTP '+r.status));const x=j.places&&j.places[0];if(!x)throw new Error('일치하는 장소를 찾지 못했습니다.');p.placeId=x.id||p.placeId;p.name=x.displayName&&x.displayName.text||p.name;p.address=x.formattedAddress||p.address;p.lat=x.location&&x.location.latitude||p.lat;p.lng=x.location&&x.location.longitude||p.lng;p.url=x.googleMapsUri||p.url;p.rating=x.rating||null;p.ratingCount=x.userRatingCount||0;p.openNow=x.regularOpeningHours&&x.regularOpeningHours.openNow;p.hours=x.regularOpeningHours&&x.regularOpeningHours.weekdayDescriptions||p.hours;p.businessStatus=x.businessStatus||'';p.placeType=x.primaryType||'';p.cat=fmInfer((x.primaryType||'')+' '+(x.primaryTypeDisplayName&&x.primaryTypeDisplayName.text||'')+' '+p.name);p.kind=fm2Kind(p.name+' '+p.placeType,p.cat);p.region=fm2Region(p.address+' '+p.name);save('foodmap_v1',foodMap);renderFoodMap();}catch(e){if(out)out.innerHTML='<div class="tool-result">보강 실패: '+esc(e.message||e)+'\nAPI 활성화·결제·키 제한을 확인해 주세요.</div>';}};
 function fm2Download(name,obj){const b=new Blob([JSON.stringify(obj,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
-fmExport=function(){fm2Download('후쿠오카_개인지도_'+TODAY+'.json',{v:2,exported:TODAY,listName:foodMap.listName,places:foodMap.places});};
+fmExport=function(){fm2Download(affDest()+'_내지도_'+TODAY+'.json',{v:2,exported:TODAY,listName:foodMap.listName,places:foodMap.places});};
 function fmExportSale(){const fields=['name','cat','kind','region','address','url','lat','lng','placeId','rating','ratingCount','businessStatus','hours','videos'],spots=foodMap.places.filter(p=>!p.excluded).map(p=>{const x={};fields.forEach(k=>{if(p[k]!==undefined&&p[k]!==null&&p[k]!==''&&!(Array.isArray(p[k])&&!p[k].length))x[k]=p[k];});return x;});fm2Download('후쿠오카_판매용_스팟팩_'+TODAY+'.json',{v:2,publicSpotPack:true,exported:TODAY,listName:foodMap.listName,privacy:'개인 메모·위치·호텔·API 키·방문기록 제외',spots:spots});}
 let fmSyncChecking=false;
 function fmSyncDb(){return new Promise((res,rej)=>{const r=indexedDB.open('fukuoka_csv_sync_v1',1);r.onupgradeneeded=()=>r.result.createObjectStore('files');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});}
