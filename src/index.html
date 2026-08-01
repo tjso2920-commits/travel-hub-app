@@ -129,7 +129,7 @@
   .empty{padding:18px;text-align:center;color:var(--faint);font-size:12.5px}
   .burnrow .l{font-size:13px;font-weight:700;color:var(--muted)}
   .burnrow .u{font-size:12px;color:var(--faint)}
-  .cd{aspect-ratio:1/1.15;background:var(--surface);border:1px solid var(--line);border-radius:10px;
+  .cd{min-height:52px;aspect-ratio:1/1.15;background:var(--surface);border:1px solid var(--line);border-radius:10px;
     display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:pointer;position:relative;min-width:0}
   .cd.o{opacity:.25}
   .cd.today{border-color:var(--wasabi)}
@@ -187,7 +187,7 @@
     color:#1a1710;font-size:13.5px;font-weight:800;text-decoration:none}
   .alink:active{opacity:.85}
 
-  .overlay{position:fixed;inset:0;background:rgba(10,8,6,.72);backdrop-filter:blur(4px);z-index:100;display:none;align-items:flex-end;justify-content:center}
+  .overlay{position:fixed;inset:0;background:rgba(10,8,6,.72);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);z-index:100;display:none;align-items:flex-end;justify-content:center}
   .overlay.show{display:flex}
   .modal{width:100%;max-width:520px;max-height:86vh;overflow-y:auto;background:var(--surface);
     border-top-left-radius:20px;border-top-right-radius:20px;border-top:1px solid var(--line2);
@@ -399,7 +399,7 @@
   .fm-gps-mapdot::before{content:"";position:absolute;left:50%;top:50%;width:58px;height:58px;border-radius:50%;
     background:rgba(66,133,244,.16);border:1px solid rgba(113,165,249,.7);transform:translate(-50%,-50%);animation:fmGpsPulse 2.2s ease-out infinite}
   .fm-gps-maplabel{position:absolute;left:10px;bottom:10px;z-index:3;pointer-events:none;border:1px solid rgba(255,255,255,.22);
-    border-radius:10px;padding:6px 9px;background:rgba(15,18,21,.86);backdrop-filter:blur(7px);color:#F5F7FA;font-size:10.5px;font-weight:800}
+    border-radius:10px;padding:6px 9px;background:rgba(15,18,21,.86);backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px);color:#F5F7FA;font-size:10.5px;font-weight:800}
   @keyframes fmGpsPulse{0%{opacity:.82;transform:translate(-50%,-50%) scale(.55)}70%,100%{opacity:.08;transform:translate(-50%,-50%) scale(1.2)}}
   .fm-gps-card{border:1px solid rgba(66,133,244,.34);border-radius:14px;padding:14px;margin-bottom:12px;
     background:linear-gradient(135deg,rgba(66,133,244,.11),rgba(34,38,42,.82) 54%,var(--surface));box-shadow:0 14px 34px rgba(0,0,0,.18)}
@@ -1486,6 +1486,27 @@ function jpWeeksFor(code){
 }
 /* 지금 쓸 주차 배열. 비어 있으면 아직 안 만든 것이다. */
 function LW(){return jpWeeksFor(jpLang());}
+/* 만드는 도중 끊기면 앞 주차까지만 저장된다. 그때 화면이 "DAY 71 / 90" 이라고 하면
+   거짓말이 된다 — 실제로는 앞 주차를 계속 돌려 보고 있는 것이다.
+   몇 주치가 있는지 세어서 부족하면 그대로 적고 이어 만들 수 있게 한다. */
+function jpPackWeeks(){return LW().length;}
+function jpPackShort(){
+ if(jpIsJa())return 0;                       /* 일본어는 파일에 다 들어 있다 */
+ if(!jpHasPack())return 0;                   /* 아예 없으면 만들기 화면이 따로 있다 */
+ const need=Math.max.apply(null,jpPlan().w)+1;
+ const have=jpPackWeeks();
+ return have<need?have:0;                    /* 0 이면 모자라지 않다는 뜻 */
+}
+function jpPackShortHTML(){
+ const have=jpPackShort();
+ if(!have)return'';
+ const need=Math.max.apply(null,jpPlan().w)+1;
+ return '<div class="xcard"><h3><span class="tag">MORE</span>회화팩이 '+have+'주차까지만 있습니다</h3>'+
+  '<div class="xsmall">고른 코스는 <b style="color:var(--text)">'+need+'주차</b>까지 씁니다. '+
+  '만드는 도중에 끊긴 것이라 지금은 앞 '+have+'주차를 돌려 보고 있습니다. '+
+  '이어서 만들면 나머지가 채워집니다.</div>'+
+  '<div class="xactions"><button class="xaction" onclick="jpGenPack()">✨ 이어서 만들기</button></div></div>';
+}
 function jpHasPack(){return LW().length>0;}
 /* 만들어 둔 주차 수에 맞춰 코스 길이를 줄인다. 없는 주차를 가리키면 화면이 깨진다. */
 function jpWeekSafe(w){const a=LW();return a.length?Math.min(w,a.length-1):0;}
@@ -2202,7 +2223,7 @@ function jpTodayPane(pane){
  const s=jpSession(p),W=LW()[s.w]||{s:[],t:jpLangName()},topic=W.s[s.d]||W.t;
  /* 일본어 문법·N레벨은 일본 갈 때만 의미가 있다 */
  if(!jpIsJa()){
-  pane.innerHTML='<div class="xcard hot"><h3><span class="tag">DAY '+(p+1)+' · '+esc(jpLangName())+'</span>'+esc(topic)+'</h3>'+
+  pane.innerHTML=jpPackShortHTML()+'<div class="xcard hot"><h3><span class="tag">DAY '+(p+1)+' · '+esc(jpLangName())+'</span>'+esc(topic)+'</h3>'+
    '<div class="xsmall">오늘 6문장을 소리내어 읽고 넘어가면 됩니다. 넘긴 문장은 자동복습에 쌓입니다.</div></div>'+
    '<div class="xcard"><h3><span class="tag">6 PHRASES</span>실전 표현</h3>'+s.lines.map(function(x){return jpLineHTML(x,false);}).join('')+
    '<div class="xactions"><button class="xaction" onclick="jpPlaySession('+p+')">🔊 오늘 6문장 연속 듣기</button>'+
@@ -2721,15 +2742,38 @@ const FM_CATS=['전체','후쿠오카권','즐겨찾기','미방문','맛집·�
 let foodMap=load('foodmap_v1',{places:[],filter:'후쿠오카권',q:'',selected:null,apiKey:'',listName:'여행계획'});
 if(!foodMap||typeof foodMap!=='object')foodMap={places:[],filter:'후쿠오카권',q:'',selected:null,apiKey:'',listName:'여행계획'};
 if(!Array.isArray(foodMap.places))foodMap.places=[];
-function fmInfer(s){s=String(s||'').toLowerCase();if(/ホテル|hotel|旅館|民宿|호스텔|호텔|숙소|료칸/.test(s))return'숙소';
- if(/駅|空港|港|バス|station|airport|터미널|역|공항/.test(s))return'교통';/* '스파' 는 온천에도 마사지에도 붙는다. 온천 낱말이 있으면 온천이 이긴다 — 순서가 규칙이다. */
- if(/温泉|銭湯|サウナ|onsen|sento|온천|사우나|찜질|족욕|열탕|노천탕/.test(s))return'사우나·온천';
- if(/マッサージ|エステ|massage|spa|마사지|스파|에스테|아로마|경락|발마사지|타이마사지|foot ?massage|reflexolog/.test(s))return'마사지·스파';
- if(/薬局|ドラッグ|病院|クリニック|pharmacy|drug ?store|hospital|clinic|약국|병원|의원|응급|치과|드럭스토어|메디컬/.test(s))return'약국·병원';
- if(/神社|寺|城|公園|展望|博物館|美術館|beach|shrine|temple|공원|신사|사찰|전망|박물관|미술관|해변/.test(s))return'관광·명소';
- if(/百貨店|モール|市場|ショップ|store|shop|market|쇼핑|시장|백화점|마트/.test(s))return'쇼핑';
- if(/居酒屋|酒場|屋台|バー|クラブ|パブ|bar|pub|club|lounge|이자카야|포차|술집|클럽|나이트|펍|라운지|와인바|위스키/.test(s))return'바·이자카야';if(/カフェ|珈琲|喫茶|coffee|cafe|카페|디저트|パン/.test(s))return'카페·디저트';
- if(/寿司|鮨|刺身|海鮮|ラーメン|うどん|焼鳥|焼肉|restaurant|식당|맛집|스시|라멘|우동|야키토리|고기/.test(s))return'맛집·식당';return'기타';}
+/* ── 분류 자동 판정 ──────────────────────────────────────────────────
+   가게 이름만 보고 분류를 찍는다. 137곳을 가져왔을 때 전부 '기타'로 몰리면
+   분류별 묶기도 필터도 무의미해진다 — 이 앱에서 제일 많이 쓰는 기능이다.
+
+   실제 가게 이름으로 재 보니 일본 밖에서 거의 안 맞았다
+   (터키 0/6 · 베트남 1/6 · 프랑스 2/7 · 미국 4/7). 그래서 나라별 낱말을 넣었다.
+
+   **순서가 규칙이다.** 위에서 걸리면 아래는 안 본다.
+    · 숙소(hotel)가 관광(park)보다 위 → 'Park Hotel' 은 숙소
+    · 온천(sauna·hamam)이 마사지(spa)보다 위 → '온천 스파' 는 온천
+    · 카페(kahve·cà phê)가 바(bar)보다 위 → 'Bar à café' 는 카페
+    · 맛집이 맨 아래 → 가장 넓은 그물이라 마지막에 친다 */
+const FM_INFER=[
+ ['숙소', /ホテル|旅館|民宿|hotel|hôtel|otel\b|hostel|호스텔|호텔|숙소|료칸|inn\b|resort|guest ?house|ryokan|khách sạn|pension|auberge|albergo|posada|hospedaje|b&b|motel|lodge/],
+ ['교통', /駅|空港|港|バス|station|gare\b|istasyon|havaliman|aéroport|airport|aeropuerto|flughafen|bahnhof|metro|subway|터미널|역$|공항|terminal|bến xe|ga hà|bus stop|port\b|ferry|pier/],
+ /* '스파'는 온천에도 마사지에도 붙는다. 온천 낱말이 있으면 온천이 이긴다. */
+ ['사우나·온천', /温泉|銭湯|サウナ|onsen|sento|온천|사우나|찜질|족욕|열탕|노천탕|sauna|hamam|hammam|banya|therme|thermal|bath ?house|ancient baths|\bbaths\b|bagno termale|onsen/],
+ ['마사지·스파', /マッサージ|エステ|massage|\bspa\b|마사지|스파|에스테|아로마|경락|발마사지|타이마사지|foot ?massage|reflexolog|masaj|mát ?xa|wellness|salon de massage|masaje/],
+ ['약국·병원', /薬局|ドラッグ|病院|クリニック|pharmac|farmacia|farmácia|apotheke|eczane|nhà thuốc|drug ?store|hospital|hôpital|hastane|bệnh viện|clinic|clinique|klinik|약국|병원|의원|응급|치과|드럭스토어|메디컬|boots\b|walgreens|\bcvs\b|medical/],
+ /* 카페를 바보다 먼저. 'bar à café' 같은 이름이 술집으로 가면 안 된다. */
+ ['카페·디저트', /カフェ|珈琲|喫茶|パン|coffee|caf[eé]|kahve|kaffee|caff[eè]|cà ?phê|kopi\b|boulangerie|p[aâ]tisserie|bakery|panader|konditorei|pasticceria|gelat|dessert|tea ?house|tearoom|çay|카페|디저트|베이커리|제과|빵집|brunch/],
+ ['바·이자카야', /居酒屋|酒場|屋台|バー|クラブ|パブ|\bbar\b|\bbars\b|\bpub\b|\bclub\b|lounge|meyhane|birahane|bodega|cantina|taberna|kneipe|weinstube|brauerei|brewery|taproom|\bale\b|\bbia\b|\bbeer\b|birreria|cocktail|whisk|vinoteca|wine ?bar|이자카야|포차|술집|클럽|나이트|펍|라운지|와인바|위스키/],
+ ['관광·명소', /神社|寺|城|公園|展望|博物館|美術館|shrine|temple|tempel|\bwat\b|chùa|đền|cami|camii|mosque|mezquita|church|chiesa|iglesia|kirche|église|cathedral|cathédrale|basilica|museum|mus[eé]e|museo|müze|gallery|galleria|galerie d'art|palace|palais|palazzo|saray|castle|château|schloss|castillo|kale\b|tower|\btour\b|kule|park\b|parc\b|parque|jardin|garden|bahçe|giardin|square|plaza|meydan|piazza|bridge|pont\b|köprü|puente|monument|statue|beach|plage|playa|sahil|공원|신사|사찰|전망|박물관|미술관|해변|성당|사원/],
+ ['쇼핑', /百貨店|モール|市場|ショップ|\bstore\b|\bshop\b|market|marché|mercado|mercato|markt|pazar|pasar\b|çarşı|\bmall\b|galeries|boutique|chợ|department|outlet|쇼핑|시장|백화점|마트|편의점/],
+ /* 맨 아래 — 가장 넓은 그물이다 */
+ ['맛집·식당', /寿司|鮨|刺身|海鮮|ラーメン|うどん|焼鳥|焼肉|restaurant|restaurante|ristorante|trattoria|osteria|taverna|lokanta|sofras|meze|bistro|brasserie|comptoir|pizzeria|pizza|burger|steak|grill|kitchen|diner|eatery|noodle|\bphở?\b|\bbún\b|\bcơm\b|nhà hàng|quán\b|warung|som ?tam|pad ?thai|khao\b|tom ?yum|\bkrua\b|taquer|taco|tapas|curry|kebab|döner|dönerci|식당|맛집|스시|라멘|우동|야키토리|고기|국밥|분식/]
+];
+function fmInfer(s){
+ s=String(s||'').toLowerCase();
+ for(let i=0;i<FM_INFER.length;i++)if(FM_INFER[i][1].test(s))return FM_INFER[i][0];
+ return'기타';
+}
 function fmInFukuoka(p){const a=String((p.address||'')+' '+(p.note||'')).toLowerCase();if(/福岡|fukuoka|후쿠오카|糸島|itoshima|이토시마|北九州|kitakyushu/.test(a))return true;
  return p.lat>=32.7&&p.lat<=34.15&&p.lng>=129.2&&p.lng<=131.25;}
 function fmLink(p){if(p.url)return p.url;const q=p.lat&&p.lng?(p.lat+','+p.lng):(p.name+' '+fmAreaHint());return'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(q);}
@@ -2913,13 +2957,47 @@ function fmAdd(){
  save('foodmap_v1',foodMap);renderFoodMap();
 }
 function fmKml(txt){const doc=new DOMParser().parseFromString(txt,'text/xml'),out=[];doc.querySelectorAll('Placemark').forEach(pm=>{
- const name=(pm.querySelector('name')||{}).textContent||'이름 없음',desc=(pm.querySelector('description')||{}).textContent||'',c=((pm.querySelector('coordinates')||{}).textContent||'').trim().split(',');out.push({name:name,note:desc,lng:+c[0]||null,lat:+c[1]||null,url:''});});return out;}
+ const name=(pm.querySelector('name')||{}).textContent||'이름 없음',desc=(pm.querySelector('description')||{}).textContent||'',c=((pm.querySelector('coordinates')||{}).textContent||'').trim().split(',');const row={name:name,note:desc,lng:+c[0]||null,lat:+c[1]||null,url:''};
+ /* 좌표 태그가 없으면 설명 안의 지도 주소에서 꺼낸다 */
+ if(row.lat===null||row.lng===null){const g=fmCoordFromUrl(desc);if(g){row.lat=g.lat;row.lng=g.lng;row.latFrom='url';}}
+ out.push(row);});return out;}
 function fmObj(o){if(!o||typeof o!=='object')return null;const p=o.properties||o,loc=p.Location||p.location||o.Location||{},geo=loc['Geo Coordinates']||loc.geoCoordinates||p.geoCoordinates||{},co=o.geometry&&Array.isArray(o.geometry.coordinates)?o.geometry.coordinates:[];
  const name=p.name||p.Name||p.title||p.Title||p['Business Name']||loc['Business Name']||loc.name||'';if(!name)return null;
  return{name:String(name),note:String(p.note||p.Note||p.comments||p.Comments||p.description||p.Description||''),address:String(p.address||p.Address||loc.address||''),url:String(p.google_maps_url||p['Google Maps URL']||p.googleMapsUrl||p.URL||p.url||loc['Google Maps URL']||''),lat:+(geo.Latitude||geo.latitude||p.latitude||co[1])||null,lng:+(geo.Longitude||geo.longitude||p.longitude||co[0])||null};}
 function fmJson(j){const out=[],seen=new Set();function walk(x){if(!x||typeof x!=='object')return;const v=fmObj(x);if(v){const k=v.url||v.name+'|'+v.lat+'|'+v.lng;if(!seen.has(k)){seen.add(k);out.push(v);}}if(Array.isArray(x))x.forEach(walk);else Object.keys(x).forEach(k=>{if(typeof x[k]==='object')walk(x[k]);});}walk(j);return out;}
 function fmCsvRows(txt){const rows=[],row=[];let cur='',q=false;for(let i=0;i<txt.length;i++){const c=txt[i];if(c==='"'){if(q&&txt[i+1]==='"'){cur+='"';i++;}else q=!q;}else if(c===','&&!q){row.push(cur);cur='';}else if((c==='\n'||c==='\r')&&!q){if(c==='\r'&&txt[i+1]==='\n')i++;row.push(cur);if(row.some(x=>x.trim()))rows.push(row.splice(0));else row.length=0;cur='';}else cur+=c;}row.push(cur);if(row.some(x=>x.trim()))rows.push(row);return rows;}
-function fmCsv(txt){const rows=fmCsvRows(txt);if(rows.length<2)return[];const h=rows[0].map(x=>x.trim().toLowerCase().replace(/^\ufeff/,''));return rows.slice(1).map(r=>{const o={};h.forEach((k,i)=>o[k]=r[i]||'');return{name:o.title||o.name||o['business name']||o['제목']||o['이름']||o['장소']||'',url:o.url||o['google maps url']||o.google_maps_url||o['링크']||'',note:o.note||o.comments||o.description||o['메모']||o['설명']||o['댓글']||'',address:o.address||o['주소']||'',lat:+(o.latitude||o.lat||o['위도'])||null,lng:+(o.longitude||o.lng||o['경도'])||null};}).filter(x=>x.name);}
+/* ── 구글맵 주소에서 좌표 꺼내기 ────────────────────────────────────
+   저장목록 CSV 에는 위도·경도 칸이 없다. 대신 URL 안에 들어 있는 경우가 많다.
+   이걸 안 꺼내면 지도·거리·동선·구역 묶기가 전부 죽는다.
+
+   보이는 모양들 (앞에 오는 것이 더 정확하다)
+     !3d위도!4d경도            — 구글이 실제 장소에 붙이는 값. 제일 믿을 만하다
+     @위도,경도,17z            — 지도 화면 중심. 장소와 거의 같다
+     ?q= / query= / ll= / center= / daddr= / destination=
+   꺼낼 게 없으면(goo.gl 단축주소, place_id 만 있는 것) null 을 준다. */
+function fmCoordFromUrl(u){
+ const t=String(u||'');
+ if(!t)return null;
+ let m=t.match(/!3d(-?\d{1,3}(?:\.\d+)?)!4d(-?\d{1,3}(?:\.\d+)?)/);
+ if(!m)m=t.match(/[@](-?\d{1,3}(?:\.\d+)?),(-?\d{1,3}(?:\.\d+)?)/);
+ if(!m)m=t.match(/(?:[?&](?:q|ll|sll|center|daddr|destination|query)|query)=(-?\d{1,3}(?:\.\d+)?)(?:,|%2C)(-?\d{1,3}(?:\.\d+)?)/i);
+ if(!m)return null;
+ const lat=fm2Coord(m[1],90),lng=fm2Coord(m[2],180);
+ if(lat===null||lng===null)return null;
+ /* 0,0 은 바다 한가운데다. 값이 비었을 때 나오는 흔한 쓰레기라 버린다. */
+ if(Math.abs(lat)<0.0001&&Math.abs(lng)<0.0001)return null;
+ return{lat:lat,lng:lng};
+}
+function fmCsv(txt){const rows=fmCsvRows(txt);if(rows.length<2)return[];const h=rows[0].map(x=>x.trim().toLowerCase().replace(/^\ufeff/,''));return rows.slice(1).map(r=>{const o={};h.forEach((k,i)=>o[k]=r[i]||'');return{name:o.title||o.name||o['business name']||o['제목']||o['이름']||o['장소']||'',url:o.url||o['google maps url']||o.google_maps_url||o['링크']||'',note:o.note||o.comments||o.description||o['메모']||o['설명']||o['댓글']||'',address:o.address||o['주소']||'',lat:+(o.latitude||o.lat||o['위도'])||null,lng:+(o.longitude||o.lng||o['경도'])||null};})
+  .filter(x=>x.name)
+  /* 칸에 좌표가 없으면 주소에서 꺼내 본다. 저장목록 CSV 는 거의 이 경우다. */
+  .map(function(x){
+   if(x.lat===null||x.lng===null){
+    const c=fmCoordFromUrl(x.url);
+    if(c){x.lat=c.lat;x.lng=c.lng;x.latFrom='url';}
+   }
+   return x;
+  });}
 function fmMerge(arr){let added=0,updated=0,skipped=0,blocked=0;const byKey=new Map();foodMap.places.forEach(p=>byKey.set(p.url||((p.name||'').toLowerCase()+'|'+p.lat+'|'+p.lng),p));
  arr.forEach(x=>{const key=x.url||((x.name||'').toLowerCase()+'|'+x.lat+'|'+x.lng);if(!x.name){skipped++;return;}const old=byKey.get(key);if(old){old.name=x.name||old.name;old.note=x.note||old.note;old.address=x.address||old.address;old.lat=x.lat||old.lat;old.lng=x.lng||old.lng;old.cat=fmInfer(old.name+' '+old.note+' '+old.address);updated++;return;}
   /* 이미 담아 둔 것은 건드리지 않는다. 넘치는 만큼만 안 담는다. */
@@ -4192,18 +4270,36 @@ const FM_MONEY={
  GB:['GBP','파운드'],AU:['AUD','호주달러'],TR:['TRY','리라'],AE:['AED','디르함']
 };
 function fmMoney(){return FM_MONEY[fmCountry()]||['JPY','엔'];}
+/* 입력칸 예시 금액. 단위가 다르면 자릿수도 다르다 —
+   베트남은 밥 한 끼가 50,000동이고 미국은 20달러다. */
+const FM_EG={JPY:1200,KRW:12000,TWD:300,HKD:80,THB:350,VND:120000,SGD:15,MYR:40,
+ PHP:500,IDR:150000,CNY:70,USD:20,EUR:18,GBP:16,AUD:25,TRY:400,AED:50};
+function fmEg(){return (FM_EG[fxCur()]||1200).toLocaleString();}
 const FX_DEFAULT={home:'KRW',homeSym:'원'};
 function fxCur(){return String(foodMap.fxCur||fmMoney()[0]).toUpperCase();}
 function fxHome(){return String(foodMap.fxHome||FX_DEFAULT.home).toUpperCase();}
-function fxRate(){const r=+((foodMap.fx||{}).rate);return Number.isFinite(r)&&r>0?r:null;}
+/* 받아 둔 환율이 **어느 통화 짝의 값인지** 확인한다.
+   목적지를 일본→태국으로 바꿨는데 엔화 환율을 바트에 쓰면 돈이 네 배 틀린다.
+   짝이 안 맞으면 없는 것으로 친다 — 틀린 숫자보다 빈칸이 낫다. */
+function fxPairOK(){
+ const f=foodMap.fx||{};
+ /* 예전에 저장된 값에는 짝이 없다. 그때는 전부 일본이었으므로 JPY→KRW 로 본다. */
+ const from=String(f.from||'JPY').toUpperCase(),to=String(f.to||'KRW').toUpperCase();
+ return from===fxCur()&&to===fxHome();
+}
+function fxRate(){
+ const r=+((foodMap.fx||{}).rate);
+ if(!(Number.isFinite(r)&&r>0))return null;
+ return fxPairOK()?r:null;
+}
 function fxAt(){return (foodMap.fx||{}).at||'';}
 function fxStale(){const a=fxAt();if(!a)return true;return jpDateAdd(a,7)<TODAY;}
 function fxSetRate(v){
  const r=+v;
  if(!Number.isFinite(r)||r<=0){delete foodMap.fx;save('foodmap_v1',foodMap);renderFoodMap();return;}
- foodMap.fx={rate:r,at:TODAY,src:'manual'};save('foodmap_v1',foodMap);renderFoodMap();
+ foodMap.fx={rate:r,at:TODAY,src:'manual',from:fxCur(),to:fxHome()};save('foodmap_v1',foodMap);renderFoodMap();
 }
-function fxSetCur(v){foodMap.fxCur=String(v||'').trim().toUpperCase()||'JPY';delete foodMap.fx;save('foodmap_v1',foodMap);renderFoodMap();}
+function fxSetCur(v){foodMap.fxCur=String(v||'').trim().toUpperCase()||fmMoney()[0];foodMap.fxCurManual=1;delete foodMap.fx;save('foodmap_v1',foodMap);renderFoodMap();}
 function fxSetHome(v){foodMap.fxHome=String(v||'').trim().toUpperCase()||'KRW';delete foodMap.fx;save('foodmap_v1',foodMap);renderFoodMap();}
 let fxAutoTried=false;
 /* 앱을 열 때 기준일이 오늘이 아니면 한 번만 조용히 갱신한다.
@@ -4227,7 +4323,7 @@ async function fxFetch(quiet){
   const j=await r.json();
   const rate=j&&j.rates&&+j.rates[to];
   if(!Number.isFinite(rate)||rate<=0)throw new Error('응답에 환율이 없습니다');
-  foodMap.fx={rate:rate,at:(j.date||TODAY),src:'api'};
+  foodMap.fx={rate:rate,at:(j.date||TODAY),src:'api',from:from,to:to};
   save('foodmap_v1',foodMap);renderFoodMap();
  }catch(e){
   if(el)el.innerHTML='<div class="tool-result">조회 실패 — '+esc((e&&e.message)||'네트워크를 확인해 주세요')+'<br>아래에 환율을 직접 입력해도 됩니다.</div>';
@@ -4249,7 +4345,10 @@ function fxBoth(amount){
 }
 function fxHTML(){
  const r=fxRate(),stale=fxStale();
- const sum=r?('1'+fxCur()+' ≈ '+(Math.round(r*100)/100).toLocaleString()+fxHome()):'환율 미설정';
+ const stored=+((foodMap.fx||{}).rate)||0;
+ const mismatch=!r&&stored>0;   /* 값은 있는데 통화 짝이 안 맞는 경우 */
+ const sum=r?('1'+fxCur()+' ≈ '+(Math.round(r*100)/100).toLocaleString()+fxHome())
+  :(mismatch?(fxCur()+' 환율 없음 · 다시 받기'):'환율 미설정');
  return fmPanel('fx','RATE','환율',sum,
   '<div class="fm-grid"><input class="xinput" value="'+esc(fxCur())+'" placeholder="현지 통화" onchange="fxSetCur(this.value)">'+
   '<input class="xinput" value="'+esc(fxHome())+'" placeholder="자국 통화" onchange="fxSetHome(this.value)"></div>'+
@@ -4261,6 +4360,7 @@ function fxHTML(){
   '<div id="fxOut"></div>'+
   '<label class="xsmall" style="display:block;margin-top:8px">직접 입력 (1 '+esc(fxCur())+' 당 '+esc(fxHome())+')'+
   '<input class="xinput" style="margin-top:4px" type="number" step="0.0001" inputmode="decimal" value="'+(r||'')+'" placeholder="예: 9.3" onchange="fxSetRate(this.value)"></label>'+
+  (mismatch?'<div class="xsmall" style="margin-top:6px;color:var(--ember-soft)">목적지가 바뀌어 <b style="color:var(--text)">'+esc(fxCur())+' 환율이 아직 없습니다.</b> 위에서 한 번 받아 주세요. 그전까지는 환산 금액을 보여주지 않습니다.</div>':'')+
   '<div class="xsmall" style="margin-top:6px">한 번 받아 두면 오프라인에서도 그대로 쓰입니다. 실제 카드 결제 환율과는 차이가 있습니다.</div>');
 }
 /* ── 시작 안내: 구매자가 처음 열었을 때 무엇을 해야 하는지 ──
@@ -4625,7 +4725,14 @@ function fmCatLabel(x){
 }
 function fmRegionCode(){return fmCountryRow()[0];}
 function fmPlaceLang(){return fmCountryRow()[2];}
-function fmSetCountry(v){foodMap.destCountry=String(v||'').toUpperCase();save('foodmap_v1',foodMap);renderFoodMap();}
+function fmSetCountry(v){
+ foodMap.destCountry=String(v||'').toUpperCase();
+ /* 나라가 바뀌면 통화도 바뀐다. 손으로 통화를 골라 둔 게 아니면 그것도 따라가게 비운다. */
+ if(foodMap.fxCur&&!foodMap.fxCurManual)delete foodMap.fxCur;
+ save('foodmap_v1',foodMap);renderFoodMap();
+ /* 환율은 fxRate() 가 통화 짝을 보고 알아서 무시한다. 여기서 지울 필요가 없다 —
+    일본으로 되돌아오면 받아 뒀던 엔화 환율이 그대로 다시 살아난다. */
+}
 /* 이름만 있는 장소를 찾을 때 붙이는 꼬리말. 도시 이름이 가장 잘 듣는다. */
 function fmAreaHint(){return affDest();}
 function affIata(){return String(foodMap.destIata||'FUK').toLowerCase();}
@@ -4711,7 +4818,7 @@ function bgHTML(){
  const sum=total?(bgBoth(bgLeft())+' 남음'+(d?' · 하루 '+bgYen(bgPerDay()):'')):'예산 미설정';
  return fmPanel('budget','BUDGET','예산 · 지출',sum,
   '<div class="fm-grid">'+
-  fmField('총예산 (엔)','<input class="xinput" id="bgTotal" type="number" inputmode="numeric" value="'+(total||'')+'" onchange="bgSetTotal(this.value)">','현지에서 쓸 돈 전부')+
+  fmField('총예산 ('+fmMoney()[1]+')','<input class="xinput" id="bgTotal" type="number" inputmode="numeric" value="'+(total||'')+'" onchange="bgSetTotal(this.value)">','현지에서 쓸 돈 전부')+
   fmField('남은 일수','<input class="xinput" id="bgDays" type="number" inputmode="numeric" value="'+(d||'')+'" onchange="bgSetDays(this.value)">','오늘 포함 며칠 남았는지')+
   '</div>'+
   (total?'<div class="xstats bgstats" style="margin-top:8px">'+
@@ -4721,7 +4828,7 @@ function bgHTML(){
     (per!==null?'<div class="xstat"><b>'+bgYen(per)+'</b><span>하루 권장</span></div>':'')+
    '</div>':'<div class="xsmall" style="margin-top:8px">총예산을 넣으면 잔액과 하루 권장 금액이 계산되고, 어시스턴트가 그 숫자를 근거로 답합니다.</div>')+
   '<div class="fm-grid" style="margin-top:10px">'+
-  fmField('쓴 금액 (엔)','<input class="xinput" id="bgAmt" type="number" inputmode="numeric" placeholder="예: 1200">')+
+  fmField('쓴 금액 ('+fmMoney()[1]+')','<input class="xinput" id="bgAmt" type="number" inputmode="numeric" placeholder="예: '+fmEg()+'">')+
   fmField('무엇에 썼는지','<input class="xinput" id="bgMemo" placeholder="예: 점심">')+
   '</div>'+
   '<select class="xselect" id="bgPlace" style="margin-top:8px">'+opts+'</select>'+
@@ -5293,7 +5400,10 @@ function sjAskAI(id){
 fmAdd=function(){const name=document.getElementById('fmName').value.trim();if(!name){alert('장소 이름을 입력해 주세요.');return;}
  if(licRoom()<1){alert('무료판은 장소 '+FREE_LIMIT+'곳까지 담을 수 있습니다.\n설정(⚙)에서 정품 코드를 넣으면 제한이 풀립니다.');return;}
  const note=document.getElementById('fmNote').value.trim(),cat=document.getElementById('fmCat').value||fmInfer(name+' '+note),region=document.getElementById('fmRegion').value||fm2Region(name+' '+note);foodMap.places.unshift(fm2Normalize({id:'fm'+Date.now()+Math.floor(Math.random()*99),name:name,cat:cat,region:region,note:note,address:'',url:document.getElementById('fmUrl').value.trim(),lat:+document.getElementById('fmLat').value||null,lng:+document.getElementById('fmLng').value||null}));save('foodmap_v1',foodMap);renderFoodMap();};
-fmObj=function(o){if(!o||typeof o!=='object')return null;const p=o.properties||o,raw=p.Location||p.location||o.Location||{},loc=Array.isArray(raw)?(raw[0]||{}):raw,geo=loc['Geo Coordinates']||loc.geoCoordinates||p.geoCoordinates||{},co=o.geometry&&Array.isArray(o.geometry.coordinates)?o.geometry.coordinates:[];const name=p.name||p.Name||p.title||p.Title||p['Business Name']||loc['Business Name']||loc.name||'';if(!name)return null;return{name:String(name),note:String(p.note||p.Note||p.comments||p.Comments||p.description||p.Description||''),address:String(p.address||p.Address||loc.address||''),url:String(p.google_maps_url||p['Google Maps URL']||p.googleMapsUrl||p.URL||p.url||loc['Google Maps URL']||''),lat:+(p.lat||geo.Latitude||geo.latitude||p.latitude||co[1])||null,lng:+(p.lng||geo.Longitude||geo.longitude||p.longitude||co[0])||null,cat:p.cat||'',kind:p.kind||'',region:p.region||'',placeId:p.placeId||'',rating:+p.rating||null,ratingCount:+p.ratingCount||0,videos:Array.isArray(p.videos)?p.videos:[]};};
+fmObj=function(o){if(!o||typeof o!=='object')return null;const p=o.properties||o,raw=p.Location||p.location||o.Location||{},loc=Array.isArray(raw)?(raw[0]||{}):raw,geo=loc['Geo Coordinates']||loc.geoCoordinates||p.geoCoordinates||{},co=o.geometry&&Array.isArray(o.geometry.coordinates)?o.geometry.coordinates:[];const name=p.name||p.Name||p.title||p.Title||p['Business Name']||loc['Business Name']||loc.name||'';if(!name)return null;const out={name:String(name),note:String(p.note||p.Note||p.comments||p.Comments||p.description||p.Description||''),address:String(p.address||p.Address||loc.address||''),url:String(p.google_maps_url||p['Google Maps URL']||p.googleMapsUrl||p.URL||p.url||loc['Google Maps URL']||''),lat:+(p.lat||geo.Latitude||geo.latitude||p.latitude||co[1])||null,lng:+(p.lng||geo.Longitude||geo.longitude||p.longitude||co[0])||null,cat:p.cat||'',kind:p.kind||'',region:p.region||'',placeId:p.placeId||'',rating:+p.rating||null,ratingCount:+p.ratingCount||0,videos:Array.isArray(p.videos)?p.videos:[]};
+ /* 좌표 칸이 비어 있으면 구글맵 주소에서 꺼낸다 — CSV 와 같은 그물이다 */
+ if(out.lat===null||out.lng===null){const c=fmCoordFromUrl(out.url);if(c){out.lat=c.lat;out.lng=c.lng;out.latFrom='url';}}
+ return out;};
 fmJson=function(j){const direct=j&&(j.places||j.spots);if(Array.isArray(direct))return direct.map(fmObj).filter(Boolean);const out=[],seen=new Set();function walk(x){if(!x||typeof x!=='object')return;const v=fmObj(x);if(v){const k=v.placeId||v.url||v.name+'|'+v.lat+'|'+v.lng;if(!seen.has(k)){seen.add(k);out.push(v);return;}}if(Array.isArray(x))x.forEach(walk);else Object.keys(x).forEach(k=>{if(typeof x[k]==='object')walk(x[k]);});}walk(j);return out;};
 fmMerge=function(arr){let added=0,updated=0,skipped=0,blocked=0;const byKey=new Map();const kName=p=>(p.name||'').toLowerCase()+'|'+p.lat+'|'+p.lng;foodMap.places.forEach(p=>{fm2Normalize(p);[p.placeId,p.url,kName(p)].forEach(k=>{if(k)byKey.set(k,p);});});arr.forEach(x=>{if(!x||!x.name){skipped++;return;}const key=x.placeId||x.url||kName(x),old=byKey.get(x.placeId)||byKey.get(x.url)||byKey.get(kName(x));if(old){['name','note','address','url','placeId','rating','ratingCount'].forEach(k=>{if(x[k]!==undefined&&x[k]!==null&&x[k]!=='')old[k]=x[k];});if(x.lat!==null&&x.lat!==undefined)old.lat=x.lat;if(x.lng!==null&&x.lng!==undefined)old.lng=x.lng;if(x.videos&&x.videos.length)old.videos=x.videos;old.cat=x.cat||old.cat||fmInfer(old.name+' '+old.note+' '+old.address);old.kind=x.kind||old.kind||fm2Kind(old.name+' '+old.note,old.cat);old.region=x.region||old.region||fm2Region(old.address+' '+old.name);updated++;return;}
  /* 이미 담아 둔 것은 건드리지 않는다. 넘치는 만큼만 안 담는다. */
