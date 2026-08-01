@@ -754,7 +754,7 @@
     <button data-t="collect" class="on" onclick="showTab('collect');renderFoodMap()">담기</button>
     <button data-t="plan" onclick="showTab('plan');renderFoodMap()">일정</button>
     <button data-t="now" onclick="showTab('now');renderFoodMap()">지금 여행</button>
-    <button data-t="jp" onclick="showTab('jp');renderJapanese()">일본어</button>
+    <button data-t="jp" id="tabJp" onclick="showTab('jp');renderJapanese()">일본어</button>
   </nav>
   <section class="tab on" id="tab-collect">
     <div id="fmCollect"><div class="empty">불러오는 중…</div></div>
@@ -1360,7 +1360,7 @@ const JP_PLANS=[
  {k:'d15',      n:'15일',      d:15, w:[0,1,2,3],     s:'출발이 코앞일 때'},
  {k:'d30',      n:'30일',      d:30, w:[0,1,2,3,4,8], s:'한 달 남았을 때'},
  {k:'d60',      n:'60일',      d:60, w:[0,1,2,3,4,5,8,9,10],       s:'여유 있게'},
- {k:'d90',      n:'90일 전체', d:90, w:[0,1,2,3,4,5,6,7,8,9,10,11,12], s:'전부 다. 하카타벤까지'}
+ {k:'d90',      n:'90일 전체', d:90, w:[0,1,2,3,4,5,6,7,8,9,10,11,12], s:'전부 다'}
 ];
 function jpPlan(){return JP_PLANS.find(p=>p.k===jpState.plan)||JP_PLANS[JP_PLANS.length-1];}
 function jpLimit(){return jpPlan().d;}
@@ -1385,10 +1385,41 @@ let jpChat=load('jp_chat_v1',[]);
 let jpAIPacks=load('jp_packs_v1',{});
 let jpMode='today',jpReviewQueue=[],jpReviewOpen=false,jpAudio=[],jpAudioAt=0,jpAudioStop=true,jpReadTimer=null;
 
-function jpLineId(w,i){return 'w'+w+'l'+i;}
-function jpFindLine(id){const m=String(id).match(/^w(\d+)l(\d+)$/);if(!m)return null;const w=+m[1],i=+m[2];return JP_WEEKS[w]&&JP_WEEKS[w].l[i]?JP_WEEKS[w].l[i]:null;}
-function jpSession(n){n=Math.max(0,Math.min(jpLimit()-1,n));const w=jpWeekFor(n),d=n%7,src=JP_WEEKS[w].l,out=[];
- for(let x=0;x<6;x++){const i=(d*2+x)%src.length;out.push({id:jpLineId(w,i),v:src[i]});}return{w:w,d:d,lines:out};}
+/* ── 나라 따라 회화팩 갈아 끼우기 ────────────────────────────────────────
+   일본이면 손으로 쓴 교재, 아니면 AI 가 만든 그 나라 팩. 틀은 완전히 같다. */
+function jpLang(){return (typeof fmCountryRow==='function')?fmCountryRow()[2]:'ja';}
+function jpIsJa(){return jpLang()==='ja';}
+function jpLangName(){return FM_LANG_NAME[jpLang()]||'현지 회화';}
+/* 나라별 AI 팩은 기존 저장 칸 안에 담는다. 저장 키를 새로 만들지 않는다. */
+function jpLangPack(){
+ if(!jpAIPacks.langs||typeof jpAIPacks.langs!=='object')jpAIPacks.langs={};
+ return jpAIPacks.langs;
+}
+function jpWeeksFor(code){
+ if(code==='ja')return JP_WEEKS;
+ const p=jpLangPack()[code];
+ return (p&&Array.isArray(p.weeks))?p.weeks:[];
+}
+/* 지금 쓸 주차 배열. 비어 있으면 아직 안 만든 것이다. */
+function LW(){return jpWeeksFor(jpLang());}
+function jpHasPack(){return LW().length>0;}
+/* 만들어 둔 주차 수에 맞춰 코스 길이를 줄인다. 없는 주차를 가리키면 화면이 깨진다. */
+function jpWeekSafe(w){const a=LW();return a.length?Math.min(w,a.length-1):0;}
+
+function jpLineId(w,i){return (jpIsJa()?'':jpLang()+':')+'w'+w+'l'+i;}
+function jpFindLine(id){
+ const m=String(id).match(/^(?:([a-zA-Z-]+):)?w(\d+)l(\d+)$/);if(!m)return null;
+ const a=jpWeeksFor(m[1]||'ja'),w=+m[2],i=+m[3];
+ return a[w]&&a[w].l[i]?a[w].l[i]:null;
+}
+function jpSession(n){
+ n=Math.max(0,Math.min(jpLimit()-1,n));
+ const w=jpWeekSafe(jpWeekFor(n)),d=n%7,a=LW(),out=[];
+ if(!a.length)return{w:0,d:d,lines:[]};
+ const src=a[w].l;
+ for(let x=0;x<6;x++){const i=(d*2+x)%src.length;out.push({id:jpLineId(w,i),v:src[i]});}
+ return{w:w,d:d,lines:out};
+}
 function jpDateAdd(s,n){const d=new Date(s+'T00:00:00');d.setDate(d.getDate()+n);return ymd(d);}
 function jpDue(){return Object.keys(jpState.srs).filter(id=>jpState.srs[id].due<=TODAY&&jpFindLine(id))
  .sort((a,b)=>(jpState.srs[a].due||'').localeCompare(jpState.srs[b].due||'')||((jpState.srs[a].box||0)-(jpState.srs[b].box||0))).slice(0,JP_REVIEW_CAP);}
@@ -1416,15 +1447,25 @@ function jpPreviewVoice(){jpSpeakText('福岡へようこそ。今日は何を�
 if('speechSynthesis'in window&&speechSynthesis.addEventListener)speechSynthesis.addEventListener('voiceschanged',jpRefreshVoiceUI);
 function renderJapanese(){
  const root=document.getElementById('jpRoot');if(!root)return;
+ /* 탭 이름이 목적지 말을 따라간다. 태국 가는 사람에게 '일본어' 탭은 쓸모가 없다. */
+ const tb=document.getElementById('tabJp');if(tb)tb.textContent=jpLangName();
+ if(!jpHasPack()){
+  root.innerHTML='<div class="xhero"><div class="xhero-top"><div><div class="xeyebrow">'+esc(affDest())+' · LOCAL PHRASES</div>'+
+   '<div class="xtitle">'+esc(jpLangName())+'</div></div></div>'+
+   '<div class="xsmall" style="margin-top:12px">목적지를 바꾸면 그 나라 말로 다시 만들 수 있습니다. 목적지는 <b style="color:var(--text)">담기 → 처음 설정</b>에서 바꿉니다.</div></div>'+
+   '<div id="jpPane"></div>';
+  document.getElementById('jpPane').innerHTML=jpNeedPackHTML();
+  return;
+ }
  const LIM=jpLimit(),PL=jpPlan();
  const p=Math.min(LIM,jpState.pointer||0),s=jpSession(Math.min(LIM-1,p)),pct=Math.round(p/LIM*100),due=jpDue().length;
  const todayPacks=Object.values(jpState.done).filter(x=>x===TODAY).length;
- root.innerHTML='<div class="xhero"><div class="xhero-top"><div><div class="xeyebrow">'+esc(PL.n)+' · FLEXIBLE PROGRESS</div><div class="xtitle">'+esc(JP_WEEKS[s.w].t)+'</div></div>'+
+ root.innerHTML='<div class="xhero"><div class="xhero-top"><div><div class="xeyebrow">'+esc(PL.n)+' · FLEXIBLE PROGRESS</div><div class="xtitle">'+esc((LW()[s.w]||{t:jpLangName()}).t)+'</div></div>'+
   '<div class="xmeta">W'+(s.w+1)+' · '+(p>=LIM?'완료':('DAY '+(p+1)))+'<br>'+p+' / '+LIM+'</div></div>'+
   '<div class="xbar"><i style="width:'+pct+'%"></i></div>'+
   '<div class="fm-cats" style="margin-top:11px">'+JP_PLANS.map(function(x){
    return '<button class="'+(PL.k===x.k?'on':'')+'" onclick="jpSetPlan(\''+x.k+'\')">'+esc(x.n)+'</button>';}).join('')+'</div>'+
-  '<div class="xsmall" style="margin-top:8px"><b style="color:var(--text)">'+esc(PL.n)+'</b> — '+esc(PL.s)+
+  '<div class="xsmall" style="margin-top:8px"><b style="color:var(--text)">'+esc(PL.n)+'</b> — '+esc(PL.s+((jpIsJa()&&PL.k==='d90')?'. 하카타벤까지':''))+
   '<br>달력과 무관합니다. 못 한 날은 그대로 남고, 여유 있는 날은 2~3팩 연속 진행할 수 있습니다.'+
   '<br>코스를 바꿔도 <b style="color:var(--text)">이미 외운 문장과 복습 일정은 그대로</b> 남습니다.</div></div>'+
   '<div class="xstats"><div class="xstat"><b>'+todayPacks+'</b><span>오늘 완료 팩</span></div><div class="xstat"><b>'+due+'</b><span>오늘 복습</span></div><div class="xstat"><b>'+pct+'%</b><span>'+esc(PL.n)+' 진도</span></div></div>'+jpModes()+jpVoiceControls()+'<div id="jpPane"></div>';
@@ -1848,22 +1889,127 @@ function jpWavBlob(b64){const bin=atob(b64),pcm=new Uint8Array(bin.length);for(l
 async function jpNaturalBlob(t){const c=jpVoiceCfg(),key=(c.gemini||'Aoede')+'|'+t;if(jpTtsCache.has(key))return jpTtsCache.get(key);
  const r=await fetch('https://generativelanguage.googleapis.com/v1beta/interactions',{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':ai.key},body:JSON.stringify({model:JP_TTS_MODEL,input:'Read the Japanese transcript exactly as written, one time only. Native adult Japanese speaker, warm everyday conversational tone, standard Japanese accent, natural pace for a learner, never robotic. Do not add or omit words.\n\nTranscript:\n'+t,response_format:{type:'audio'},generation_config:{speech_config:[{voice:c.gemini||'Aoede'}]}})}),j=await r.json();
  if(!r.ok)throw new Error(j.error&&j.error.message||('HTTP '+r.status));const data=j.output_audio&&j.output_audio.data||j.outputAudio&&j.outputAudio.data||j.interaction&&j.interaction.output_audio&&j.interaction.output_audio.data;if(!data)throw new Error('음성 데이터가 없습니다.');const b=jpWavBlob(data);jpTtsCache.set(key,b);return b;}
-function jpSpeakDevice(t,token,onend){if(!('speechSynthesis'in window)){alert('이 브라우저는 일본어 음성 재생을 지원하지 않습니다.');return;}const u=new SpeechSynthesisUtterance(String(t));u.lang='ja-JP';u.rate=jpVoiceCfg().rate||.96;u.pitch=1;const v=jpPickDeviceVoice();if(v)u.voice=v;u.onend=()=>{if(token===jpTtsToken&&onend)onend();};u.onerror=()=>{if(token===jpTtsToken&&onend)onend();};speechSynthesis.speak(u);}
+/* 목적지 말에 맞는 음성 코드. 없으면 기기가 알아서 고른다. */
+const JP_TTS_LANG={ja:'ja-JP',ko:'ko-KR','zh-TW':'zh-TW','zh-CN':'zh-CN',th:'th-TH',vi:'vi-VN',
+ en:'en-US',ms:'ms-MY',id:'id-ID',fr:'fr-FR',it:'it-IT',es:'es-ES',de:'de-DE',tr:'tr-TR',ar:'ar-SA'};
+function jpSpeakDevice(t,token,onend){if(!('speechSynthesis'in window)){alert('이 브라우저는 음성 재생을 지원하지 않습니다.');return;}const u=new SpeechSynthesisUtterance(String(t));u.lang=JP_TTS_LANG[jpLang()]||'ja-JP';u.rate=jpVoiceCfg().rate||.96;u.pitch=1;const v=jpIsJa()?jpPickDeviceVoice():null;if(v)u.voice=v;u.onend=()=>{if(token===jpTtsToken&&onend)onend();};u.onerror=()=>{if(token===jpTtsToken&&onend)onend();};speechSynthesis.speak(u);}
 async function jpSpeakNatural(t,token,onend){try{const b=await jpNaturalBlob(t);if(token!==jpTtsToken)return;jpTtsUrl=URL.createObjectURL(b);const a=new Audio(jpTtsUrl);jpTtsAudio=a;let ended=false;const finish=()=>{if(ended)return;ended=true;if(jpTtsUrl){URL.revokeObjectURL(jpTtsUrl);jpTtsUrl='';}jpTtsAudio=null;if(token===jpTtsToken&&onend)onend();};a.onended=finish;a.onerror=()=>{if(ended)return;ended=true;if(jpTtsUrl){URL.revokeObjectURL(jpTtsUrl);jpTtsUrl='';}jpTtsAudio=null;if(token===jpTtsToken)jpSpeakDevice(t,token,onend);};const p=a.play();if(p&&p.catch)p.catch(()=>a.onerror());}
  catch(e){if(token!==jpTtsToken)return;const n=document.getElementById('jpVoiceName');if(n)n.textContent='자연음성 연결 실패 · 추천 기기 음성으로 재생';jpSpeakDevice(t,token,onend);}}
-function jpSpeakText(t,onend){const s=String(t||'').trim();if(!s)return;jpCancelSpeech();const token=jpTtsToken;if(jpVoiceCfg().mode==='gemini'&&ai.key){jpSpeakNatural(s,token,onend);return;}if(jpVoiceCfg().mode==='gemini'&&!ai.key){const n=document.getElementById('jpVoiceName');if(n)n.textContent='Gemini 키 없음 · 추천 기기 음성으로 재생 중';}jpSpeakDevice(s,token,onend);}
+function jpSpeakText(t,onend){const s=String(t||'').trim();if(!s)return;jpCancelSpeech();const token=jpTtsToken;
+ /* 자연음성 프롬프트는 일본어 기준으로 쓰여 있다. 다른 말은 기기 음성으로 읽는다. */
+ if(!jpIsJa()){jpSpeakDevice(s,token,onend);return;}
+ if(jpVoiceCfg().mode==='gemini'&&ai.key){jpSpeakNatural(s,token,onend);return;}if(jpVoiceCfg().mode==='gemini'&&!ai.key){const n=document.getElementById('jpVoiceName');if(n)n.textContent='Gemini 키 없음 · 추천 기기 음성으로 재생 중';}jpSpeakDevice(s,token,onend);}
 function jpSpeakLine(id){const v=jpFindLine(id);if(v)jpSpeakText(v.j);}function jpSpeakGrammar(p){const g=JP_GRAMMAR[p];if(g)jpSpeakText(g.e);}
 function jpSpeakChain(w,t,i){const c=JP_CHAINS[w];if(!c)return;const v=t==='q'?c.q:t==='next'?c.next:c.a[i];if(v)jpSpeakText(v.j);}
-function jpLineHTML(x,compact){return '<div class="jline '+(compact?'compact':'')+'"><div class="jp jp-rubyline">'+(jpState.showReading?jpRuby(x.v.j,x.v.k):esc(x.v.j))+'</div>'+
+function jpLineHTML(x,compact){
+ /* 후리가나와 한글 발음 변환은 일본어 전용이다. 다른 말은 AI가 준 읽는 법을 그대로 쓴다. */
+ if(!jpIsJa())return '<div class="jline '+(compact?'compact':'')+'"><div class="jp">'+esc(x.v.j)+'</div>'+
+  (jpState.showReading&&x.v.k?'<div class="sound">'+esc(x.v.k)+'</div>':'')+
+  '<div class="ko">'+esc(x.v.m)+'</div><button class="jp-listen" onclick="jpSpeakLine(\''+x.id+'\')">🔊 '+esc(jpLangName())+' 듣기</button></div>';
+ return '<div class="jline '+(compact?'compact':'')+'"><div class="jp jp-rubyline">'+(jpState.showReading?jpRuby(x.v.j,x.v.k):esc(x.v.j))+'</div>'+
  (jpState.showReading?'<div class="kana">'+esc(x.v.k)+'</div><div class="sound">'+esc(jpKoSound(x.v.k))+'</div>':'')+'<div class="ko">'+esc(x.v.m)+'</div><button class="jp-listen" onclick="jpSpeakLine(\''+x.id+'\')">🔊 일본어 듣기</button></div>';}
 function jpGrammarCard(g,p,boost){const m=jpGrammarMeta(g),r=JP_GRAMMAR_KANA[p]||'';return'<div class="xcard"><h3><span class="tag">GRAMMAR</span>'+esc(g.g)+'</h3><div class="gdetail"><div class="grow"><b>핵심 기능</b>'+esc(g.m)+'</div><div class="grow"><b>접속 형태</b>'+esc(m.form)+'</div><div class="grow"><b>뉘앙스</b>'+esc(m.nuance)+'</div><div class="grow"><b>주의점</b>'+esc(m.caution)+'</div><div class="grow"><b>내 문장</b>예문의 장소·음식·시간을 오늘 내 상황으로 바꿔 소리 내어 말합니다.</div></div>'+jpGrammarBookHTML(g)+'<div class="jline"><div class="jp jp-rubyline">'+jpRuby(g.e,r)+'</div><div class="kana">'+esc(r)+'</div><div class="sound">'+esc(jpKoSound(r))+'</div><div class="ko">'+esc(g.k)+'</div><button class="jp-listen" onclick="jpSpeakGrammar('+p+')">🔊 문법 예문 듣기</button></div>'+jpN3BookHTML(boost)+'</div>';}
 function jpChainHTML(s){const c=JP_CHAINS[s.w];if(!c)return'';const row=(v,btn)=>'<div class="jline compact"><div class="jp jp-rubyline">'+jpRuby(v.j,v.k)+'</div><div class="kana">'+esc(v.k)+'</div><div class="sound">'+esc(jpKoSound(v.k))+'</div><div class="ko">'+esc(v.m)+'</div>'+btn+'</div>';
  return'<div class="xcard hot"><h3><span class="tag">FOLLOW-UP</span>'+esc(c.t)+'</h3><div class="xsmall">외운 문장 다음에 실제로 받을 질문과 답변 선택지를 연결합니다.</div>'+row(c.q,'<button class="jp-listen" onclick="jpSpeakChain('+s.w+',\'q\',0)">🔊 질문 듣기</button>')+'<div class="xsmall" style="margin-top:10px;color:var(--wasabi)">내 상황에 맞는 답을 골라 말하기</div>'+c.a.map((v,i)=>row(v,'<button class="jp-listen" onclick="jpSpeakChain('+s.w+',\'a\','+i+')">🔊 답 듣기</button>')).join('')+'<div class="xsmall" style="margin-top:10px;color:var(--ember-soft)">한 단계 더 이어지는 질문</div>'+row(c.next,'<button class="jp-listen" onclick="jpSpeakChain('+s.w+',\'next\',0)">🔊 이어질 질문</button>')+'<div class="tool-result">연결 포인트 · '+esc(c.tip)+'</div></div>';}
 function jpPlaySession(p){jpAudio=jpSession(Math.min(89,p)).lines;jpStartAudio();}
+/* ── 나라별 회화팩 만들기 ────────────────────────────────────────────────
+   주차 주제는 앱이 정해서 준다. AI 는 그 주제에 맞는 문장만 쓴다. */
+const LANG_THEMES=[
+ ['첫 인사·주문','인사','자리 묻기','주문','추천 묻기','계산','감사','다시 오기','작별'],
+ ['가게에서 더 말하기','메뉴 묻기','맵기·양','알레르기','포장','화장실','와이파이','사진 요청','칭찬'],
+ ['길·이동','길 묻기','택시','지하철','시간 묻기','거리 묻기','환승','내리기','도움 요청'],
+ ['숙소','체크인','짐 맡기기','수건·비품','고장 신고','조식','늦은 체크아웃','주변 추천','체크아웃'],
+ ['사고 팔기','가격 묻기','깎기','다른 색·크기','포장','면세','카드 결제','교환','영수증'],
+ ['리액션·잡담','맞장구','놀람','좋아요','아쉬움','되묻기','천천히 말해달라기','한 번 더','헤어질 때'],
+ ['곤란할 때','아파요','약국','분실','경찰','통역 부탁','천천히','못 알아들음','도와주세요'],
+ ['취향 말하기','좋아하는 것','싫은 것','이유 대기','비교','추천 부탁','경험 말하기','계획 말하기','또 오기'],
+ ['술자리','건배','한 잔 더','안주 추천','도수 묻기','천천히','그만','계산 나누기','마무리'],
+ ['관광','입장료','사진 촬영','운영 시간','줄 서기','기념품','설명 요청','추천 코스','다음 장소'],
+ ['예상 밖 상황','예약 안 됨','품절','휴무','늦음','자리 없음','다시 올게요','대안 묻기','양해'],
+ ['사람과 친해지기','자기소개','어디서 왔는지','직업','여행 이유','연락처','같이 사진','인사말','다음에'],
+ ['마무리 종합','하루 요약','고마웠던 것','다시 올 곳','추천 부탁','작별','연락','응원','인사']
+];
+let jpGenBusy=false;
+async function jpGenPack(){
+ if(jpGenBusy)return;
+ if(!ai.key){alert('회화팩을 만들려면 AI를 먼저 켜야 합니다.\n설정(⚙)에서 무료 키를 넣어 주세요.');return;}
+ const code=jpLang(),name=jpLangName(),dest=affDest();
+ if(code==='ja')return;
+ jpGenBusy=true;renderJapanese();
+ const made=[];
+ try{
+  for(let w=0;w<LANG_THEMES.length;w++){
+   const th=LANG_THEMES[w];
+   const prompt='너는 한국인 여행자를 위한 '+name+' 회화 교재를 만든다. 여행지는 '+dest+'.\n'+
+    '주제: "'+th[0]+'". 아래 8가지 상황 각각에 대해 실제로 쓰는 짧은 문장을 하나씩 써라.\n'+
+    th.slice(1).map(function(x,i){return (i+1)+'. '+x;}).join('\n')+'\n\n'+
+    '규칙\n'+
+    '- j: '+name+' 원문. 현지에서 실제로 쓰는 자연스러운 표현. 한 문장, 짧게\n'+
+    '- k: 한국인이 소리내어 읽을 수 있게 한글로 적은 발음. 로마자 금지\n'+
+    '- m: 한국어 뜻\n'+
+    '- 존댓말 기준. 관광객이 처음 만난 사람에게 써도 실례가 아닌 정도\n'+
+    '- 정확히 8개. 설명·번호·따옴표 없이 JSON 만';
+   const cfg={responseMimeType:'application/json',responseSchema:{type:'OBJECT',properties:{lines:{type:'ARRAY',items:{
+     type:'OBJECT',properties:{j:{type:'STRING'},k:{type:'STRING'},m:{type:'STRING'}},required:['j','k','m']}}},required:['lines']}};
+   const t=await callGemini([{text:prompt}],cfg);
+   const j=JSON.parse(String(t).replace(/```json|```/g,'').trim());
+   const lines=(j.lines||[]).filter(function(x){return x&&x.j&&x.m;}).slice(0,8);
+   if(lines.length<4)throw new Error(th[0]+' 주차를 만들지 못했습니다.');
+   made.push({t:th[0],s:th.slice(1),l:lines.map(function(x){return{j:String(x.j),k:String(x.k||''),m:String(x.m)};})});
+   /* 한 주차 끝날 때마다 저장한다. 중간에 끊겨도 거기까지는 남는다. */
+   jpLangPack()[code]={weeks:made.slice(),at:TODAY,dest:dest,ai:true};
+   save('jp_packs_v1',jpAIPacks);
+   const bar=document.getElementById('jpGenBar');
+   if(bar)bar.textContent=name+' 회화팩 만드는 중… '+made.length+' / '+LANG_THEMES.length+'주차';
+  }
+  alert(name+' 회화팩 '+made.length+'주차를 만들었습니다.\n이 기기에 저장돼서 비행기에서도 그대로 나옵니다.');
+ }catch(e){
+  alert(made.length?('여기까지 '+made.length+'주차를 만들어 저장했습니다.\n나머지는 다시 눌러 이어서 만들 수 있습니다.\n\n'+(e.message||e))
+   :('회화팩을 만들지 못했습니다.\n'+(e.message||e)));
+ }finally{jpGenBusy=false;renderJapanese();}
+}
+function jpDropPack(){
+ const code=jpLang();if(code==='ja')return;
+ if(!confirm(jpLangName()+' 회화팩을 지울까요?\n외운 표시와 복습 일정도 같이 사라집니다.'))return;
+ delete jpLangPack()[code];save('jp_packs_v1',jpAIPacks);
+ Object.keys(jpState.srs).forEach(function(id){if(id.indexOf(code+':')===0)delete jpState.srs[id];});
+ save('jp_state_v1',jpState);renderJapanese();
+}
+/* 아직 안 만든 나라 화면 */
+function jpNeedPackHTML(){
+ const name=jpLangName();
+ if(jpGenBusy)return '<div class="xcard hot"><h3><span class="tag">MAKING</span>'+esc(name)+' 회화팩</h3>'+
+  '<div class="xsmall" id="jpGenBar">만드는 중… 잠시만요. 13주차라 1~2분 걸립니다.</div></div>';
+ return '<div class="xcard hot"><h3><span class="tag">NEW</span>'+esc(name)+' 회화팩 만들기</h3>'+
+  '<div class="xsmall">목적지가 <b style="color:var(--text)">'+esc(affDest())+'</b>이라 '+esc(name)+'로 만듭니다. '+
+  '주문·길 묻기·숙소·리액션·곤란할 때까지 <b style="color:var(--text)">13주차 분량</b>을 한 번에 만들고 이 기기에 저장합니다. '+
+  '한 번 만들면 <b style="color:var(--text)">비행기 안에서도</b> 그대로 나옵니다.</div>'+
+  '<div class="xsmall" style="margin-top:8px">문장은 <b style="color:var(--ember-soft)">AI가 만듭니다.</b> '+
+  '일본어 교재는 사람이 직접 쓰고 검수한 것이지만, 다른 나라 말은 그렇게 못 합니다. '+
+  '뜻이 이상하면 현지에서 한 번 더 확인해 주세요.</div>'+
+  '<div class="xactions"><button class="xaction" onclick="jpGenPack()">✨ '+esc(name)+' 회화팩 만들기</button></div>'+
+  (ai.key?'':'<div class="xsmall" style="margin-top:8px;color:var(--ember-soft)">AI가 꺼져 있습니다. 설정(⚙)에서 무료 키를 먼저 넣어 주세요.</div>')+
+  '</div>';
+}
 function jpTodayPane(pane){
  const LIM=jpLimit(),p=Math.min(LIM,jpState.pointer||0);if(p>=LIM){pane.innerHTML='<div class="xcard hot"><h3><span class="tag">COMPLETE</span>90회 완주</h3>'+
   '<div class="xsmall">달력에 쫓기지 않고 끝까지 왔습니다. 자동복습과 실전 AI 모드로 계속 유지하세요.</div></div>';return;}
- const s=jpSession(p),topic=JP_WEEKS[s.w].s[s.d]||JP_WEEKS[s.w].t,g=JP_GRAMMAR[p]||JP_GRAMMAR[JP_GRAMMAR.length-1],boost=p>=45?JP_N3_BOOST[(p-45)%JP_N3_BOOST.length]:'';
+ if(!jpHasPack()){pane.innerHTML=jpNeedPackHTML();return;}
+ const s=jpSession(p),W=LW()[s.w]||{s:[],t:jpLangName()},topic=W.s[s.d]||W.t;
+ /* 일본어 문법·N레벨은 일본 갈 때만 의미가 있다 */
+ if(!jpIsJa()){
+  pane.innerHTML='<div class="xcard hot"><h3><span class="tag">DAY '+(p+1)+' · '+esc(jpLangName())+'</span>'+esc(topic)+'</h3>'+
+   '<div class="xsmall">오늘 6문장을 소리내어 읽고 넘어가면 됩니다. 넘긴 문장은 자동복습에 쌓입니다.</div></div>'+
+   '<div class="xcard"><h3><span class="tag">6 PHRASES</span>실전 표현</h3>'+s.lines.map(function(x){return jpLineHTML(x,false);}).join('')+
+   '<div class="xactions"><button class="xaction" onclick="jpPlaySession('+p+')">🔊 오늘 6문장 연속 듣기</button>'+
+   '<button class="xaction sub" onclick="jpToggleReading()">'+(jpState.showReading?'읽는 법 숨기기':'읽는 법 보기')+'</button></div></div>'+
+   '<div class="xcard"><h3><span class="tag">AI</span>AI가 만든 회화팩</h3>'+
+   '<div class="xsmall">이 문장들은 AI가 만든 것입니다. 뜻이 이상하면 현지에서 한 번 더 확인해 주세요.</div>'+
+   '<div class="xactions"><button class="xaction" onclick="jpCompleteSession()">DAY '+(p+1)+' 완료 → 다음 팩</button>'+
+   '<button class="xaction sub" onclick="jpDropPack()">회화팩 지우고 다시 만들기</button></div></div>';
+  return;
+ }
+ const g=JP_GRAMMAR[p]||JP_GRAMMAR[JP_GRAMMAR.length-1],boost=p>=45?JP_N3_BOOST[(p-45)%JP_N3_BOOST.length]:'';
  const phase=p<14?'N5 기억 복구':p<56?'N4 핵심 구축':p<84?'N4 실전·회화 통합':'N4 마무리·N3 도전';
  pane.innerHTML='<div class="xcard hot"><h3><span class="tag">DAY '+(p+1)+' · '+phase+'</span>'+esc(topic)+'</h3>'+
   '<div class="xsmall"><b style="color:var(--text)">핵심 25~35분:</b> 문법 1개 + 회화 6문장 + SRS + 리딩/듣기. 말하기는 가능한 날만 보너스입니다.<br>'+
@@ -1929,7 +2075,7 @@ function jpSpeakNext(){if(jpAudioStop||jpAudioAt>=jpAudio.length){jpStopAudio();
  jpSpeakText(x.v.j+'。 '+x.v.j,()=>{jpAudioAt++;jpSpeakNext();});}
 function jpStopAudio(){jpAudioStop=true;jpCancelSpeech();const el=document.getElementById('jpAudioNow');if(el)el.textContent='재생이 정지되었습니다.';}
 function jpInfoPane(pane){
- const s=jpSession(Math.min(89,jpState.pointer||0)),w=JP_WEEKS[s.w],pos=jpState.read[String(s.w)]||0;
+ const s=jpSession(Math.min(89,jpState.pointer||0)),w=LW()[s.w],pos=jpState.read[String(s.w)]||0;if(!w){pane.innerHTML='';return;}
  let body='<p><span class="speaker">상황</span><br>후쿠오카의 작은 가게 카운터에서 사장님과 손님이 이번 주 표현으로 대화를 이어갑니다.<span class="trans">손님 응대로 끊겨도 이 위치가 자동 저장됩니다.</span></p>';
  w.l.forEach((v,i)=>{body+='<p><span class="speaker">'+(i%2?'店主':'학습자')+'</span> <span class="jp-rubyline">'+jpRuby(v.j,v.k)+'</span><span class="trans">'+esc(v.k)+'<br><span class="sound">'+esc(jpKoSound(v.k))+'</span><br>'+esc(v.m)+'</span></p>';});
  pane.innerHTML='<div class="xcard"><h3><span class="tag">INFO MODE</span>W'+(s.w+1)+' 이어읽기</h3><div class="reading" id="jpReading" onscroll="jpSaveScroll(this,'+s.w+')">'+body+'</div>'+
@@ -3819,6 +3965,10 @@ const FM_COUNTRIES=[
  ['FR','프랑스','fr'],['IT','이탈리아','it'],['ES','스페인','es'],['DE','독일','de'],
  ['GB','영국','en'],['AU','호주','en'],['TR','튀르키예','tr'],['AE','아랍에미리트','ar']
 ];
+/* 화면에 쓸 말 이름. 없는 코드는 '현지 회화' 로 부른다. */
+const FM_LANG_NAME={ja:'일본어',ko:'한국어','zh-TW':'중국어(번체)','zh-CN':'중국어',th:'태국어',
+ vi:'베트남어',en:'영어',ms:'말레이어',id:'인도네시아어',fr:'프랑스어',it:'이탈리아어',
+ es:'스페인어',de:'독일어',tr:'튀르키예어',ar:'아랍어'};
 /* 목적지 이름으로 나라를 짐작한다. 못 맞히면 일본으로 둔다(기존 사용자 기준). */
 const FM_CITY_HINT={'후쿠오카':'JP','도쿄':'JP','오사카':'JP','교토':'JP','삿포로':'JP','오키나와':'JP',
  '나고야':'JP','후에':'VN','다낭':'VN','하노이':'VN','호치민':'VN','방콕':'TH','치앙마이':'TH',
