@@ -1018,7 +1018,10 @@ function saveAI(silent){ai.key=document.getElementById('gemKey').value.trim();
  save('ai',ai);renderAiStatus();if(!silent)alert('저장했습니다. 이제 AI 하루 코스·여행 도우미·사진 분석이 켜집니다.');}
 function renderAiStatus(){const el=document.getElementById('aiStatus');if(!el)return;
  el.className='aistat '+(ai.key?'ok':'no');
- el.innerHTML=ai.key?'🟢 AI 연결됨 — 하루 코스·여행 도우미·사진 분석·현지 회화 사용 가능':'⚪ 아직 AI 미설정 — 아래 3단계로 2분이면 켜집니다. 무료이고 카드 등록은 없습니다';}
+ el.innerHTML=ai.key
+  ?('🟢 AI 연결됨 — 하루 코스·여행 도우미·사진 분석·현지 회화 사용 가능<br>'+
+    '<span style="font-weight:400">오늘 <b>'+aiUsed()+'번</b> 썼습니다. 무료 한도는 날마다 새로 열립니다.</span>')
+  :'⚪ 아직 AI 미설정 — 아래 3단계로 2분이면 켜집니다. 무료이고 카드 등록은 없습니다';}
 async function testAI(){
  saveAI(true);
  if(!ai.key){alert('먼저 2단계에서 키를 붙여넣어줘.');return;}
@@ -1029,8 +1032,31 @@ async function testAI(){
 }
 /* cfg 는 generationConfig. JSON 스키마 강제·온도 지정에 쓴다.
    옛 모델은 이 필드들을 몰라 400 을 뱉으므로, 그때는 cfg 없이 한 번 더 시도한다. */
+/* 오늘 AI 를 몇 번 썼는지. 한도는 구글이 정하고 바뀌지만, 내가 쓴 횟수는 셀 수 있다. */
+function aiUsed(){
+ const u=ai.use||{};
+ return (u.d===TODAY)?(u.n||0):0;
+}
+function aiCount(){
+ const u=(ai.use&&ai.use.d===TODAY)?ai.use:{d:TODAY,n:0};
+ u.n=(u.n||0)+1;ai.use=u;save('ai',ai);
+}
+/* 구글이 보내는 영어 오류를 사람 말로 바꾼다. */
+function aiErrTxt(m){
+ const t=String(m||'');
+ if(/quota|RESOURCE_EXHAUSTED|rate limit|429/i.test(t))
+  return '오늘 쓸 수 있는 무료 AI 양을 다 썼습니다.\n한도는 날마다 새로 열리니 내일 다시 쓰시면 됩니다.\n(오늘 '+aiUsed()+'번 썼습니다)';
+ if(/API key not valid|API_KEY_INVALID|permission|PERMISSION_DENIED/i.test(t))
+  return 'AI 열쇠가 맞지 않습니다.\n설정(⚙)에서 키를 다시 넣고 연결 테스트를 눌러 주세요.';
+ if(/overloaded|UNAVAILABLE|503/i.test(t))
+  return '지금 AI 쪽이 붐빕니다. 잠시 뒤 다시 해보세요.';
+ if(/Failed to fetch|NetworkError|network/i.test(t))
+  return '인터넷이 안 잡힙니다. 데이터나 와이파이를 확인해 주세요.';
+ return t;
+}
 async function callGemini(parts,cfg,model){
  if(!ai.key){alert('설정(⚙)에서 Gemini API 키를 먼저 저장해줘.\n(aistudio.google.com → Get API key, 무료)');throw 0;}
+ aiCount();
  /* 어려운 눈 작업은 더 좋은 모델을 부를 수 있게 한다. 안 주면 평소 쓰던 것. */
  const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model||ai.model)}:generateContent?key=${encodeURIComponent(ai.key)}`;
  let last,noCfg=false;
@@ -1041,11 +1067,13 @@ async function callGemini(parts,cfg,model){
    const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
    const j=await r.json();
    if(r.ok)return (((j.candidates||[])[0]||{}).content||{parts:[]}).parts.map(p=>p.text||'').join('');
-   last=new Error(j.error&&j.error.message||('HTTP '+r.status));
+   last=new Error(aiErrTxt(j.error&&j.error.message||('HTTP '+r.status)));
    if(cfg&&!noCfg&&r.status===400){noCfg=true;attempt--;continue;}
+   /* 한도가 찬 것은 다시 걸어도 소용없다. 바로 알려주고 끝낸다. */
+   if(r.status===429)throw last;
    const retriable=r.status===503||r.status===500||/high demand|overloaded|try again|temporar/i.test(last.message);
    if(!retriable||attempt===2)throw last;
-  }catch(e){last=e;if(attempt===2)throw last;}
+  }catch(e){last=(e&&e.message)?new Error(aiErrTxt(e.message)):e;if(attempt===2)throw last;}
   await new Promise(z=>setTimeout(z,1400*(attempt+1)));
  }
  throw last;

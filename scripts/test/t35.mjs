@@ -130,6 +130,26 @@ const ctx = w.eval('trContext()');
 t('보고 있는 곳을 넘김', ctx.includes('이자카야 토리'));
 t('시각도 넘김', /\d+시쯤/.test(ctx));
 
+/* ── 무료 한도가 찼을 때 사람 말로 알려주는가 ───────────────────────── */
+t('한도 오류를 한국어로', w.eval("aiErrTxt('Quota exceeded for quota metric')").includes('무료 AI 양을 다 썼습니다'));
+t('내일 열린다고 알려줌', w.eval("aiErrTxt('RESOURCE_EXHAUSTED')").includes('내일 다시'));
+t('키 오류도 한국어로', w.eval("aiErrTxt('API key not valid')").includes('열쇠가 맞지 않습니다'));
+t('붐빌 때도 한국어로', w.eval("aiErrTxt('The model is overloaded')").includes('붐빕니다'));
+t('인터넷 끊김도 한국어로', w.eval("aiErrTxt('Failed to fetch')").includes('인터넷이 안 잡힙니다'));
+t('모르는 오류는 그대로', w.eval("aiErrTxt('무슨무슨 오류')") === '무슨무슨 오류');
+
+/* 오늘 몇 번 썼는지 센다 */
+w.eval("ai.use=null;save('ai',ai);");
+t('처음엔 0번', w.eval('aiUsed()') === 0);
+w.eval('aiCount();aiCount();aiCount();');
+t('부를 때마다 오름', w.eval('aiUsed()') === 3);
+w.eval("ai.use={d:'2020-01-01',n:99};save('ai',ai);");
+t('날이 바뀌면 0으로', w.eval('aiUsed()') === 0);
+w.eval("ai.key='x';renderAiStatus();");
+t('설정에 오늘 사용량 표시', d.getElementById('aiStatus').textContent.includes('오늘'));
+t('날마다 새로 열린다고 안내', d.getElementById('aiStatus').textContent.includes('날마다 새로 열립니다'));
+w.eval("ai.key='';");
+
 /* ── 사진 읽기 — 손글씨·세로쓰기를 각오한 지시인가 ──────────────────── */
 const ocr = w.eval('trOcrPrompt()');
 t('손글씨를 각오함', ocr.includes('손글씨') && ocr.includes('붓글씨'));
