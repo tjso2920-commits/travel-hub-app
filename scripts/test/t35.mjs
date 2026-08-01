@@ -86,6 +86,50 @@ t('결과에 원문 표시', out.includes('메뉴 주세요'));
 t('결과에 번역 표시', out.includes('ขอเมนูหน่อยครับ'));
 t('결과에 읽는 법 표시', out.includes('커 메누 너이 캅'));
 
+/* ── 글로 쓰면 치는 동안 번역 ────────────────────────────────────────── */
+w.eval("trToggleType()");
+const ta = d.getElementById('trIn');
+t('글 쓰는 칸 존재', !!ta);
+t('치는 동안 번역한다고 안내', ta.getAttribute('placeholder').includes('치는 동안'));
+t('입력마다 불린다', (ta.getAttribute('oninput')||'').includes('trLiveType'));
+t('멈추면 번역한다고 알려줌', d.getElementById('trLiveHint').textContent.includes('버튼 안 눌러도'));
+
+/* 두 글자 미만이면 부르지 않는다 — 무료 한도를 아껴야 한다 */
+/* 진짜 번역을 부르지 않고 몇 번 불렸는지만 센다 */
+w.eval('window.__realRun=trRun; let called_=0; trRun=function(){called_++;}; window.__c=function(){return called_;};');
+ta.value = '가';
+w.eval('trLiveType()');
+await new Promise((r) => setTimeout(r, 1200));
+t('한 글자면 안 부름', w.eval('__c()') === 0);
+ta.value = '메뉴 주세요';
+w.eval('trLiveType()');
+await new Promise((r) => setTimeout(r, 1200));
+t('두 글자 넘으면 부름', w.eval('__c()') === 1);
+w.eval('trLiveType()');
+await new Promise((r) => setTimeout(r, 1200));
+t('같은 말이면 다시 안 부름', w.eval('__c()') === 1);
+w.eval('trRun = window.__realRun;');
+
+/* ── 크게 보여주기 ───────────────────────────────────────────────────── */
+w.eval("trShow({src:'메뉴 주세요',out:'メニューをください',read:'메뉴오 쿠다사이',note:'',speakable:true},false)");
+const out2 = d.getElementById('trOut').textContent;
+t('크게 보여주기 버튼', out2.includes('크게 보여주기'));
+t('짧게 버튼', out2.includes('짧게'));
+t('공손하게 버튼', out2.includes('공손하게'));
+w.eval('trBigOn()');
+t('크게 보여주기 열림', d.getElementById('trBig').classList.contains('on'));
+t('큰 글씨에 번역문', d.getElementById('trBig1').textContent === 'メニューをください');
+t('큰 글씨 밑에 읽는 법', d.getElementById('trBig2').textContent === '메뉴오 쿠다사이');
+t('상대에게 보여주라고 안내', d.getElementById('trBig').textContent.includes('상대에게 보여주세요'));
+w.eval('trBigOff()');
+t('닫힘', !d.getElementById('trBig').classList.contains('on'));
+
+/* ── 지금 어디 있는지를 번역에 넘기는가 ──────────────────────────────── */
+w.eval("foodMap.places=[{id:'p1',name:'이자카야 토리',cat:'바·이자카야'}];foodMap.selected='p1';");
+const ctx = w.eval('trContext()');
+t('보고 있는 곳을 넘김', ctx.includes('이자카야 토리'));
+t('시각도 넘김', /\d+시쯤/.test(ctx));
+
 /* ── 사진 읽기 — 손글씨·세로쓰기를 각오한 지시인가 ──────────────────── */
 const ocr = w.eval('trOcrPrompt()');
 t('손글씨를 각오함', ocr.includes('손글씨') && ocr.includes('붓글씨'));

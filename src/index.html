@@ -540,6 +540,19 @@
   .tr-read{font-size:13.5px;color:var(--wasabi);margin-top:5px;line-height:1.5}
   .tr-note{font-size:12px;color:var(--faint);margin-top:8px;line-height:1.6}
   .tr-busy{font-size:13px;color:var(--muted);padding:14px 0}
+  .tr-alt{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}
+  .tr-alt button{min-height:44px;padding:0 13px;border-radius:999px;border:1px solid var(--line2);
+    background:transparent;color:var(--muted);font-size:12.5px;font-weight:800}
+  .tr-live{font-size:11.5px;color:var(--faint);margin:6px 0 0 2px}
+  /* 시끄러운 가게에서 폰을 내민다. 글씨가 화면을 채워야 한다. */
+  #trBig{position:fixed;inset:0;z-index:10000;background:#fff;display:none;
+    flex-direction:column;align-items:center;justify-content:center;padding:26px;text-align:center}
+  #trBig.on{display:flex}
+  #trBig .b1{font-size:clamp(30px,8.5vw,54px);font-weight:800;color:#16202a;line-height:1.35;word-break:break-word}
+  #trBig .b2{font-size:clamp(15px,4vw,20px);color:#5A6B76;margin-top:16px;line-height:1.5}
+  #trBig .b3{font-size:14px;color:#8A959C;margin-top:22px}
+  #trBig button{margin-top:28px;min-height:56px;padding:0 26px;border:0;border-radius:999px;
+    background:#22303A;color:#fff;font-size:16px;font-weight:800}
   #licBar{text-align:center;padding:18px 16px 26px;font-size:11.5px;line-height:1.6;color:var(--faint)}
   #licBar b{color:var(--muted);font-weight:800}
   #licBar .free{display:inline-block;border:1px solid var(--line2);border-radius:999px;
@@ -757,6 +770,8 @@
     <div class="g-goal" style="margin-top:12px">이 안내가 보이면 파일 미리보기에서 JavaScript가 차단된 상태입니다. HTML 파일을 다운로드한 뒤 Safari 또는 Chrome에서 직접 열어주세요.</div>
   </div>
 </div>
+<div id="trBig" onclick="trBigOff()"><div class="b1" id="trBig1"></div><div class="b2" id="trBig2"></div>
+  <div class="b3">상대에게 보여주세요</div><button onclick="trBigOff()">닫기</button></div>
 <div id="setupWrap" style="display:none"></div>
 <div id="app" style="display:none">
 <div class="wrap">
@@ -2264,8 +2279,10 @@ function trHTML(){
    '<button class="xaction sub" onclick="trToggleType()">⌨ 글로 쓰기</button></div>'+
   '<input type="file" id="trMenuFile" accept="image/*" capture="environment" style="display:none" onchange="trPhoto(this)">'+
   '<div id="trTypeBox" style="display:none;margin-top:10px">'+
-   '<textarea class="xta" id="trIn" placeholder="번역할 말을 적으세요 (한국어도 '+esc(name)+'도 됩니다)"></textarea>'+
-   '<div class="xactions"><button class="xaction" onclick="trText()">번역</button></div></div>'+
+   '<textarea class="xta" id="trIn" placeholder="한국어로 쓰세요. 치는 동안 '+esc(name)+'로 바뀝니다" '+
+   'oninput="trLiveType()" onkeydown="if(event.key===\'Enter\'&&!event.shiftKey){event.preventDefault();trText();}"></textarea>'+
+   '<div class="tr-live" id="trLiveHint">멈추면 바로 번역됩니다. 버튼 안 눌러도 됩니다.</div>'+
+   '<div class="xactions"><button class="xaction sub" onclick="trText()">지금 번역</button></div></div>'+
   '<div id="trOut"></div></div>';
 }
 function trToggleType(){const el=document.getElementById('trTypeBox');if(el)el.style.display=el.style.display==='none'?'block':'none';}
@@ -2280,8 +2297,12 @@ function trShow(o,speakIt){
   (o.read?'<div class="tr-read">'+esc(o.read)+'</div>':'')+
   (o.note?'<div class="tr-note">'+esc(o.note)+'</div>':'')+
   '<div class="xactions" style="margin-top:10px">'+
-   (o.speakable?'<button class="xaction sub" onclick="trReplay()">🔊 다시 들려주기</button>':'')+
+   (o.speakable?'<button class="xaction" onclick="trReplay()">🔊 다시 들려주기</button>':'')+
+   '<button class="xaction'+(o.speakable?' sub':'')+'" onclick="trBigOn()">📢 크게 보여주기</button>'+
    '<button class="xaction sub" onclick="trCopy()">복사</button></div>'+
+  (o.speakable&&o.src?'<div class="tr-alt">'+
+    '<button onclick="trTone(\'short\')">짧게</button>'+
+    '<button onclick="trTone(\'polite\')">공손하게</button></div>':'')+
   '</div>');
  if(speakIt&&o.speakable)jpSpeakText(o.out);
 }
@@ -2293,23 +2314,41 @@ function trCopy(){
  alert('복사했습니다.');
 }
 /* 한 번의 번역. dir: 'ko2lo' 면 목적지 말로, 'lo2ko' 면 한국어로. */
-async function trRun(text,dir){
+/* 지금 어디서 무엇을 하는 중인지 알려주면 더 맞는 말이 나온다. */
+function trContext(){
+ const bits=[];
+ const p=foodMap.places&&foodMap.places.find(function(x){return x.id===foodMap.selected;});
+ if(p)bits.push('지금 보고 있는 곳: '+p.name+(p.cat?(' ('+p.cat+')'):''));
+ const h=new Date().getHours();
+ bits.push('현지 시각 '+h+'시쯤');
+ return bits.length?('\n참고 — '+bits.join(' · ')+'\n'):'';
+}
+async function trRun(text,dir,tone){
  const name=jpLangName(),q=String(text||'').trim();
  if(!q)return;
  if(!ai.key){alert('통역은 AI를 켜야 씁니다.\n설정(⚙)에서 무료 키를 넣어 주세요.');return;}
  trBusyOn('번역 중…');
  try{
   const toLocal=(dir==='ko2lo');
+  const toneTxt=tone==='short'?'\n- **짧고 간단하게.** 한마디로 끝나게 줄여라'
+   :tone==='polite'?'\n- **더 공손하게.** 격식 있는 자리에서도 실례가 아닌 정도로'
+   :'';
   const prompt=toLocal
-   ? ('다음 한국어를 '+name+'로 옮겨라. 여행지는 '+affDest()+'.\n'+
-      '- 사전식 직역 말고 **현지에서 실제로 쓰는 말**로. 처음 만난 사람에게 쓰는 일상 존댓말\n'+
-      '- 말하는 사람은 한국인 '+jpSpeakerTxt()+' 여행자\n'+
-      '- out: '+name+' 문장 / read: 한글로 적은 발음(로마자 금지) / note: 알아둘 점이 있을 때만 한 줄, 없으면 빈 문자열\n\n'+q)
-   : ('다음 '+name+' 말을 한국어로 옮겨라. 여행지는 '+affDest()+'.\n'+
-      '- out: 한국어 뜻 / read: 빈 문자열 / note: 사투리·속뜻·주의할 점이 있을 때만 한 줄\n'+
-      '- 메뉴 이름이면 **그게 어떤 음식인지** 한 줄로 알려줘라\n\n'+q);
+   ? ('다음 한국어를 '+name+'로 옮겨라. 여행지는 '+affDest()+'.'+trContext()+
+      '- 사전식 직역 말고 **현지 사람이 그 상황에서 실제로 쓰는 말**로 옮겨라.\n'+
+      '  뜻이 조금 달라져도 실제로 쓰는 표현이 옳다\n'+
+      '- 처음 만난 사람에게 쓰는 **일상 존댓말**. 교과서체·문어체·과한 격식 금지\n'+
+      '- 말하는 사람은 한국인 '+jpSpeakerTxt()+' 여행자다. 성별로 어미가 갈리는 말이면 맞춰라\n'+
+      '- 한 문장으로. 상대가 한 번에 알아듣게'+toneTxt+'\n'+
+      '- out: '+name+' 문장 / read: 한글로 적은 발음(로마자 금지)\n'+
+      '- note: 이 말을 쓸 때 알아둘 점이 있으면 한 줄. 없으면 빈 문자열\n\n'+q)
+   : ('다음 '+name+' 말을 한국어로 옮겨라. 여행지는 '+affDest()+'.'+trContext()+
+      '- out: 한국어 뜻. 사람이 말하듯이\n'+
+      '- read: 빈 문자열\n'+
+      '- note: **나한테 무슨 뜻인지.** 사투리·속뜻·주의할 점, 메뉴 이름이면 어떤 음식인지 한 줄\n\n'+q);
   const cfg={responseMimeType:'application/json',responseSchema:{type:'OBJECT',properties:{
-   out:{type:'STRING'},read:{type:'STRING'},note:{type:'STRING'}},required:['out']}};
+   out:{type:'STRING'},read:{type:'STRING'},note:{type:'STRING'}},required:['out']},
+   temperature:.3,thinkingConfig:{thinkingBudget:1024}};
   const t=await callGemini([{text:prompt}],cfg);
   const j=JSON.parse(String(t).replace(/```json|```/g,'').trim());
   trShow({src:q,out:String(j.out||'').trim(),read:String(j.read||'').trim(),note:String(j.note||'').trim(),speakable:toLocal},toLocal);
@@ -2334,7 +2373,41 @@ function trSpeak2(which){
 /* 글로 쓴 것은 어느 쪽 말인지 글자로 판단한다 */
 function trText(){
  const el=document.getElementById('trIn'),q=el&&el.value.trim();if(!q)return;
+ trLiveLast=q;
  trRun(q,/[가-힣]/.test(q)?'ko2lo':'lo2ko');
+}
+/* ── 치는 동안 번역 ──────────────────────────────────────────────────────
+   무료 등급이라 마구 부르면 하루 한도가 찬다.
+   멈춘 뒤 0.9초 · 두 글자 이상 · 지난번과 다를 때만 부른다. */
+let trLiveTimer=null,trLiveLast='';
+function trLiveType(){
+ const el=document.getElementById('trIn'),hint=document.getElementById('trLiveHint');
+ const q=(el&&el.value||'').trim();
+ if(trLiveTimer)clearTimeout(trLiveTimer);
+ if(q.length<2||q===trLiveLast){if(hint)hint.textContent='멈추면 바로 번역됩니다. 버튼 안 눌러도 됩니다.';return;}
+ if(hint)hint.textContent='치는 걸 멈추면 번역합니다…';
+ trLiveTimer=setTimeout(function(){
+  const cur=(document.getElementById('trIn')||{}).value||'';
+  const v=cur.trim();
+  if(v.length<2||v===trLiveLast)return;
+  trLiveLast=v;
+  if(hint)hint.textContent='';
+  trRun(v,/[가-힣]/.test(v)?'ko2lo':'lo2ko');
+ },900);
+}
+/* 시끄러운 가게에서는 들려주는 것보다 보여주는 게 빠르다 */
+function trBigOn(){
+ if(!trLast||!trLast.out)return;
+ const a=document.getElementById('trBig1'),b=document.getElementById('trBig2');
+ if(a)a.textContent=trLast.out;
+ if(b)b.textContent=trLast.read||trLast.src||'';
+ const w=document.getElementById('trBig');if(w)w.classList.add('on');
+}
+function trBigOff(){const w=document.getElementById('trBig');if(w)w.classList.remove('on');}
+/* 말투를 바꿔 다시 — 짧게 / 공손하게 */
+function trTone(t){
+ if(!trLast||!trLast.src)return;
+ trRun(trLast.src,'ko2lo',t);
 }
 /* ── 사진 읽기 ───────────────────────────────────────────────────────────
    파파고는 글자를 옮긴다. 우리는 그게 뭔지도 적는다.
