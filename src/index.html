@@ -1,4 +1,13 @@
 <!DOCTYPE html>
+<!--
+  별표털기 — 구글 지도에 저장만 해 둔 곳을 오늘 갈 순서로 바꿔 주는 여행 앱
+
+  © 2026 별표털기. All rights reserved.
+  무단 복제 · 재배포 · 재판매를 금지합니다.
+
+  이 프로그램은 구매자 1인이 사용하는 조건으로 제공됩니다.
+  본인이 쓰는 기기에는 몇 대든 설치하실 수 있습니다.
+-->
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
@@ -6,10 +15,10 @@
 <meta name="theme-color" content="#F4F3F0">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="여행허브">
+<meta name="apple-mobile-web-app-title" content="별표털기">
 <link rel="manifest" href="./manifest.webmanifest">
 <meta name="color-scheme" content="dark only">
-<title>여행 통합 허브</title>
+<title>별표털기 — 저장만 해 둔 곳, 이번엔 실제로</title>
 <style>
   :root{
     --bg:#16130F; --surface:#201C16; --surface2:#2A2519; --raise:#332C1E;
@@ -717,14 +726,14 @@
 <body>
 
 <div id="splash" onclick="splashOut()">
-  <svg viewBox="0 0 100 100" role="img" aria-label="여행허브">
+  <svg viewBox="0 0 100 100" role="img" aria-label="별표털기">
     <path class="sp-route" d="M22 76 C 34 52, 44 68, 54 44 S 70 26, 80 22"
       fill="none" stroke="#4FB3A5" stroke-width="4.5" stroke-linecap="round"/>
     <circle cx="22" cy="76" r="7.5" fill="#3E7F9C"/>
     <circle cx="54" cy="44" r="6" fill="#FFFFFF" stroke="#3E7F9C" stroke-width="4"/>
-    <circle cx="80" cy="22" r="7.5" fill="#E0692F"/>
+    <path d="M80,11 L82.7,18.28 L90.46,18.6 L84.37,23.42 L86.47,30.9 L80,26.6 L73.53,30.9 L75.63,23.42 L69.54,18.6 L77.3,18.28 Z" fill="#E0692F"/>
   </svg>
-  <div class="sp-name">여행허브</div>
+  <div class="sp-name">별표털기</div>
   <div class="sp-tagline">저장만 해 둔 곳,<br>이번엔 실제로 가 봅시다</div>
 </div>
 
@@ -886,10 +895,10 @@ function setupNeeded(){return !foodMap.setupSeen;}
 function setupIsDone(){return !!foodMap.setupDone;}
 function suMark(){
  return '<div class="su-head">'+
-  '<svg viewBox="0 0 100 100" role="img" aria-label="여행허브">'+
+  '<svg viewBox="0 0 100 100" role="img" aria-label="별표털기">'+
    '<path d="M22 76 C 34 52, 44 68, 54 44 S 70 26, 80 22" fill="none" stroke="#4FB3A5" stroke-width="6" stroke-linecap="round"/>'+
-   '<circle cx="22" cy="76" r="8" fill="#3E7F9C"/><circle cx="80" cy="22" r="8" fill="#E0692F"/></svg>'+
-  '<b>여행허브</b></div>';
+   '<circle cx="22" cy="76" r="8" fill="#3E7F9C"/><path d="M80,11 L82.7,18.28 L90.46,18.6 L84.37,23.42 L86.47,30.9 L80,26.6 L73.53,30.9 L75.63,23.42 L69.54,18.6 L77.3,18.28 Z" fill="#E0692F"/></svg>'+
+  '<b>별표털기</b></div>';
 }
 /* mode: 'pick' 고르는 화면 · 'setup' 3단계 화면 */
 function setupShow(mode){
@@ -1035,7 +1044,7 @@ function renderLicSetup(){
   el.innerHTML='<h3><span class="k">LICENSE</span> 정품 등록됨</h3>'+
    '<div class="aistat ok">🟢 '+esc(licStamp())+'</div>'+
    '<div class="sethint">이 이름은 앱 화면 아래·공유 카드·백업 파일에 함께 표시됩니다. '+
-   '구매하신 분 본인의 기기에는 몇 대든 넣으셔도 됩니다.</div>'+gen;
+   '구매하신 분 본인의 기기에는 몇 대든 넣으셔도 됩니다.</div>'+gen+licTermsHTML();
   return;
  }
  el.innerHTML='<h3><span class="k">LICENSE</span> 정품 코드 넣기</h3>'+
@@ -1043,7 +1052,18 @@ function renderLicSetup(){
   '<div class="sd">구매하실 때 받은 코드를 그대로 붙여넣으세요. 기능은 전부 열려 있고, 담을 수 있는 장소 개수만 늘어납니다.</div>'+
   '<input class="set-in" id="licIn" type="text" placeholder="받으신 코드를 붙여넣기" style="margin-top:9px">'+
   '<button class="sbtn" onclick="licSave()">등록하기</button>'+
-  '<div class="sethint">코드는 이 기기에만 저장되고 어디로도 전송되지 않습니다.</div>'+gen;
+  '<div class="sethint">코드는 이 기기에만 저장되고 어디로도 전송되지 않습니다.</div>'+gen+licTermsHTML();
+}
+/* 이용 조건. 짧게, 사는 사람이 읽을 수 있게. */
+function licTermsHTML(){
+ return '<details style="margin-top:14px"><summary style="font-size:12px;font-weight:800;color:var(--muted);cursor:pointer;min-height:44px;display:flex;align-items:center">이용 조건</summary>'+
+  '<div class="sethint" style="margin-top:8px">'+
+  '이 프로그램은 <b>구매자 1인</b>이 사용하는 조건으로 제공됩니다. '+
+  '<b>본인이 쓰시는 기기에는 몇 대든 설치하셔도 됩니다.</b><br><br>'+
+  '파일이나 정품 코드를 다른 사람에게 전달하거나, 재판매·재배포·공개 게시하는 것은 금지됩니다. '+
+  '저작권은 제작자에게 있으며 무단 복제·배포 시 저작권법에 따른 책임을 물을 수 있습니다.<br><br>'+
+  '© 2026 별표털기'+
+  '</div></details>';
 }
 function bkGet(k){try{const r=localStorage.getItem(PFX+k);return r?JSON.parse(r):null;}catch(e){return null;}}
 function bkFoodMap(){const o=bkGet('foodmap_v1');if(!o||typeof o!=='object')return null;
@@ -1060,7 +1080,7 @@ function bkRestoreMods(j){
 function exportData(){
  const all={jpState:bkGet('jp_state_v1'),jpChat:bkGet('jp_chat_v1'),jpPacks:bkGet('jp_packs_v1'),asChat:bkGet('as_chat_v1'),foodMap:bkFoodMap(),v:1};
  const b=new Blob([JSON.stringify(all)],{type:'application/json'});
- const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='여행허브_백업_'+(licOn()?licName()+'_':'')+TODAY+'.json';a.click();
+ const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='별표털기_백업_'+(licOn()?licName()+'_':'')+TODAY+'.json';a.click();
 }
 function importData(inp){
  const f=inp.files&&inp.files[0];inp.value='';if(!f)return;

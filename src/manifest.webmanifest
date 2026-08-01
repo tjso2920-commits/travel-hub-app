@@ -1,7 +1,7 @@
 {
-  "name": "여행 통합 허브",
-  "short_name": "여행허브",
-  "description": "저장한 장소를 동선으로 바꾸고 현지 언어까지 함께 다루는 여행 앱",
+  "name": "별표털기",
+  "short_name": "별표털기",
+  "description": "구글 지도에 저장만 해 둔 곳을 숙소·시간·거리에 맞춰 오늘 갈 순서로 바꿔 줍니다",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
