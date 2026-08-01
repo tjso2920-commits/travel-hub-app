@@ -30,10 +30,11 @@ const now = d.getElementById('fmNow');
 t('통역 카드 존재', !!d.getElementById('trCard'));
 t('현장 탭 맨 위', now.firstElementChild && now.firstElementChild.id === 'trCard');
 t('말하기 버튼 둘', !!d.getElementById('trMicKo') && !!d.getElementById('trMicLo'));
-t('사진 버튼', now.textContent.includes('메뉴판·간판 찍기'));
+t('사진 버튼', now.textContent.includes('사진으로 읽기'));
 t('글로 쓰기', now.textContent.includes('글로 쓰기'));
 t('소리내어 읽어준다고 안내', now.textContent.includes('소리내어 읽어 줍니다'));
-t('인터넷이 필요하다고 밝힘', now.textContent.includes('인터넷이 있어야 합니다'));
+t('메뉴판만이 아니라고 안내', now.textContent.includes('글씨가 있으면 뭐든'));
+t('무슨 뜻인지까지 적는다고 안내', now.textContent.includes('나한테 무슨 뜻인지'));
 
 /* ── 목적지 말을 따라가는가 ─────────────────────────────────────────── */
 t('일본이면 일본어 통역', d.getElementById('trCard').textContent.includes('일본어 통역'));
@@ -92,6 +93,11 @@ t('세로쓰기와 읽는 방향', ocr.includes('세로쓰기') && ocr.includes(
 t('지어내지 말라고 못박음', ocr.includes('절대 지어내지 마라'));
 t('확신 여부를 받음', ocr.includes('sure'));
 t('음식이 뭔지도 적게 함', ocr.includes('날것'));
+t('메뉴 말고도 읽으라고 함', ocr.includes('안내문') && ocr.includes('약봉투') && ocr.includes('기계 버튼'));
+t('무엇인지 한 줄 요약을 받음', ocr.includes('summary'));
+t('사진 종류를 받음', ocr.includes('kind'));
+t('안내문이면 뭘 해야 하는지', ocr.includes('하면 안 되는지'));
+t('표면 언제까지 쓰는지', ocr.includes('언제·어디까지'));
 
 const cfg = w.eval('JSON.stringify(trOcrCfg(false))');
 const cfgHard = w.eval('JSON.stringify(trOcrCfg(true))');
@@ -102,19 +108,22 @@ t('다시 읽기 모델이 따로 있음', typeof w.eval('TR_MODEL_HARD') === 's
 
 /* 결과 화면 — 흐린 글자 표시와 다시 읽기 버튼 */
 w.eval(`trPhotoB64='x';trPhotoTried=false;trShowMenu([
-  {ko:'모츠나베',src:'もつ鍋',read:'모츠나베',price:'1,650円',what:'곱창전골',sure:true},
-  {ko:'고마사바',src:'ごまさば',read:'고마사바',price:'',what:'생고등어 회',sure:false}
-],false)`);
+  {ko:'출입금지',src:'立入禁止',read:'타치이리 킨시',price:'',what:'여기 들어가면 안 됩니다',sure:true},
+  {ko:'관계자 외',src:'関係者以外',read:'칸케이샤 이가이',price:'',what:'직원만 들어갑니다',sure:false}
+],false,{kind:'notice',summary:'직원만 들어가는 문이라는 안내입니다'})`);
 const menu = d.getElementById('trOut').textContent;
+t('한 줄 요약이 맨 위', menu.indexOf('직원만 들어가는 문') === 0);
+t('사진 종류 표시', menu.includes('안내문'));
+t('무슨 뜻인지 표시', menu.includes('여기 들어가면 안 됩니다'));
 t('읽은 개수 표시', menu.includes('2개'));
 t('확실하지 않은 것 개수 표시', menu.includes('확실하지 않은 것 1개'));
 t('흐린 글자 표시', menu.includes('글자 흐림'));
 t('더 꼼꼼히 다시 읽기 버튼', menu.includes('더 꼼꼼히 다시 읽기'));
 t('다시 찍을 필요 없다고 안내', menu.includes('다시 찍지 않아도'));
-t('음식 설명 표시', menu.includes('생고등어 회'));
+t('메뉴가 아니어도 됨', !menu.includes('메뉴판'));
 
 /* 이미 꼼꼼히 읽었으면 그 버튼은 사라진다 */
-w.eval(`trPhotoTried=true;trShowMenu([{ko:'모츠나베',src:'もつ鍋',sure:true}],true)`);
+w.eval(`trPhotoTried=true;trShowMenu([{ko:'모츠나베',src:'もつ鍋',sure:true}],true,{kind:'menu',summary:'이자카야 저녁 메뉴판입니다'})`);
 const menu2 = d.getElementById('trOut').textContent;
 t('꼼꼼히 읽은 뒤엔 버튼 없음', !menu2.includes('더 꼼꼼히 다시 읽기'));
 t('꼼꼼히 읽었다고 표시', menu2.includes('꼼꼼히 읽기'));

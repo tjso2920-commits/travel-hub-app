@@ -2253,13 +2253,14 @@ function trHTML(){
  return '<div class="xcard hot" id="trCard"><h3><span class="tag">통역</span>'+esc(name)+' 통역</h3>'+
   '<div class="xsmall">버튼을 누르고 말하면 번역해서 <b style="color:var(--text)">소리내어 읽어 줍니다.</b> '+
   '상대에게 폰을 보여줄 필요 없이 스피커로 들려주면 됩니다.<br>'+
-  '<b style="color:var(--text)">인터넷이 있어야 합니다.</b> 데이터가 끊기면 미리 받아 둔 회화팩을 쓰세요.</div>'+
+  '<b style="color:var(--text)">사진</b>은 메뉴판만이 아니라 간판·안내문·표·약봉투·기계 버튼까지 '+
+  '<b style="color:var(--text)">글씨가 있으면 뭐든</b> 읽고, 그게 <b style="color:var(--text)">나한테 무슨 뜻인지</b>까지 적어 줍니다.</div>'+
   '<div class="tr-two">'+
    '<button class="tr-mic" id="trMicKo" onclick="trSpeak2(\'ko\')">🎤 한국어로 말하기<small>→ '+esc(name)+'로 들려줍니다</small></button>'+
    '<button class="tr-mic alt" id="trMicLo" onclick="trSpeak2(\'lo\')">🎤 '+esc(name)+' 듣기<small>→ 한국어로 보여줍니다</small></button>'+
   '</div>'+
   '<div class="xactions" style="margin-top:10px">'+
-   '<button class="xaction" onclick="document.getElementById(\'trMenuFile\').click()">📷 메뉴판·간판 찍기</button>'+
+   '<button class="xaction" onclick="document.getElementById(\'trMenuFile\').click()">📷 사진으로 읽기</button>'+
    '<button class="xaction sub" onclick="trToggleType()">⌨ 글로 쓰기</button></div>'+
   '<input type="file" id="trMenuFile" accept="image/*" capture="environment" style="display:none" onchange="trPhoto(this)">'+
   '<div id="trTypeBox" style="display:none;margin-top:10px">'+
@@ -2366,29 +2367,45 @@ function trShrink(file){
   fr.readAsDataURL(file);
  });
 }
-const TR_OCR_SCHEMA={responseMimeType:'application/json',responseSchema:{type:'OBJECT',properties:{items:{type:'ARRAY',items:{
- type:'OBJECT',properties:{ko:{type:'STRING'},src:{type:'STRING'},read:{type:'STRING'},price:{type:'STRING'},
- what:{type:'STRING'},sure:{type:'BOOLEAN'}},required:['ko','src']}}},required:['items']}};
+const TR_OCR_SCHEMA={responseMimeType:'application/json',responseSchema:{type:'OBJECT',properties:{
+ kind:{type:'STRING'},summary:{type:'STRING'},
+ items:{type:'ARRAY',items:{
+  type:'OBJECT',properties:{ko:{type:'STRING'},src:{type:'STRING'},read:{type:'STRING'},price:{type:'STRING'},
+  what:{type:'STRING'},sure:{type:'BOOLEAN'}},required:['ko','src']}}},required:['items']}};
+
+/* 사진 종류를 한국어로. 모르면 빈칸. */
+const TR_KIND={menu:'메뉴판',sign:'간판',notice:'안내문',ticket:'표·티켓',label:'라벨·포장',
+ machine:'기계·버튼',receipt:'영수증',schedule:'시간표',other:''};
+function trKindTxt(k){return TR_KIND[String(k||'').toLowerCase()]||'';}
 
 function trOcrPrompt(){
  const name=jpLangName();
- return '이 사진은 '+affDest()+'의 메뉴판·간판이다. 적힌 '+name+'를 빠짐없이 읽어라.\n\n'+
+ return '이 사진은 '+affDest()+'에서 찍은 것이다. 사진 안의 '+name+' 글씨를 **빠짐없이** 읽어라.\n\n'+
+  '메뉴판일 수도 있고 아닐 수도 있다. 무엇이든 글씨가 있으면 읽는다 —\n'+
+  '간판 · 안내문 · 주의문 · 표·티켓 · 시간표 · 약봉투 · 상품 라벨 · 기계 버튼 · 영수증 · 손글씨 쪽지.\n\n'+
   '**어려운 사진일 수 있다. 다음을 각오하고 읽어라.**\n'+
   '- 인쇄가 아니라 **손글씨·붓글씨**일 수 있다. 흘려 쓴 획을 앞뒤 문맥으로 맞춰 읽어라\n'+
   '- **세로쓰기**일 수 있다. 그러면 위에서 아래로 읽고, **줄은 오른쪽에서 왼쪽으로** 넘어간다\n'+
-  '- 나무판·칠판·천에 쓴 것, 조명이 어둡거나 비스듬히 찍힌 것일 수 있다\n'+
-  '- 가게에서 쓰는 줄임말·옛 글자·사투리 표기가 섞일 수 있다\n'+
-  '- 가격은 숫자 뒤에 통화 기호나 円·฿·元 이 붙거나 아예 없을 수 있다\n\n'+
-  '항목마다 이렇게 적어라.\n'+
-  '- ko: 한국어 이름. 사람이 알아듣는 말로\n'+
+  '- 나무판·칠판·천·금속·화면에 쓴 것, 조명이 어둡거나 비스듬히 찍힌 것일 수 있다\n'+
+  '- 줄임말·옛 글자·사투리 표기·업계 용어가 섞일 수 있다\n\n'+
+  '먼저 두 가지를 정해라.\n'+
+  '- kind: menu / sign / notice / ticket / label / machine / receipt / schedule / other 중 하나\n'+
+  '- summary: **이게 무엇이고 나한테 무슨 뜻인지 한 줄.** '+
+    '예) "이자카야 저녁 메뉴판입니다", "이 문은 밀지 말고 당기라는 안내입니다", '+
+    '"3일 동안 지하철을 무제한으로 타는 표입니다"\n\n'+
+  '그다음 항목마다 이렇게 적어라.\n'+
+  '- ko: 한국어로 옮긴 것. 사람이 알아듣는 말로\n'+
   '- src: 원문 그대로 (읽은 그대로. 고쳐 쓰지 마라)\n'+
   '- read: 한글로 적은 발음. 로마자 금지\n'+
-  '- price: 적혀 있으면 그대로, 없으면 빈 문자열\n'+
-  '- what: **이게 어떤 음식·물건인지 한 줄.** 이름만 옮기지 마라. '+
-    '재료·조리법·맵기·**날것인지**처럼 시켜야 할지 판단이 되는 것을 적어라\n'+
+  '- price: 값이나 숫자가 적혀 있으면 그대로, 없으면 빈 문자열\n'+
+  '- what: **나한테 무슨 뜻인지 한 줄.** 글자만 옮기지 마라.\n'+
+    '  · 음식이면 재료·조리법·맵기·**날것인지**처럼 시킬지 판단이 되는 것\n'+
+    '  · 안내문·주의문이면 **내가 뭘 해야 하는지 / 하면 안 되는지**\n'+
+    '  · 표·시간표면 **언제·어디까지 쓸 수 있는지**\n'+
+    '  · 약·라벨이면 **언제 얼마나 먹는지, 조심할 것**\n'+
   '- sure: 글자를 확실히 읽었으면 true, 자신 없으면 false\n\n'+
   '**절대 지어내지 마라.** 못 읽은 글자는 sure 를 false 로 두고 읽은 만큼만 적어라.\n'+
-  '메뉴가 아니라 간판·안내판이면 그것도 그대로 항목으로 적어라. 30개까지.';
+  '중요한 것부터 30개까지.';
 }
 function trOcrCfg(hard){
  const c=JSON.parse(JSON.stringify(TR_OCR_SCHEMA));
@@ -2398,7 +2415,8 @@ function trOcrCfg(hard){
 }
 /* 읽은 뒤 사진과 한 번 더 대조한다. 빠뜨린 것과 잘못 읽은 것을 그 자리에서 잡는다. */
 async function trOcrVerify(items,hard){
- const prompt='아래는 이 사진에서 읽어 낸 목록이다. **사진을 다시 보고** 확인해라.\n'+
+ const prompt='아래는 이 사진에서 읽어 낸 것이다. **사진을 다시 보고** 확인해라.\n'+
+  '- kind 와 summary 가 사진과 맞는지 보고 틀리면 고쳐라\n'+
   '- 빠뜨린 항목이 있으면 **추가**해라\n'+
   '- 잘못 읽은 글자가 있으면 **고쳐라**\n'+
   '- 사진에 없는 것을 지어냈으면 **빼라**\n'+
@@ -2409,7 +2427,8 @@ async function trOcrVerify(items,hard){
   trOcrCfg(hard),hard?TR_MODEL_HARD:null);
  const j=JSON.parse(String(t).replace(/```json|```/g,'').trim());
  const out=(j.items||[]).filter(function(x){return x&&x.ko;});
- return out.length?out:items;      /* 대조가 망가뜨렸으면 원래 것을 쓴다 */
+ /* 대조가 망가뜨렸으면 원래 것을 쓴다 */
+ return {items:out.length?out:items,kind:j.kind||'',summary:j.summary||''};
 }
 async function trPhoto(inp){
  const f=inp.files&&inp.files[0];if(inp)inp.value='';if(!f)return;
@@ -2432,22 +2451,27 @@ async function trOcrRun(hard){
   let items=(j.items||[]).filter(function(x){return x&&x.ko;}).slice(0,30);
   if(!items.length){
    trSet('<div class="tr-out"><div class="tr-note">글자를 찾지 못했습니다.<br>'+
-    '메뉴판이 화면에 꽉 차게, 밝은 곳에서, 정면으로 다시 찍어 보세요.</div></div>');
+    '글씨가 화면에 꽉 차게, 밝은 곳에서, 정면으로 다시 찍어 보세요.</div></div>');
    return;
   }
   trBusyOn('사진과 다시 대조하는 중…');
-  try{items=await trOcrVerify(items,hard);}catch(e){}
+  let meta={kind:j.kind||'',summary:j.summary||''};
+  try{const v=await trOcrVerify(items,hard);items=v.items;if(v.summary)meta={kind:v.kind||meta.kind,summary:v.summary};}catch(e){}
   if(hard)trPhotoTried=true;
-  trShowMenu(items,hard);
+  trShowMenu(items,hard,meta);
  }catch(e){if(e)trSet('<div class="tr-out"><div class="tr-note">사진 번역 실패: '+esc(e.message||e)+
    (hard?'<br>더 좋은 모델은 무료 한도가 빨리 찹니다. 잠시 뒤 다시 해보세요.':'')+'</div></div>');}
  finally{trBusy=false;}
 }
-function trShowMenu(items,hard){
+function trShowMenu(items,hard,meta){
+ meta=meta||{};
  const unsure=items.filter(function(x){return x.sure===false;}).length;
- trLast={out:items.map(function(x){return x.ko+(x.price?(' '+x.price):'');}).join('\n'),read:'',speakable:false};
+ const kind=trKindTxt(meta.kind);
+ trLast={out:(meta.summary?meta.summary+'\n\n':'')+items.map(function(x){return x.ko+(x.price?(' '+x.price):'');}).join('\n'),read:'',speakable:false};
  trSet('<div class="tr-out">'+
-  '<div class="tr-src">사진에서 <b style="color:var(--text)">'+items.length+'개</b>를 읽었습니다'+
+  /* 무엇을 찍었는지부터 한 줄로. 글자 목록보다 이게 먼저다. */
+  (meta.summary?'<div class="tr-big" style="font-size:19px;margin-bottom:10px">'+esc(meta.summary)+'</div>':'')+
+  '<div class="tr-src">'+(kind?esc(kind)+' · ':'')+'글씨 <b style="color:var(--text)">'+items.length+'개</b>를 읽었습니다'+
    (hard?' · 꼼꼼히 읽기':'')+(unsure?(' · 확실하지 않은 것 '+unsure+'개'):'')+'</div>'+
   items.map(function(x){
    return '<div style="padding:11px 0;border-top:1px solid var(--line)">'+
