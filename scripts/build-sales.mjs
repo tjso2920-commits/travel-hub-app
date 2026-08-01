@@ -86,7 +86,7 @@ for (const must of [
   'function fmGuideHTML(sfx)', 'function GUIDE_STEPS()', 'function setupShow(mode)', 'function setupFinish()', 'function fmFileToolsHTML()',
   'function licParse(code)', 'function licRoom()', 'function renderLicBar()', 'const FREE_LIMIT=',
   'async function jpGenPack()', 'const LANG_THEMES=', 'function jpLangName()', 'function LW()',
-  'function trHTML()', 'async function trRun(text,dir,tone)', 'function trLiveType()', 'function trBigOn()', 'async function trPhoto(inp)', 'function trSpeak2(which)',
+  'function trHTML()', 'async function trRun(text,dir,tone)', 'function trLiveType()', 'function trBigOn()', 'function trDictate()', 'function trDictStart(R)', 'async function trPhoto(inp)', 'function trSpeak2(which)',
   'function trOcrPrompt()', 'async function trOcrVerify(items,hard)', 'function trShrink(file)', 'const TR_MODEL_HARD=', 'function fmExtraHTML()',
   'async function fxFetch(quiet)', 'function fxHomeTxt(amount)',
   'function phRead(buf)', 'function phNearest(', 'function phAnalyze(kind)',

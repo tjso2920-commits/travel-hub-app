@@ -90,9 +90,53 @@ t('결과에 읽는 법 표시', out.includes('커 메누 너이 캅'));
 w.eval("trToggleType()");
 const ta = d.getElementById('trIn');
 t('글 쓰는 칸 존재', !!ta);
-t('치는 동안 번역한다고 안내', ta.getAttribute('placeholder').includes('치는 동안'));
+t('말해도 되고 써도 된다고 안내', ta.getAttribute('placeholder').includes('말하거나 쓰세요'));
 t('입력마다 불린다', (ta.getAttribute('oninput')||'').includes('trLiveType'));
-t('멈추면 번역한다고 알려줌', d.getElementById('trLiveHint').textContent.includes('버튼 안 눌러도'));
+t('말하면 글자로 써진다고 안내', d.getElementById('trLiveHint').textContent.includes('말하면 글자로'));
+
+/* ── 받아쓰기 — 말하면 칸에 쌓인다 ──────────────────────────────────── */
+const dictBtn = d.getElementById('trDictBtn');
+t('말해서 쓰기 버튼', !!dictBtn && dictBtn.textContent.includes('말해서 쓰기'));
+
+/* 인식기를 가짜로 갈아 끼워 실제 동작을 본다 */
+w.eval(`
+ window.__rec=null;
+ window.SpeechRecognition=function(){
+  window.__rec=this;
+  this.start=function(){this.started=true;};
+  this.stop=function(){this.stopped=true;if(this.onend)this.onend();};
+ };
+`);
+w.eval('trDictate()');
+t('누르면 듣기 시작', w.eval('trRecOn') === true && w.eval('!!__rec.started') === true);
+t('듣는 중 표시', d.getElementById('trDictBtn').textContent.includes('듣는 중'));
+t('멈추라고 안내', d.getElementById('trDictBtn').textContent.includes('눌러서 멈추기'));
+
+/* 말하는 중간 결과가 칸에 보인다 */
+w.eval("__rec.onresult({resultIndex:0,results:[{0:{transcript:'이거 매워'},isFinal:false,length:1}]})");
+t('말하는 중에도 칸에 보임', d.getElementById('trIn').value === '이거 매워');
+t('듣는 중 힌트에 말한 내용', d.getElementById('trLiveHint').textContent.includes('이거 매워'));
+
+/* 한 문장이 끝나면 칸에 쌓인다 */
+w.eval("__rec.onresult({resultIndex:0,results:[{0:{transcript:'이거 매워요?'},isFinal:true,length:1}]})");
+t('끝난 문장은 칸에 쌓임', d.getElementById('trIn').value === '이거 매워요?');
+
+/* 사파리가 멋대로 끊어도 다시 건다 */
+w.eval('__rec.onend()');
+await new Promise((r) => setTimeout(r, 400));
+t('끊겨도 계속 듣는다', w.eval('trRecOn') === true);
+
+/* 사용자가 멈추면 그때 번역한다 */
+w.eval('window.__realRun2=trRun; let ran=0; trRun=function(){ran++;}; window.__r=function(){return ran;};');
+w.eval('trDictateStop()');
+t('멈추면 듣기 끝', w.eval('trRecOn') === false);
+t('멈추면 번역함', w.eval('__r()') === 1);
+t('버튼이 원래대로', d.getElementById('trDictBtn').textContent.includes('말해서 쓰기'));
+w.eval('trRun = window.__realRun2;');
+
+/* 지우기 */
+w.eval('trClearType()');
+t('지우면 칸이 빔', d.getElementById('trIn').value === '');
 
 /* 두 글자 미만이면 부르지 않는다 — 무료 한도를 아껴야 한다 */
 /* 진짜 번역을 부르지 않고 몇 번 불렸는지만 센다 */

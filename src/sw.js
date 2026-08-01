@@ -5,7 +5,7 @@
  *
  * 앱을 새로 배포할 때 CACHE 값을 반드시 올린다. 올리지 않으면 사용자가 옛 버전을 계속 본다.
  */
-const CACHE = 'travel-hub-v41';
+const CACHE = 'travel-hub-v42';
 const SHELL = ['./', './index.html', './manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {

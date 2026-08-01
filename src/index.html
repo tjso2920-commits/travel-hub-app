@@ -544,6 +544,17 @@
   .tr-alt button{min-height:44px;padding:0 13px;border-radius:999px;border:1px solid var(--line2);
     background:transparent;color:var(--muted);font-size:12.5px;font-weight:800}
   .tr-live{font-size:11.5px;color:var(--faint);margin:6px 0 0 2px}
+  .tr-dict{width:100%;min-height:56px;margin-top:9px;border:1px solid var(--line2);
+    border-radius:var(--pill,999px);background:transparent;color:var(--wasabi);
+    font-size:15px;font-weight:800}
+  .tr-dict.on{background:var(--ember,#C4551F);color:#fff;border-color:transparent}
+  /* 듣는 중에 소리 크기를 흉내 내는 점 세 개. 켜져 있다는 게 보여야 안심한다. */
+  .tr-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#fff;margin:0 2px;
+    animation:trPulse 1s infinite}
+  .tr-dot:nth-child(2){animation-delay:.15s}
+  .tr-dot:nth-child(3){animation-delay:.3s}
+  @keyframes trPulse{0%,100%{opacity:.25}50%{opacity:1}}
+  @media (prefers-reduced-motion:reduce){.tr-dot{animation:none;opacity:.7}}
   /* 시끄러운 가게에서 폰을 내민다. 글씨가 화면을 채워야 한다. */
   #trBig{position:fixed;inset:0;z-index:10000;background:#fff;display:none;
     flex-direction:column;align-items:center;justify-content:center;padding:26px;text-align:center}
@@ -2304,16 +2315,28 @@ function trHTML(){
   '</div>'+
   '<div class="xactions" style="margin-top:10px">'+
    '<button class="xaction" onclick="document.getElementById(\'trMenuFile\').click()">📷 사진으로 읽기</button>'+
-   '<button class="xaction sub" onclick="trToggleType()">⌨ 글로 쓰기</button></div>'+
+   '<button class="xaction sub" onclick="trToggleType()">⌨ 말해서 쓰기·글로 쓰기</button></div>'+
   '<input type="file" id="trMenuFile" accept="image/*" capture="environment" style="display:none" onchange="trPhoto(this)">'+
   '<div id="trTypeBox" style="display:none;margin-top:10px">'+
-   '<textarea class="xta" id="trIn" placeholder="한국어로 쓰세요. 치는 동안 '+esc(name)+'로 바뀝니다" '+
+   '<textarea class="xta" id="trIn" placeholder="말하거나 쓰세요. 한국어로 하면 '+esc(name)+'로 바뀝니다" '+
    'oninput="trLiveType()" onkeydown="if(event.key===\'Enter\'&&!event.shiftKey){event.preventDefault();trText();}"></textarea>'+
-   '<div class="tr-live" id="trLiveHint">멈추면 바로 번역됩니다. 버튼 안 눌러도 됩니다.</div>'+
-   '<div class="xactions"><button class="xaction sub" onclick="trText()">지금 번역</button></div></div>'+
+   '<button class="tr-dict" id="trDictBtn" onclick="trDictate()">🎤 말해서 쓰기</button>'+
+   '<div class="tr-live" id="trLiveHint">말하면 글자로 써집니다. 틀리면 고쳐도 됩니다.</div>'+
+   '<div class="xactions"><button class="xaction sub" onclick="trText()">지금 번역</button>'+
+   '<button class="xaction sub" onclick="trClearType()">지우기</button></div></div>'+
   '<div id="trOut"></div></div>';
 }
-function trToggleType(){const el=document.getElementById('trTypeBox');if(el)el.style.display=el.style.display==='none'?'block':'none';}
+function trToggleType(){
+ const el=document.getElementById('trTypeBox');if(!el)return;
+ const show=el.style.display==='none';
+ el.style.display=show?'block':'none';
+ if(!show&&trRecOn)trDictateStop();
+}
+function trClearType(){
+ if(trRecOn)trDictateStop();
+ const el=document.getElementById('trIn');if(el)el.value='';
+ trRecBase='';trLiveLast='';trDictHint('말하면 글자로 써집니다. 틀리면 고쳐도 됩니다.');
+}
 function trSet(html){const el=document.getElementById('trOut');if(el)el.innerHTML=html;}
 function trBusyOn(m){trBusy=true;trSet('<div class="tr-busy">'+esc(m)+'</div>');}
 /* 결과를 그리고, 목적지 말 쪽은 바로 읽어 준다. */
@@ -2422,6 +2445,68 @@ function trLiveType(){
   if(hint)hint.textContent='';
   trRun(v,/[가-힣]/.test(v)?'ko2lo':'lo2ko');
  },900);
+}
+/* ── 받아쓰기 ────────────────────────────────────────────────────────────
+   말하면 글자가 칸에 쌓인다. 틀리면 손으로 고치고, 고친 대로 다시 번역된다.
+   아이폰 사파리는 조용해지면 멋대로 끊으므로, 멈추라고 하기 전까지 다시 건다. */
+let trRec=null,trRecOn=false,trRecBase='',trRecStop=false;
+function trDictBtn(){
+ const b=document.getElementById('trDictBtn');if(!b)return;
+ b.className='tr-dict'+(trRecOn?' on':'');
+ b.innerHTML=trRecOn
+  ? '<span class="tr-dot"></span><span class="tr-dot"></span><span class="tr-dot"></span> 듣는 중 · 눌러서 멈추기'
+  : '🎤 말해서 쓰기';
+}
+function trDictHint(t){const h=document.getElementById('trLiveHint');if(h)h.textContent=t;}
+function trDictate(){
+ if(trRecOn){trDictateStop();return;}
+ const R=window.SpeechRecognition||window.webkitSpeechRecognition;
+ if(!R){alert('이 브라우저는 음성 입력을 지원하지 않습니다.\n아이폰은 사파리에서, 안드로이드는 크롬에서 열어 주세요.\n\n칸에 직접 쓰셔도 됩니다.');return;}
+ const el=document.getElementById('trIn');if(!el)return;
+ trRecBase=(el.value||'');
+ if(trRecBase&&!/\s$/.test(trRecBase))trRecBase+=' ';
+ trRecStop=false;trRecOn=true;trDictBtn();trDictHint('듣는 중… 말씀하세요');
+ trDictStart(R);
+}
+function trDictStart(R){
+ try{
+  trRec=new R();
+  trRec.lang='ko-KR';trRec.interimResults=true;trRec.continuous=true;trRec.maxAlternatives=1;
+  trRec.onresult=function(e){
+   const el=document.getElementById('trIn');if(!el)return;
+   let fin='',itr='';
+   for(let i=e.resultIndex;i<e.results.length;i++){
+    const t=e.results[i][0].transcript;
+    if(e.results[i].isFinal)fin+=t;else itr+=t;
+   }
+   if(fin){trRecBase+=fin;}
+   el.value=trRecBase+itr;
+   trDictHint(itr?('듣는 중… '+itr):'듣는 중… 말씀하세요');
+   /* 한 문장이 끝나면 그때까지 말한 것으로 미리 번역해 둔다 */
+   if(fin)trLiveType();
+  };
+  trRec.onerror=function(ev){
+   if(ev.error==='not-allowed'){
+    trDictateStop();
+    alert('마이크를 못 씁니다.\n아이폰 설정 → 사파리 → 마이크를 허용해 주세요.');
+   }
+   /* no-speech·aborted 는 흔한 일이다. 조용히 다시 건다. */
+  };
+  trRec.onend=function(){
+   if(trRecStop){trRecOn=false;trDictBtn();return;}
+   /* 사파리가 멋대로 끊은 것이다. 다시 건다. */
+   setTimeout(function(){if(!trRecStop)trDictStart(R);},250);
+  };
+  trRec.start();
+ }catch(e){trRecOn=false;trDictBtn();trDictHint('');}
+}
+function trDictateStop(){
+ trRecStop=true;trRecOn=false;
+ try{if(trRec)trRec.stop();}catch(e){}
+ trRec=null;trDictBtn();
+ const el=document.getElementById('trIn'),v=(el&&el.value||'').trim();
+ if(v.length>=2){trDictHint('');trLiveLast=v;trRun(v,/[가-힣]/.test(v)?'ko2lo':'lo2ko');}
+ else trDictHint('멈추면 바로 번역됩니다. 버튼 안 눌러도 됩니다.');
 }
 /* 시끄러운 가게에서는 들려주는 것보다 보여주는 게 빠르다 */
 function trBigOn(){
