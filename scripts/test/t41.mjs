@@ -26,6 +26,9 @@ w.alert = () => {}; w.confirm = () => true;
 w.eval("foodMap.dest='후쿠오카';fmSetCountry('JP');foodMap.fx={rate:9.3,at:TODAY,src:'api',from:'JPY',to:'KRW'};save('foodmap_v1',foodMap);");
 t('일본 환산 나옴', w.eval('fxBoth(10000)') === '10,000엔 (약 93,000원)');
 
+/* 나라를 바꿀 때 담아 둔 게 있으면 "새 여행으로 시작할까요?" 를 묻는다(t46).
+   여기서 보려는 것은 **취소하고 목적지만 바꿨을 때** 엔화 환율이 바트에 안 쓰이는가다. */
+w.confirm = () => false;
 w.eval("fmSetCountry('TH');");
 t('태국 통화는 THB', w.eval('fxCur()') === 'THB');
 t('엔화 환율을 바트에 안 씀', w.eval('fxRate()') === null);
@@ -35,10 +38,12 @@ t('환율 카드가 왜 없는지 설명함', w.eval('fxHTML()').includes('목�
 
 w.eval("fmSetCountry('JP');");
 t('일본으로 되돌아오면 원래 환율이 살아남', w.eval('fxBoth(10000)') === '10,000엔 (약 93,000원)');
+w.confirm = () => true;
 
 /* 예전에 저장된 값에는 통화 짝이 없다 — 그때는 전부 일본이었다 */
 w.eval("foodMap.fx={rate:9.3,at:TODAY,src:'api'};save('foodmap_v1',foodMap);fmSetCountry('JP');");
 t('짝 없는 옛 값도 일본에서는 그대로 씀', w.eval('fxRate()') === 9.3);
+w.confirm = () => false;
 w.eval("fmSetCountry('FR');");
 t('짝 없는 옛 값을 유로에는 안 씀', w.eval('fxRate()') === null);
 
@@ -48,6 +53,7 @@ t('직접 넣은 환율에 통화 짝이 붙음', w.eval("foodMap.fx.from") === 
 t('유로 환산 나옴', w.eval('fxBoth(10)') === '10유로 (약 14,500원)');
 w.eval("fmSetCountry('JP');");
 t('유로 환율을 엔에 안 씀', w.eval('fxRate()') === null);
+w.confirm = () => true;
 
 /* ── 2. 분류 자동 판정 ───────────────────────────────────────────────── */
 const CASES = [

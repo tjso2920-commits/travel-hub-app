@@ -51,7 +51,9 @@ function seed(code, cc, dest) {
     foodMap.selected='p1';
     bgSetTotal(800000); bgSetDays(4);
     save('foodmap_v1',foodMap);
-    fmSetCountry(${JSON.stringify(cc)});
+    /* 여기는 사용자가 나라를 '바꾸는' 흉내가 아니라 검사할 상태를 세우는 것이다.
+       fmSetCountry 를 쓰면 새 여행 확인창이 떠서 방금 세운 장소가 지워진다. */
+    foodMap.destCountry=${JSON.stringify(cc)}; save('foodmap_v1',foodMap); renderFoodMap();
     jpAIPacks.langs={${JSON.stringify(code)}:{weeks:LANG_THEMES.map(function(th){
       return {t:th[0],s:th.slice(1),l:th.slice(1).map(function(sub){
         return {j:'Sample local sentence',k:'샘플 읽는 소리',m:'보기 뜻 ('+sub+')'};})};
