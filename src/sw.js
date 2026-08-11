@@ -5,7 +5,7 @@
  *
  * 앱을 새로 배포할 때 CACHE 값을 반드시 올린다. 올리지 않으면 사용자가 옛 버전을 계속 본다.
  */
-const CACHE = 'travel-hub-v51';
+const CACHE = 'travel-hub-v52';
 /* 앱 본체는 반드시 담겨야 한다. 나머지는 있으면 좋은 것들이다. */
 const CORE = ['./index.html'];
 const EXTRA = ['./', './manifest.webmanifest', './icon-192.png', './icon-512.png'];

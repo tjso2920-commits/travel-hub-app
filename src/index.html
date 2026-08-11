@@ -608,6 +608,21 @@
   #trBig .b3{font-size:14px;color:#8A959C;margin-top:22px}
   #trBig button{margin-top:28px;min-height:56px;padding:0 26px;border:0;border-radius:999px;
     background:#22303A;color:#fff;font-size:16px;font-weight:800}
+  /* 담기 화면 맨 위 무료판 띠 — 맨 아래까지 내려야 보이면 아무도 못 찾는다 */
+  .lic-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px;justify-content:space-between;
+    margin:0 0 10px;padding:10px 12px;border:1px solid var(--line2);border-radius:12px;
+    background:var(--card2,transparent);font-size:12px;line-height:1.5;color:var(--muted)}
+  .lic-top b{color:var(--text)}
+  .lic-top button{min-height:44px;padding:0 14px;border:1px solid var(--line2);border-radius:10px;
+    background:transparent;color:var(--text);font-size:12.5px;font-weight:800;cursor:pointer}
+  /* 데려다 준 뒤 어느 칸인지 잠깐 눈에 띄게 */
+  .lic-hi{outline:2px solid var(--wasabi,#8ab661);outline-offset:2px}
+  /* 어느 파일을 고를지 — 여기서 사람이 제일 많이 틀린다 */
+  .fm-pick{margin-top:10px;padding:10px 12px;border:1px solid var(--line2);border-radius:12px;line-height:1.7}
+  .fm-pick .ok{color:var(--wasabi,#8ab661);font-weight:800}
+  .fm-pick .no{color:var(--warn,#c9702f);font-weight:800}
+  .fm-warn{color:var(--warn,#c9702f);font-weight:700}
+  .fm-dim{color:var(--faint)}
   #licBar{text-align:center;padding:18px 16px 26px;font-size:11.5px;line-height:1.6;color:var(--faint)}
   #licBar b{color:var(--muted);font-weight:800}
   #licBar .free{display:inline-block;border:1px solid var(--line2);border-radius:999px;
@@ -2998,11 +3013,33 @@ function renderLicBar(){
  const left=licRoom();
  el.innerHTML='<span class="free">무료판 · 장소 '+foodMap.places.length+' / '+FREE_LIMIT+'곳</span><br>'+
   (left>0?('앞으로 '+left+'곳 더 담을 수 있습니다.'):('한도를 다 쓰셨습니다. 담아 둔 곳은 그대로 쓰실 수 있습니다.'))+
-  '<br><button onclick="showOv(\'ovSet\');renderSettings();licFocus()">정품 코드 넣기</button>';
+  '<br><button onclick="licGo()">정품 코드 넣기</button>';
 }
 function licFocus(){
  const el=document.getElementById('licSetup');
  if(el)setTimeout(function(){el.scrollIntoView({block:'start'});},60);
+ /* 스크롤이 끝난 뒤에 칸을 잡아 준다 — 어디에 넣는지 눈에 보이게 */
+ setTimeout(function(){
+  const i=document.getElementById('licIn');
+  if(!i)return;
+  try{i.focus();}catch(e){}
+  i.classList.add('lic-hi');
+  setTimeout(function(){i.classList.remove('lic-hi');},1800);
+ },260);
+}
+/* 어디서든 한 번에 정품 칸까지 데려다 준다 */
+function licGo(){showOv('ovSet');renderSettings();licFocus();}
+/* 막혔다는 말만 하고 끝내지 않는다. 그 자리에서 데려다 준다. */
+function licAskGo(msg){
+ if(confirm(msg+'\n\n지금 정품 코드를 넣으시겠어요?'))licGo();
+}
+/* 담기 화면 맨 위에도 띄운다 — 맨 아래까지 내려야 보이면 못 찾는다 */
+function licTopBarHTML(){
+ if(!licLimited())return '';
+ const left=licRoom();
+ return '<div class="lic-top"><span>무료판 · 장소 <b>'+foodMap.places.length+' / '+FREE_LIMIT+'</b>곳'+
+  (left>0?(' · 앞으로 '+left+'곳'):' · <b>한도를 다 쓰셨습니다</b>')+'</span>'+
+  '<button onclick="licGo()">정품 코드 넣기</button></div>';
 }
 function licStamp(){return licOn()?('정품 · '+licName()+' 님'+(licDate()?(' ('+licDate()+' 구매)'):'')):'';}
 
@@ -3033,7 +3070,7 @@ function licGenCopy(){
 }
 function fmAdd(){
  const name=document.getElementById('fmName').value.trim();if(!name){alert('가게 이름을 입력해 주세요.');return;}
- if(licRoom()<1){alert('무료판은 장소 '+FREE_LIMIT+'곳까지 담을 수 있습니다.\n설정(⚙)에서 정품 코드를 넣으면 제한이 풀립니다.');return;}
+ if(licRoom()<1){licAskGo('무료판은 장소 '+FREE_LIMIT+'곳까지 담을 수 있습니다.');return;}
  const note=document.getElementById('fmNote').value.trim(),cat=document.getElementById('fmCat').value||fmInfer(name+' '+note);
  foodMap.places.unshift({id:'fm'+Date.now()+Math.floor(Math.random()*99),name:name,cat:cat,note:note,address:'',url:document.getElementById('fmUrl').value.trim(),lat:+document.getElementById('fmLat').value||null,lng:+document.getElementById('fmLng').value||null,fav:false,visited:false});
  save('foodmap_v1',foodMap);renderFoodMap();
@@ -4502,12 +4539,20 @@ function GUIDE_STEPS(){
    '<div class="fm-how"><b>① 구글 지도에 저장해 둔 곳을 통째로 (제일 빠름)</b>'+
    '<ol>'+
     '<li>아래 <b>구글에서 내 목록 받기</b>를 누릅니다</li>'+
-    '<li>구글 화면이 열리면 <b>모두 선택 해제</b>를 누르고, <b>저장됨</b> 하나만 체크합니다</li>'+
-    '<li><b>내보내기 생성</b>을 누르면 몇 분~몇 시간 뒤 <b>메일로 링크</b>가 옵니다</li>'+
-    '<li>메일 링크로 받은 파일을 폰의 <b>파일</b> 앱에 저장합니다</li>'+
-    '<li>여기로 돌아와 <b>받은 파일 넣기</b>를 누르고 그 파일을 고릅니다</li>'+
+    '<li>구글 화면 맨 위 <b>“모두 선택 해제”</b>를 먼저 누릅니다 <span class="fm-warn">(이걸 안 누르면 엉뚱한 게 잔뜩 나옵니다)</span></li>'+
+    '<li>아래로 내리면서 <b>저장됨</b> <span class="fm-dim">(영어면 Saved)</span> <b>하나만</b> 체크합니다</li>'+
+    '<li>맨 아래 <b>다음 단계</b> → 다음 화면은 그대로 두고 <b>내보내기 생성</b></li>'+
+    '<li>몇 분~몇 시간 뒤 <b>메일로 링크</b>가 옵니다. 링크를 눌러 zip 파일을 받습니다</li>'+
+    '<li>폰 <b>파일</b> 앱에서 그 zip 을 <b>꾹 눌러 “압축 해제”</b> 합니다</li>'+
+    '<li>풀린 폴더 <b>Takeout ▸ 저장됨</b> 안에 csv 가 여러 개 있습니다</li>'+
+    '<li>여기로 돌아와 <b>받은 파일 넣기</b> → 아래 표를 보고 csv 를 고릅니다</li>'+
    '</ol>'+
-   '<p>파일 이름이 <b>.csv</b> 나 <b>.json</b> 으로 끝나면 그게 맞는 파일입니다. 여러 개면 가고 싶은 목록 이름이 붙은 것을 고르세요.</p>'+
+   '<p class="fm-pick"><b>어느 csv 를 골라야 하나</b><br>'+
+   '<span class="ok">고를 것 —</span> 가고 싶은 곳을 모아 둔 <b>내 목록 이름</b>이 붙은 것 '+
+   '<span class="fm-dim">(예: 여행 계획.csv · 내 목록.csv)</span><br>'+
+   '<span class="no">아닌 것 —</span> 즐겨찾기.csv · 별표 표시된 장소.csv · 가고 싶은 장소.csv<br>'+
+   '<span class="fm-dim">목록마다 파일이 따로 나옵니다. 여러 개 넣어도 같은 곳은 겹쳐 들어가지 않으니, '+
+   '어느 건지 모르겠으면 하나씩 다 넣어 보세요.</span></p>'+
    '<div class="xactions"><a class="xaction" href="https://takeout.google.com/" target="_blank" rel="noopener">구글에서 내 목록 받기</a>'+
    '<button class="xaction" onclick="fmGuideImport()">받은 파일 넣기</button></div></div>'+
 
@@ -5127,7 +5172,7 @@ renderFoodMap=function(){fmSafePlaces();jpSyncTabName();
   /* 0/0/0 통계는 장소가 없을 때 보여줄 이유가 없다.
      대신 어디 가는지 묻고 시작 안내를 앞으로 끌어올린다. */
   (total?'<div class="xstats"><div class="xstat"><b>'+total+'</b><span>전체</span></div><div class="xstat"><b>'+fav+'</b><span>즐겨찾기</span></div><div class="xstat"><b>'+visited+'</b><span>방문 완료</span></div></div>':fmFirstRunHTML())+
-   '<div class="importbox" style="margin-bottom:12px'+((total&&!setupIsDone())?'':';display:none')+'"><div class="xeyebrow">장소 가져오기 · 무료</div><div class="xsmall" style="margin:7px 0 10px">구글 지도에 저장해 둔 목록을 파일로 받아 넣습니다. 받는 방법은 위 <b style="color:var(--wasabi)">처음 설정</b>의 2단계에 적어 뒀습니다. 같은 파일을 연결해 두면 수정본을 열 때 자동으로 확인합니다.</div><input type="file" id="fmImp" accept=".csv,text/csv,.json,.geojson,.kml,application/json,application/geo+json,application/vnd.google-earth.kml+xml" style="display:none" onchange="fmImport(this)"><div class="xactions"><button class="xaction" onclick="document.getElementById(\'fmImp\').click()">📥 파일 넣기</button><button class="xaction sub" onclick="fmLinkCsv()">🔗 파일 연결해 두기</button><button class="xaction sub" onclick="fmCheckLinkedCsv(false)">↻ 연결 파일 확인</button><button class="xaction sub" onclick="fmExport()">📤 개인 백업</button>'+(SALE_MODE?'':'<button class="xaction sub" onclick="fmExportSale()">🛡 판매용 스팟팩</button>')+'</div><div class="xsmall" style="margin-top:8px">'+(foodMap.linkedCsvName?'연결됨: <b style="color:var(--text)">'+esc(foodMap.linkedCsvName)+'</b> · 마지막 반영 '+esc(foodMap.linkedCsvAt||'확인 전'):'연결 없음 · 크롬 계열 지원, 그 외 브라우저는 수동 재가져오기')+'</div></div>'+
+   '<div class="importbox" style="margin-bottom:12px'+((total&&!setupIsDone())?'':';display:none')+'"><div class="xeyebrow">장소 가져오기 · 무료</div>'+licTopBarHTML()+'<div class="xsmall" style="margin:7px 0 10px">구글 지도에 저장해 둔 목록을 파일로 받아 넣습니다. 받는 방법은 위 <b style="color:var(--wasabi)">처음 설정</b>의 2단계에 적어 뒀습니다. 같은 파일을 연결해 두면 수정본을 열 때 자동으로 확인합니다.</div><input type="file" id="fmImp" accept=".csv,text/csv,.json,.geojson,.kml,application/json,application/geo+json,application/vnd.google-earth.kml+xml" style="display:none" onchange="fmImport(this)"><div class="xactions"><button class="xaction" onclick="document.getElementById(\'fmImp\').click()">📥 파일 넣기</button><button class="xaction sub" onclick="fmLinkCsv()">🔗 파일 연결해 두기</button><button class="xaction sub" onclick="fmCheckLinkedCsv(false)">↻ 연결 파일 확인</button><button class="xaction sub" onclick="fmExport()">📤 개인 백업</button>'+(SALE_MODE?'':'<button class="xaction sub" onclick="fmExportSale()">🛡 판매용 스팟팩</button>')+'</div><div class="xsmall" style="margin-top:8px">'+(foodMap.linkedCsvName?'연결됨: <b style="color:var(--text)">'+esc(foodMap.linkedCsvName)+'</b> · 마지막 반영 '+esc(foodMap.linkedCsvAt||'확인 전'):'연결 없음 · 크롬 계열 지원, 그 외 브라우저는 수동 재가져오기')+'</div></div>'+
   (setupIsDone()
    ? '<div class="fm-resetup"><button onclick="setupAgain()">⚙ 세팅 다시 하기</button></div>'
    : fmGuideHTML())+ibHTML()+
@@ -5546,7 +5591,7 @@ function sjAskAI(id){
  if(el){el.value=q;asAsk();el.scrollIntoView({behavior:'smooth',block:'center'});}
 }
 fmAdd=function(){const name=document.getElementById('fmName').value.trim();if(!name){alert('장소 이름을 입력해 주세요.');return;}
- if(licRoom()<1){alert('무료판은 장소 '+FREE_LIMIT+'곳까지 담을 수 있습니다.\n설정(⚙)에서 정품 코드를 넣으면 제한이 풀립니다.');return;}
+ if(licRoom()<1){licAskGo('무료판은 장소 '+FREE_LIMIT+'곳까지 담을 수 있습니다.');return;}
  const note=document.getElementById('fmNote').value.trim(),cat=document.getElementById('fmCat').value||fmInfer(name+' '+note),region=document.getElementById('fmRegion').value||fm2Region(name+' '+note);foodMap.places.unshift(fm2Normalize({id:'fm'+Date.now()+Math.floor(Math.random()*99),name:name,cat:cat,region:region,note:note,address:'',url:document.getElementById('fmUrl').value.trim(),lat:+document.getElementById('fmLat').value||null,lng:+document.getElementById('fmLng').value||null}));save('foodmap_v1',foodMap);renderFoodMap();};
 fmObj=function(o){if(!o||typeof o!=='object')return null;const p=o.properties||o,raw=p.Location||p.location||o.Location||{},loc=Array.isArray(raw)?(raw[0]||{}):raw,geo=loc['Geo Coordinates']||loc.geoCoordinates||p.geoCoordinates||{},co=o.geometry&&Array.isArray(o.geometry.coordinates)?o.geometry.coordinates:[];const name=p.name||p.Name||p.title||p.Title||p['Business Name']||loc['Business Name']||loc.name||'';if(!name)return null;const out={name:String(name),note:String(p.note||p.Note||p.comments||p.Comments||p.description||p.Description||''),address:String(p.address||p.Address||loc.address||''),url:String(p.google_maps_url||p['Google Maps URL']||p.googleMapsUrl||p.URL||p.url||loc['Google Maps URL']||''),lat:+(p.lat||geo.Latitude||geo.latitude||p.latitude||co[1])||null,lng:+(p.lng||geo.Longitude||geo.longitude||p.longitude||co[0])||null,cat:p.cat||'',kind:p.kind||'',region:p.region||'',placeId:p.placeId||'',rating:+p.rating||null,ratingCount:+p.ratingCount||0,videos:Array.isArray(p.videos)?p.videos:[]};
  /* 좌표 칸이 비어 있으면 구글맵 주소에서 꺼낸다 — CSV 와 같은 그물이다 */
@@ -5657,8 +5702,21 @@ let fmSyncChecking=false;
 function fmSyncDb(){return new Promise((res,rej)=>{const r=indexedDB.open('fukuoka_csv_sync_v1',1);r.onupgradeneeded=()=>r.result.createObjectStore('files');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});}
 async function fmSyncSet(k,v){const db=await fmSyncDb();return new Promise((res,rej)=>{const tx=db.transaction('files','readwrite');tx.objectStore('files').put(v,k);tx.oncomplete=()=>{db.close();res();};tx.onerror=()=>{db.close();rej(tx.error);};});}
 async function fmSyncGet(k){const db=await fmSyncDb();return new Promise((res,rej)=>{const tx=db.transaction('files','readonly'),r=tx.objectStore('files').get(k);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);tx.oncomplete=()=>db.close();});}
-async function fm2ImportFile(f,quiet){const txt=await f.text();let arr;if(/\.csv$/i.test(f.name))arr=fmCsv(txt);else if(/\.kml$/i.test(f.name)||/^\s*</.test(txt))arr=fmKml(txt);else arr=fmJson(JSON.parse(txt));if(/\.csv$/i.test(f.name))foodMap.listName=f.name.replace(/\.csv$/i,'')||'여행계획';const z=fmMerge(arr);if(!quiet)alert('“'+foodMap.listName+'” 반영 완료\n새 장소 '+z.added+'개 · 기존 장소 갱신 '+z.updated+'개'+(z.skipped?' · 제외 '+z.skipped+'개':'')+(z.blocked?('\n\n무료판 한도('+FREE_LIMIT+'곳)를 넘어 '+z.blocked+'곳은 담기지 않았습니다.\n설정(⚙)에서 정품 코드를 넣으면 전부 들어옵니다.'):''));return z;}
-fmImport=function(inp){const f=inp.files&&inp.files[0];inp.value='';if(!f)return;fm2ImportFile(f,false).then(()=>renderFoodMap()).catch(e=>alert('가져오기 실패: ZIP을 푼 여행 계획.csv 또는 지도 백업 파일인지 확인해 주세요.\n'+(e.message||e)));};
+/* 불러온 뒤에 하는 말. 여기가 사람이 막히는 자리라 말을 아끼면 안 된다. */
+function fmImportDone(z){
+ const got=(z.added||0)+(z.updated||0);
+ let m='“'+foodMap.listName+'” 반영 완료\n새 장소 '+z.added+'개 · 기존 장소 갱신 '+z.updated+'개'+
+  (z.skipped?(' · 제외 '+z.skipped+'개'):'');
+ /* 목록이 여러 개라 엉뚱한 csv 를 고르기 쉽다. 적게 들어오면 그걸 먼저 의심하게 해 준다. */
+ if(!z.blocked&&got<20)
+  m+='\n\n생각보다 적게 들어왔다면 다른 목록 파일을 고르셨을 수 있습니다.\n'+
+     '압축 푼 폴더(Takeout ▸ 저장됨)에는 목록마다 csv 가 따로 있습니다.\n'+
+     '“즐겨찾기” · “별표 표시된 장소” 말고, 가고 싶은 곳을 모아 둔 목록 이름이 붙은 csv 를 골라 주세요.';
+ alert(m);
+ if(z.blocked)licAskGo('무료판 한도('+FREE_LIMIT+'곳)를 넘어 '+z.blocked+'곳은 담기지 않았습니다.');
+}
+async function fm2ImportFile(f,quiet){const txt=await f.text();let arr;if(/\.csv$/i.test(f.name))arr=fmCsv(txt);else if(/\.kml$/i.test(f.name)||/^\s*</.test(txt))arr=fmKml(txt);else arr=fmJson(JSON.parse(txt));if(/\.csv$/i.test(f.name))foodMap.listName=f.name.replace(/\.csv$/i,'')||'여행계획';const z=fmMerge(arr);if(!quiet)fmImportDone(z);return z;}
+fmImport=function(inp){const f=inp.files&&inp.files[0];inp.value='';if(!f)return;fm2ImportFile(f,false).then(()=>renderFoodMap()).catch(e=>alert('가져오기 실패\n\nzip 을 푼 뒤 Takeout ▸ 저장됨 안의 <목록 이름>.csv 를 골라 주세요.\nzip 파일 자체나 폴더는 넣을 수 없습니다.\n\n'+(e.message||e)));};
 async function fmLinkCsv(){if(!window.showOpenFilePicker){alert('이 브라우저는 파일 연결을 지원하지 않습니다. CSV 불러오기로 최신 파일을 다시 선택해 주세요.');return;}try{const a=await showOpenFilePicker({multiple:false,types:[{description:'Google Maps 여행 계획 CSV',accept:{'text/csv':['.csv']}}]}),h=a[0];await fmSyncSet('travelCsv',h);foodMap.linkedCsvName=h.name;foodMap.linkedCsvModified=0;foodMap.linkedCsvAt='확인 중';save('foodmap_v1',foodMap);await fmCheckLinkedCsv(false);}catch(e){if(e&&e.name!=='AbortError')alert('CSV 연결 실패: '+(e.message||e));}}
 async function fmCheckLinkedCsv(auto){if(fmSyncChecking)return;fmSyncChecking=true;try{const h=await fmSyncGet('travelCsv');if(!h){if(!auto)alert('연결된 CSV가 없습니다. 먼저 ‘CSV 파일 연결’을 눌러 주세요.');return;}let perm=await h.queryPermission({mode:'read'});if(perm!=='granted'&&!auto)perm=await h.requestPermission({mode:'read'});if(perm!=='granted'){if(!auto)alert('연결 파일 읽기 권한이 필요합니다.');return;}const f=await h.getFile();if(!auto||f.lastModified>(+foodMap.linkedCsvModified||0)){const z=await fm2ImportFile(f,true);foodMap.linkedCsvName=f.name;foodMap.linkedCsvModified=f.lastModified;foodMap.linkedCsvAt=new Date().toLocaleString('ko-KR');save('foodmap_v1',foodMap);if(!auto)alert('연결 파일 확인 완료\n새 장소 '+z.added+'개 · 기존 장소 갱신 '+z.updated+'개');renderFoodMap();}else if(!auto)alert('연결 파일이 이미 최신입니다.');}catch(e){if(!auto)alert('연결 파일 확인 실패: '+(e.message||e));}finally{fmSyncChecking=false;}}
 
