@@ -422,7 +422,7 @@
   .fm-gps-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:10px}
   .fm-gps-actions button,.fm-gps-actions a{min-width:0;border:1px solid var(--line2);border-radius:10px;padding:9px 7px;background:var(--surface2);
     color:var(--text);font-size:10.5px;font-weight:800;text-align:center;text-decoration:none;cursor:pointer}
-  .fm-gps-actions .primary{background:#4285F4;border-color:#4285F4;color:#fff}.fm-gps-actions button:disabled{opacity:.42;cursor:default}
+  .fm-gps-actions .primary{background:var(--accent);border-color:var(--accent);color:#fff}.fm-gps-actions button:disabled{opacity:.42;cursor:default}
   .fm-gps-privacy{margin-top:8px;color:var(--faint);font-size:9.8px;line-height:1.45}
   .place{background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:13px;margin-bottom:8px;cursor:pointer}
   .place.sel{border-color:var(--wasabi-deep)}
@@ -540,12 +540,12 @@
   /* 여는 화면. 0.7초 보여주고 사라진다. */
   #splash{position:fixed;inset:0;z-index:9998;display:flex;flex-direction:column;
     align-items:center;justify-content:center;gap:18px;
-    background:linear-gradient(180deg,#DFEBEE 0%,#E9F1F0 45%,#F3F4F1 100%);
+    background:#F3EFE5;
     transition:opacity .35s ease}
   #splash.out{opacity:0;pointer-events:none}
   #splash svg{width:104px;height:104px;display:block}
-  #splash .sp-name{font-size:25px;font-weight:800;color:#22303A;letter-spacing:-.02em}
-  #splash .sp-tagline{font-size:13px;color:#5A6B76;text-align:center;line-height:1.6;max-width:250px}
+  #splash .sp-name{font-size:25px;font-weight:800;color:#211D17;letter-spacing:-.01em}
+  #splash .sp-tagline{font-size:13px;color:#6B6152;text-align:center;line-height:1.6;max-width:250px}
   #splash .sp-route{stroke-dasharray:150;stroke-dashoffset:150;animation:spDraw .7s ease forwards}
   @keyframes spDraw{to{stroke-dashoffset:0}}
   @media (prefers-reduced-motion:reduce){
@@ -633,122 +633,123 @@
     border-radius:10px;padding:11px;margin-top:9px;color:var(--text);min-height:44px}
   footer{text-align:center;padding:24px;font-family:var(--mono);font-size:10.5px;color:var(--faint);letter-spacing:.1em}
 
-  /* DAYLIGHT · 밝은 테마
-     야외에서 한 손으로 보는 앱이다. 명암 대비를 세게 잡고, 장식보다 읽히는 것을 우선한다.
+  /* PAPER · 종이 테마
+     여권 도장을 찍듯 — 따뜻한 종이 바탕에 잉크 글씨, 강조는 진한 남색 하나 + 주묵색 하나.
+     야외에서 한 손으로 보는 앱이다. 그림자로 띄우는 대신 얇은 선으로 면을 나눠 또렷하게 읽힌다.
      기존 :root·폰트·기능 CSS는 그대로 두고 마지막에 시각 레이어만 덮어쓴다.
-     이전 테마(GRAPHITE WARM)는 git 이력에 남아 있다. */
-  html{background:#E7EFF1}
+     이전 테마(DAYLIGHT·GRAPHITE WARM)는 git 이력에 남아 있다. */
+  html{background:#F3EFE5}
   body{
-    --bg:#E7EFF1;--surface:#FFFFFF;--surface2:#EFF4F4;--raise:#E2EAEA;
-    --text:#22303A;--muted:#5A6B76;--faint:#78878F;
-    --wasabi:#3E7F9C;--wasabi-deep:#2C6580;
-    --ember:#C2621D;--ember-soft:#9E4D12;
-    --mint:#4FB3A5;--mint-deep:#3A9488;
-    --accent:#3E7F9C;
-    /* 선을 거의 지우고 그림자로 띄운다. 선이 굵으면 딱딱해 보인다. */
-    --line:rgba(34,48,58,.07);--line2:rgba(34,48,58,.12);
-    --r:20px;              /* 카드 모서리 */
-    --pill:999px;          /* 버튼·칩은 완전한 알약 */
-    --sh:0 6px 20px rgba(46,74,90,.07);
-    background-color:#E7EFF1;
-    background-image:linear-gradient(180deg,#DFEBEE 0%,#E9F1F0 38%,#F0F3F0 72%,#F3F4F1 100%);
+    --bg:#F3EFE5;--surface:#FFFEFA;--surface2:#EBE5D6;--raise:#E1D9C6;
+    --text:#211D17;--muted:#6B6152;--faint:#665F50;
+    --wasabi:#233F57;--wasabi-deep:#152838;
+    --ember:#A8431E;--ember-soft:#7E2F12;
+    --mint:#3E6E52;--mint-deep:#2C4F3A;
+    --accent:#233F57;
+    /* 선으로 면을 나눈다. 그림자를 걷어내면 화면이 또렷해진다. */
+    --line:rgba(33,29,23,.11);--line2:rgba(33,29,23,.18);
+    --r:13px;             /* 카드 모서리 — 각지지도 알약도 아닌 중간 */
+    --pill:10px;          /* 버튼·칩도 같은 톤. 전부 알약이면 장난감처럼 보인다 */
+    --sh:none;
+    background-color:#F3EFE5;
+    background-image:none;
     background-attachment:fixed;
   }
-  ::selection{background:rgba(51,113,142,.22);color:#12181C}
+  ::selection{background:rgba(35,63,87,.20);color:#12181C}
 
-  header{background:transparent;border-bottom-color:transparent}
-  nav{background:rgba(255,255,255,.72);backdrop-filter:saturate(1.6) blur(14px);
-    -webkit-backdrop-filter:saturate(1.6) blur(14px);
-    border-bottom-color:rgba(34,48,58,.06);box-shadow:none}
-  nav button{color:#616C75}
-  nav button.on{color:#245A75}
-  nav button.on::after{background:#33718E;box-shadow:none}
-  .homebtn{background:#FFFFFF;border-color:rgba(31,37,42,.15);border-radius:10px;color:#1F252A}
-  .h-dday{color:#245A75;background:rgba(51,113,142,.10)}
-  .h-goal .arr{color:#8D97A0}
-  .h-goal .to,.h-goal .cur b{color:#245A75}
+  header{background:#F3EFE5;border-bottom-color:transparent}
+  nav{background:#F3EFE5;backdrop-filter:none;-webkit-backdrop-filter:none;
+    border-bottom-color:var(--line);box-shadow:none}
+  nav button{color:#6B6152}
+  nav button.on{color:#211D17;font-weight:800}
+  nav button.on::after{background:#A8431E;box-shadow:none}
+  .homebtn{background:#FFFEFA;border-color:var(--line2);border-radius:9px;color:#211D17}
+  .h-dday{color:#233F57;background:rgba(35,63,87,.09);border-radius:7px}
+  .h-goal .arr{color:#665F50}
+  .h-goal .to,.h-goal .cur b{color:#233F57}
 
-  /* 카드: 흰 면 + 아주 옅은 테두리 + 얕은 그림자. 플롯라인의 카드 인상. */
+  /* 카드: 흰 종이 면 + 얇은 잉크 선. 그림자로 띄우지 않고 선으로 나눈다. */
   .g-card,.day,.gaugebox,.flist,.burnrow,.rule,.ptable,.xstat,.xcard,.place,.modal,
   .importbox,.fm-panel,.fm-gps-card,.tcard{
-    background:#FFFFFF;border-color:transparent;border-radius:var(--r);box-shadow:var(--sh)
+    background:#FFFEFA;border:1px solid var(--line);border-radius:var(--r);box-shadow:none
   }
-  /* 버튼·칩은 전부 알약으로. 각진 모서리가 딱딱함의 절반이다. */
+  /* 버튼·칩·태그는 같은 반경으로 통일. 알약을 걷어내면 조용해진다. */
   .btn,.xaction,.fm-cats button,.xmode button,.sh-stat button,.fm-status-actions button,
   .fm-status-actions a,.place-btns button,.place-btns a,.mb-save,.mb-cancel,.sbtn,
   .fm-badge,.place-cat,.tag,.h-dday,.fm-gps-chip,.xselect,.xinput,.set-in,
   .modal input,.modal-btns button,.fm-quick button,.sp-quick button,.sp-open,.tcard .tbtns button{
     border-radius:var(--pill)
   }
-  .xta,.fm-map,.sp-map,.sp-photo,.fr-dest input{border-radius:16px}
-  .xhero,.landing-card,.fm-decision,.sp-sheet{border-radius:24px}
-  .day.today{border-color:rgba(51,113,142,.45);box-shadow:0 2px 12px rgba(51,113,142,.12)}
-  .landing-card{background:#FFFFFF;border-color:rgba(31,37,42,.12);box-shadow:0 3px 14px rgba(31,37,42,.07)}
-  .landing-card:active{border-color:rgba(51,113,142,.45)}
-  .overlay{background:rgba(31,37,42,.42)}
-  .modal{background:#FFFFFF;box-shadow:0 -6px 40px rgba(31,37,42,.16)}
-  .xhero{background:linear-gradient(145deg,#FFFFFF 0%,#F4F9FA 52%,rgba(79,179,165,.10) 100%);
-    border-color:transparent;box-shadow:var(--sh)}
-  .xbar{background:#E3E1DC}
-  .xbar i{background:linear-gradient(90deg,#245A75,#3E86A6);box-shadow:none}
-  .xmode button,.fm-cats button{background:#FFFFFF;border-color:rgba(31,37,42,.14)}
-  .xmode button.on,.fm-cats button.on{background:#3E7F9C;border-color:#3E7F9C;color:#FFFFFF}
-  /* 두 번째 강조는 민트. 파랑 하나만 쓰면 화면이 단조롭고 차갑다. */
-  .xaction.sub{border-color:rgba(34,48,58,.12)}
-  .fm-badge.good{color:var(--mint-deep);border-color:rgba(79,179,165,.4);background:rgba(79,179,165,.10)}
-  .tag{background:rgba(79,179,165,.14);color:var(--mint-deep)}
-  .fm-decision{border-color:rgba(79,179,165,.3);background:linear-gradient(180deg,rgba(79,179,165,.07),#FFF)}
-  .sp-open{background:linear-gradient(135deg,#3E7F9C,#4691AF)}
+  .fm-cats button,.xmode button{border-radius:999px} /* 분류칩만 알약 유지 — 여러 개를 훑어보는 용도라 알약이 더 잘 읽힌다 */
+  .xta,.fm-map,.sp-map,.sp-photo,.fr-dest input{border-radius:12px}
+  .xhero,.landing-card,.fm-decision,.sp-sheet{border-radius:16px}
+  .day.today{border-color:rgba(35,63,87,.5);box-shadow:none}
+  .landing-card{background:#FFFEFA;border:1px solid var(--line2);box-shadow:none}
+  .landing-card:active{border-color:rgba(35,63,87,.5)}
+  .overlay{background:rgba(33,29,23,.44)}
+  .modal{background:#FFFEFA;box-shadow:0 -6px 30px rgba(33,29,23,.14)}
+  .xhero{background:linear-gradient(155deg,#FFFEFA 0%,#F7F2E6 60%,rgba(62,110,82,.08) 100%);
+    border:1px solid var(--line);box-shadow:none}
+  .xbar{background:#E4DCC9}
+  .xbar i{background:#233F57;box-shadow:none}
+  .xmode button,.fm-cats button{background:#FFFEFA;border-color:var(--line2)}
+  .xmode button.on,.fm-cats button.on{background:#211D17;border-color:#211D17;color:#FFFEFA}
+  /* 두 번째 강조는 잉크 초록(소나무색). 남색 하나만 쓰면 화면이 단조롭다. */
+  .xaction.sub{border-color:var(--line2)}
+  .fm-badge.good{color:var(--mint-deep);border-color:rgba(62,110,82,.4);background:rgba(62,110,82,.09)}
+  .tag{background:transparent;color:#665F50;letter-spacing:.1em;font-weight:700}
+  .fm-decision{border-color:rgba(62,110,82,.32);background:linear-gradient(180deg,rgba(62,110,82,.06),#FFFEFA)}
+  .sp-open{background:#233F57}
   .place.picking.on .fm-check{background:var(--mint);border-color:var(--mint)}
 
-  .h-dday,.prog,.role-main,.place-cat,.fm-badge.good{background-color:rgba(51,113,142,.10)}
-  .rule.hot,.xcard.hot{border-color:rgba(194,98,29,.30);background:linear-gradient(180deg,rgba(194,98,29,.05),#FFFFFF)}
-  .fm-badge.hot{border-color:rgba(194,98,29,.32)}
-  .fm-decision{border-color:rgba(51,113,142,.28);background:linear-gradient(180deg,rgba(51,113,142,.05),#FFFFFF)}
-  .importbox{background:rgba(51,113,142,.035);border-color:rgba(31,37,42,.14)}
+  .h-dday,.prog,.role-main,.place-cat,.fm-badge.good{background-color:rgba(35,63,87,.09)}
+  .rule.hot,.xcard.hot{border-color:rgba(168,67,30,.32);background:linear-gradient(180deg,rgba(168,67,30,.06),#FFFEFA)}
+  .fm-badge.hot{border-color:rgba(168,67,30,.35);color:var(--ember-soft)}
+  .fm-decision{border-color:rgba(35,63,87,.30);background:linear-gradient(180deg,rgba(35,63,87,.05),#FFFEFA)}
+  .importbox{background:rgba(35,63,87,.035);border-color:var(--line2)}
 
   /* 강조색 위에 얹히던 글자는 전부 어두운 색이었다.
-     주색이 짙은 청록으로 바뀌었으므로 흰색으로 뒤집는다. 안 뒤집으면 안 읽힌다. */
+     주색이 짙은 남색·잉크로 바뀌었으므로 흰색으로 뒤집는다. 안 뒤집으면 안 읽힌다. */
   .g-btn.w,.btn.on,.prog.done,.astep .sn,.alink,.sh-stat button.sel,
   .xaction:not(.sub),.xaction.ember,.bubble.me,.fm-route,
   .place.picking.on .fm-check,.fm-guide-step>b,.fm-course-row>b,
-  .mb-save,.g-btn.r{color:#FFFFFF}
-  .xaction.sub{background:#FFFFFF;border:1px solid rgba(31,37,42,.16);color:#33718E}
+  .mb-save,.g-btn.r{color:#FFFEFA}
+  .xaction.sub{background:#FFFEFA;border:1px solid var(--line2);color:#233F57}
 
-  /* 일본어 탭: 어두운 앱에서 읽으라고 베이지로 띄워 놨던 카드다.
-     이제 바탕이 밝으므로 특별 취급을 없애고 따뜻한 기본 카드로 되돌린다. */
+  /* 일본어 탭: 화면 전체가 이미 종이 톤이라 따로 베이지로 띄울 필요가 없어졌다.
+     기본 카드와 같은 흰 종이 면으로 되돌린다. */
   #tab-jp .xcard:not(.hot){
-    background:#FFFDF9;border-color:rgba(31,37,42,.12);
-    box-shadow:0 2px 10px rgba(31,37,42,.05)
+    background:#FFFEFA;border-color:var(--line2);
+    box-shadow:none
   }
   #tab-jp .xcard.hot{
-    background:linear-gradient(160deg,#FFFFFF,#F6F9FB 70%,rgba(51,113,142,.07));
-    border-color:rgba(51,113,142,.26);color:#1F252A
+    background:linear-gradient(160deg,#FFFEFA,#F7F2E6 70%,rgba(35,63,87,.06));
+    border-color:rgba(35,63,87,.28);color:#211D17
   }
-  #tab-jp .xcard:not(.hot) .gdetail{background:rgba(51,113,142,.05);border-color:rgba(31,37,42,.11)}
-  #tab-jp .xcard:not(.hot) .tool-result,#tab-jp .xcard:not(.hot) .audio-now,#tab-jp .xcard:not(.hot) .reading{background:#F5F4F1;border-color:rgba(31,37,42,.12)}
-  #tab-jp .xcard:not(.hot) .xaction:not(.sub):not(.ember),#tab-jp .xcard:not(.hot) .bubble.me{background:#33718E;color:#FFFFFF}
+  #tab-jp .xcard:not(.hot) .gdetail{background:rgba(35,63,87,.05);border-color:var(--line2)}
+  #tab-jp .xcard:not(.hot) .tool-result,#tab-jp .xcard:not(.hot) .audio-now,#tab-jp .xcard:not(.hot) .reading{background:#EFE9DB;border-color:var(--line2)}
+  #tab-jp .xcard:not(.hot) .xaction:not(.sub):not(.ember),#tab-jp .xcard:not(.hot) .bubble.me{background:#233F57;color:#FFFEFA}
   #tab-jp .xcard:not(.hot) .sound,#tab-jp .xcard.hot .sound{color:#6B4FA8}
-  #tab-jp .jp-listen{background:#6B4FA8;border-color:#7B5FB8;color:#FFFFFF;box-shadow:0 3px 12px rgba(107,79,168,.22)}
+  #tab-jp .jp-listen{background:#6B4FA8;border-color:#7B5FB8;color:#FFFEFA;box-shadow:none}
   #tab-jp .jp-listen:active{background:#5C4293;transform:translateY(1px)}
-  #tab-jp .jp-voicebar{background:#FFFFFF;border-color:rgba(31,37,42,.12);box-shadow:0 -4px 20px rgba(31,37,42,.08)}
+  #tab-jp .jp-voicebar{background:#FFFEFA;border-color:var(--line2);box-shadow:0 -4px 18px rgba(33,29,23,.10)}
   #tab-jp .jp-voicecontrols button{border-color:rgba(107,79,168,.34);background:rgba(107,79,168,.07);color:#5C4293}
-  #tab-jp .jp-devicevoice{border-top-color:rgba(31,37,42,.1)}
+  #tab-jp .jp-devicevoice{border-top-color:var(--line)}
 
   /* GPS 카드가 어두운 그라데이션을 그대로 갖고 있어 밝은 테마에서 글자가 안 읽혔다.
      기능 CSS 쪽에 있어서 테마 교체 때 안 걸렸다. */
-  .fm-gps-card{border-color:rgba(51,113,142,.30);
-    background:linear-gradient(140deg,rgba(51,113,142,.07),#FFFFFF 58%);
-    box-shadow:0 2px 10px rgba(31,37,42,.05)}
-  .fm-gps-chip.good{color:#245A75;border-color:rgba(51,113,142,.45);background:rgba(51,113,142,.10)}
+  .fm-gps-card{border-color:rgba(35,63,87,.30);
+    background:linear-gradient(140deg,rgba(35,63,87,.06),#FFFEFA 58%);
+    box-shadow:none}
+  .fm-gps-chip.good{color:#1F4A30;border-color:rgba(62,110,82,.45);background:rgba(62,110,82,.10)}
   .fm-gps-chip.fair{color:#7A5C0E;border-color:rgba(160,120,20,.4);background:rgba(200,160,40,.10)}
-  .fm-gps-chip.weak,.fm-gps-chip.error{color:#9E4D12;border-color:rgba(194,98,29,.42);background:rgba(194,98,29,.08)}
-  .fm-gps-orb{background:rgba(51,113,142,.14)}
-  .fm-gps-readout{background:rgba(51,113,142,.06);border-color:rgba(31,37,42,.12)}
-  .fm-badge.good{color:#2F6B33;border-color:rgba(47,107,51,.35)}
-  .fm-badge.hot{color:#9E4D12}
-  .fm-score{background:rgba(34,48,58,.05);color:#5A6B76}
-  .fm-score.top{background:rgba(62,127,156,.11);color:#2C6580}
+  .fm-gps-chip.weak,.fm-gps-chip.error{color:#7E2F12;border-color:rgba(168,67,30,.42);background:rgba(168,67,30,.08)}
+  .fm-gps-orb{background:rgba(35,63,87,.14)}
+  .fm-gps-readout{background:rgba(35,63,87,.06);border-color:var(--line2)}
+  .fm-badge.good{color:#1F4A30;border-color:rgba(31,74,48,.35)}
+  .fm-badge.hot{color:#7E2F12}
+  .fm-score{background:rgba(33,29,23,.05);color:#6B6152}
+  .fm-score.top{background:rgba(35,63,87,.11);color:#233F57}
 
   /* 걸으면서 한 손으로 누르는 화면이다. 분류 칩·장소 버튼이 32px 대라 자주 빗나간다.
      44px 은 애플이 권고하는 최소치이고, 이 앱에서는 그보다 아래로 내려가면 안 된다. */
@@ -761,9 +762,9 @@
     align-items:center;justify-content:center}
   .fm-quick button,.fm-decision button{min-height:44px}
 
-  input,textarea,select{background:#FFFFFF}
+  input,textarea,select{background:#FFFEFA}
   input::placeholder,textarea::placeholder{color:var(--faint);opacity:1}
-  button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid #33718E;outline-offset:2px}
+  button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid #233F57;outline-offset:2px}
 
   .w2-hero{border:1px solid rgba(199,236,50,.22);border-radius:14px;padding:15px;margin:0 0 14px;
     background:linear-gradient(135deg,rgba(199,236,50,.075),rgba(176,154,232,.045) 55%,var(--surface));box-shadow:0 14px 34px rgba(0,0,0,.18)}
@@ -776,15 +777,15 @@
   .fm-guide{margin-top:12px;display:flex;flex-direction:column;gap:16px}
   .fm-guide-step h4 .st{float:right;font-size:10.5px;font-weight:800;border-radius:999px;padding:3px 9px;
     background:var(--surface2);color:var(--faint)}
-  .fm-guide-step h4 .st.ok{background:rgba(79,179,165,.16);color:#2E7C71}
-  .fm-guide-step>b.ok{background:var(--mint,#4FB3A5);color:#fff}
+  .fm-guide-step h4 .st.ok{background:rgba(62,110,82,.16);color:#2E7C71}
+  .fm-guide-step>b.ok{background:var(--mint,#3E6E52);color:#fff}
   .fm-how{margin:8px 0 0;border-top:1px solid var(--line);padding-top:9px}
   .fm-how>b{display:block;font-size:12px;color:var(--text);margin-bottom:3px}
   .fm-how p{margin:0 0 8px}
   .fm-how ol{margin:4px 0 8px 17px;padding:0;font-size:11.5px;line-height:1.75;color:var(--muted)}
   .fm-guide-step p b{color:var(--text)}
   .fm-guide-step{display:flex;gap:11px;align-items:flex-start}
-  .fm-guide-step>b{width:22px;height:22px;flex:none;display:grid;place-items:center;border-radius:50%;background:var(--accent);color:#101214;font-family:var(--mono);font-size:11px}
+  .fm-guide-step>b{width:22px;height:22px;flex:none;display:grid;place-items:center;border-radius:50%;background:var(--accent);color:#FFFEFA;font-family:var(--mono);font-size:11px}
   .fm-guide-step h4{margin:1px 0 4px;font-size:13px;color:var(--text)}
   .fm-guide-step p{margin:0;font-size:11.5px;line-height:1.6;color:var(--muted)}
   .fm-guide-step .xactions{margin-top:7px}
@@ -807,7 +808,7 @@
   .fm-plan-list{margin-top:8px;display:flex;flex-direction:column;gap:6px}
   .fm-course-list{margin-top:10px;display:flex;flex-direction:column;gap:6px}
   .fm-course-row{display:flex;align-items:center;gap:9px;border-top:1px solid var(--line);padding-top:7px}
-  .fm-course-row>b{width:20px;height:20px;flex:none;display:grid;place-items:center;border-radius:50%;background:var(--accent);color:#101214;font-family:var(--mono);font-size:10px}
+  .fm-course-row>b{width:20px;height:20px;flex:none;display:grid;place-items:center;border-radius:50%;background:var(--accent);color:#FFFEFA;font-family:var(--mono);font-size:10px}
   .fm-course-row>span{flex:1;min-width:0;font-size:12px;color:var(--text)}
   .fm-course-row>span i{display:block;font-style:normal;font-size:10.5px;color:var(--muted);margin-top:2px}
   .fm-spend-list{margin-top:10px;display:flex;flex-direction:column;gap:6px}
@@ -824,9 +825,9 @@
 <div id="splash" onclick="splashOut()">
   <svg viewBox="0 0 100 100" role="img" aria-label="별표털기">
     <path class="sp-route" d="M22 76 C 34 52, 44 68, 54 44 S 70 26, 80 22"
-      fill="none" stroke="#4FB3A5" stroke-width="4.5" stroke-linecap="round"/>
-    <circle cx="22" cy="76" r="7.5" fill="#3E7F9C"/>
-    <circle cx="54" cy="44" r="6" fill="#FFFFFF" stroke="#3E7F9C" stroke-width="4"/>
+      fill="none" stroke="#3E6E52" stroke-width="4.5" stroke-linecap="round"/>
+    <circle cx="22" cy="76" r="7.5" fill="#233F57"/>
+    <circle cx="54" cy="44" r="6" fill="#FFFEFA" stroke="#233F57" stroke-width="4"/>
     <path d="M80,11 L82.7,18.28 L90.46,18.6 L84.37,23.42 L86.47,30.9 L80,26.6 L73.53,30.9 L75.63,23.42 L69.54,18.6 L77.3,18.28 Z" fill="#E0692F"/>
   </svg>
   <div class="sp-name">별표털기</div>
@@ -1022,8 +1023,8 @@ function setupIsDone(){return !!foodMap.setupDone;}
 function suMark(){
  return '<div class="su-head">'+
   '<svg viewBox="0 0 100 100" role="img" aria-label="별표털기">'+
-   '<path d="M22 76 C 34 52, 44 68, 54 44 S 70 26, 80 22" fill="none" stroke="#4FB3A5" stroke-width="6" stroke-linecap="round"/>'+
-   '<circle cx="22" cy="76" r="8" fill="#3E7F9C"/><path d="M80,11 L82.7,18.28 L90.46,18.6 L84.37,23.42 L86.47,30.9 L80,26.6 L73.53,30.9 L75.63,23.42 L69.54,18.6 L77.3,18.28 Z" fill="#E0692F"/></svg>'+
+   '<path d="M22 76 C 34 52, 44 68, 54 44 S 70 26, 80 22" fill="none" stroke="#3E6E52" stroke-width="6" stroke-linecap="round"/>'+
+   '<circle cx="22" cy="76" r="8" fill="#233F57"/><path d="M80,11 L82.7,18.28 L90.46,18.6 L84.37,23.42 L86.47,30.9 L80,26.6 L73.53,30.9 L75.63,23.42 L69.54,18.6 L77.3,18.28 Z" fill="#E0692F"/></svg>'+
   '<b>별표털기</b></div>';
 }
 /* mode: 'pick' 고르는 화면 · 'setup' 3단계 화면 */
