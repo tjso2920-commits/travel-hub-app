@@ -187,9 +187,101 @@ function finishCityAssign(ids, cityName) {
   updateCity();
   sheet.close();
 }
+/* 실제 코스 생성(로드맵 ⑥). "오늘 동선"에 담아 둔 곳이 있으면 실제로
+   방문 순서·이동시간을 만들 수 있게 하고, 이미 만들어 둔 코스가 있으면
+   그걸 보여준다(새로고침해도 foodMap.course에 저장돼 있어 유지된다). */
 function showRoute() {
-  const list = spots.filter((p) => p.city === city && route.has(p.id));
-  open(city + ' · 오늘 동선', `<div class="detail"><h2>오늘은 이곳으로.</h2><p>${list.length ? '담아 둔 ' + list.length + '곳을 확인하세요.' : '마음에 드는 장소를 먼저 골라보세요.'}</p>${list.map((p, i) => `<div class="route-row"><span>${i + 1}</span>${photoHTML(p, '')}<div><b>${A.esc(p.name)}</b><p>${A.esc(p.area)}</p></div><button data-remove="${p.id}" aria-label="${A.esc(p.name)} 동선에서 빼기">×</button></div>`).join('')}<small>최단거리 계산과 교통 안내는 아직 연결되지 않았습니다.</small><button class="primary" data-dismiss>스팟 더 고르기</button></div>`);
+  if (foodMap && foodMap.course && Array.isArray(foodMap.course.stops) && foodMap.course.stops.length) {
+    showSavedCourse();
+    return;
+  }
+  const list = spots.filter((p) => route.has(p.id));
+  open(city + ' · 오늘 동선', `<div class="detail"><h2>오늘은 이곳으로.</h2><p>${list.length ? '담아 둔 ' + list.length + '곳을 확인하세요.' : '마음에 드는 장소를 먼저 골라보세요.'}</p>${list.map((p, i) => `<div class="route-row"><span>${i + 1}</span>${photoHTML(p, '')}<div><b>${A.esc(p.name)}</b><p>${A.esc(p.area)}</p></div><button data-remove="${p.id}" aria-label="${A.esc(p.name)} 동선에서 빼기">×</button></div>`).join('')}${list.length ? '<button class="primary" data-build-course>코스 만들기 ↗</button>' : ''}<button class="text-button" data-dismiss>스팟 더 고르기</button></div>`);
+}
+/* 출발지·가용 시간을 물어보는 시트. 출발지는 API 키 없이 되는 두 가지만
+   준다 — 현재 위치(브라우저 GPS) 또는 담아 둔 곳 중 하나. */
+function buildCourseSheet() {
+  const list = spots.filter((p) => route.has(p.id));
+  open('출발지 정하기', `<div class="detail"><h2>어디서 출발할까요?</h2>` +
+    `<p>${list.length}곳을 실제 방문 순서·이동시간으로 만듭니다.</p>` +
+    `<div class="city-options"><button class="city-option" data-start-gps><span><b>현재 위치에서 출발</b><small>브라우저 위치 권한이 필요해요</small></span><span class="city-check">›</span></button>` +
+    list.map((p) => `<button class="city-option" data-start-pick="${p.id}"><span><b>${A.esc(p.name)}</b><small>${p.hasCoords ? '이 장소에서 출발' : '좌표가 없어 출발지로 못 씀'}</small></span><span class="city-check">${p.hasCoords ? '›' : '—'}</span></button>`).join('') +
+    `</div><label class="xsmall" style="display:block;margin-top:6px">쓸 수 있는 시간(분, 선택)<input class="xinput" id="courseMinutes" type="number" min="30" step="10" placeholder="예: 240" style="margin-top:6px;width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit"></label></div>`);
+  $('#sheetContent').querySelectorAll('[data-start-pick]').forEach((b) => {
+    b.onclick = () => { const p = spots.find((s) => s.id === b.dataset.startPick); if (p && p.hasCoords) runCourseGeneration({ lat: p.lat, lng: p.lng }, p.id); };
+  });
+  const gpsBtn = $('[data-start-gps]');
+  if (gpsBtn) gpsBtn.onclick = () => {
+    if (!navigator.geolocation) { alert('이 브라우저는 위치 기능을 지원하지 않아요. 목록에서 출발지를 골라 주세요.'); return; }
+    gpsBtn.textContent = '위치 확인 중…';
+    navigator.geolocation.getCurrentPosition(
+      (pos) => runCourseGeneration({ lat: pos.coords.latitude, lng: pos.coords.longitude }, null),
+      () => { alert('현재 위치를 가져오지 못했어요. 목록에서 출발지를 골라 주세요.'); buildCourseSheet(); },
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
+  };
+}
+/* 실제로 코스를 만든다 — CourseGen.generate가 도보는 실제 라우팅으로,
+   실패하면 직선거리 추정으로 계산해 돌려준다(어느 쪽인지 결과에
+   routedReal로 표시돼 있어 화면에서 정직하게 구분해 보여준다). */
+async function runCourseGeneration(origin, startPlaceId) {
+  const minutesInput = $('#courseMinutes');
+  const budgetMinutes = minutesInput && minutesInput.value ? +minutesInput.value : null;
+  const list = spots.filter((p) => route.has(p.id) && p.id !== startPlaceId);
+  open('코스 만드는 중', '<div class="detail"><h2>실제 이동시간을 계산하고 있어요…</h2><p>도보 경로를 먼저 확인합니다. 네트워크 상태에 따라 몇 초 걸릴 수 있어요.</p></div>');
+  const result = await window.CourseGen.generate(origin, list, { startMinutes: 9 * 60 });
+  if (!result.ok) {
+    open('코스를 만들 수 없어요', '<div class="detail"><h2>좌표가 있는 곳이 없어요.</h2><p>담아 둔 곳 모두 좌표가 없어 이동시간을 계산할 수 없습니다. 장소 상세에서 위치를 먼저 확인해 주세요.</p><button class="primary" data-dismiss>돌아가기</button></div>');
+    return;
+  }
+  foodMap.course = {
+    made: new Date().toISOString().slice(0, 10),
+    startHour: 9,
+    goals: [],
+    stops: result.stops,
+    endAt: result.endAt,
+    walkTotal: result.walkTotal,
+    routedReal: result.routedReal,
+    totalMeters: result.totalMeters,
+    excludedIds: result.excluded.map((p) => p.id),
+    source: 'design',
+  };
+  const saved = A.saveFoodMap(foodMap);
+  if (!saved) {
+    delete foodMap.course;
+    foodMap = A.loadFoodMap();
+    alert('코스를 저장하지 못했어요. 브라우저 저장 공간을 확인해 주세요.');
+    showRoute();
+    return;
+  }
+  showSavedCourse();
+}
+/* 저장된 코스를 보여준다 — 새로고침해도 foodMap.course에 남아 있어
+   그대로 다시 보인다. 실제 경로인지 추정인지 구분해서 보여주고(2026-
+   09-09 코드 검토 — 직선거리를 실제 최단 동선처럼 보여주지 말 것),
+   좌표가 없어 빠진 곳은 목록으로 따로 보여준다(조용히 안 뺌). 대중교통·
+   택시·자전거는 자체 계산 없이 구글 지도로 바로 연결한다("연결된
+   범위만 제공"). */
+function showSavedCourse() {
+  const c = foodMap.course;
+  const stopViews = c.stops.map((s, i) => {
+    const p = foodMap.places.find((x) => x.id === s.id);
+    if (!p) return '';
+    const prevId = i === 0 ? null : c.stops[i - 1].id;
+    const prevP = prevId ? foodMap.places.find((x) => x.id === prevId) : null;
+    const links = prevP && A.hasCoords(prevP) && A.hasCoords(p)
+      ? `<div class="course-modes"><a href="${A.esc(window.CourseGen.directionsLink(prevP, p, 'transit'))}" target="_blank" rel="noopener noreferrer">🚃 대중교통</a><a href="${A.esc(window.CourseGen.directionsLink(prevP, p, 'driving'))}" target="_blank" rel="noopener noreferrer">🚕 택시·자동차</a></div>`
+      : '';
+    return `<div class="route-row"><span>${i + 1}</span>${photoHTML(p, '')}<div><b>${A.esc(p.name)}</b><p>${window.CourseGen.clockLabel(s.at)} 도착 · 도보 ${s.walk}분 이동${links}</p></div></div>`;
+  }).join('');
+  const excluded = (c.excludedIds || []).map((id) => foodMap.places.find((p) => p.id === id)).filter(Boolean);
+  const totalKm = (c.totalMeters / 1000).toFixed(1);
+  const hours = Math.floor(c.walkTotal / 60), mins = c.walkTotal % 60;
+  open('오늘의 코스', `<div class="detail"><h2>${c.stops.length}곳 · 도보 이동 ${hours ? hours + '시간 ' : ''}${mins}분</h2>` +
+    `<p>${c.routedReal ? '실제 도보 경로 기준으로 계산했습니다.' : '실제 경로 연결에 실패해 직선거리 기준으로 추정했습니다(실제와 다를 수 있어요).'} 총 이동 거리 약 ${totalKm}km · 마지막 장소 도착 예정 ${window.CourseGen.clockLabel(c.endAt - (c.stops[c.stops.length - 1] ? c.stops[c.stops.length - 1].dwell : 0))}</p>` +
+    stopViews +
+    (excluded.length ? `<div class="inline-note">좌표가 없어 이번 코스 계산에서 빠진 곳 ${excluded.length}곳: ${excluded.map((p) => A.esc(p.name)).join(', ')}. 위치를 확인하면 다음 코스에 포함할 수 있어요.</div>` : '') +
+    `<button class="text-button" data-course-new>새로 만들기</button><button class="primary" data-dismiss>확인</button></div>`);
 }
 function profile() {
   const realCount = foodMap.places ? foodMap.places.length : 0;
@@ -359,6 +451,8 @@ $('#sheetContent').onclick = (e) => {
   if (b.dataset.catEdit) return catAssignSheet(b.dataset.catEdit);
   if (b.dataset.dupMerge) { const [x, y] = b.dataset.dupMerge.split('|'); return resolveDup(x, y, 'merge'); }
   if (b.dataset.dupDismiss) { const [x, y] = b.dataset.dupDismiss.split('|'); return resolveDup(x, y, 'dismiss'); }
+  if (b.hasAttribute('data-build-course')) return buildCourseSheet();
+  if (b.hasAttribute('data-course-new')) { delete foodMap.course; A.saveFoodMap(foodMap); showRoute(); }
 };
 function resolveDup(aId, bId, action) {
   const result = A.resolveDup(foodMap.places, aId, bId, action);

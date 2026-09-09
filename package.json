@@ -14,7 +14,8 @@
     "design-check": "node scripts/design-integration-check.mjs",
     "storage-migration-check": "node scripts/test-storage-migration.mjs",
     "font-coverage-check": "node scripts/test-font-coverage.mjs",
-    "zip-import-check": "node scripts/test-zip-import.mjs"
+    "zip-import-check": "node scripts/test-zip-import.mjs",
+    "course-check": "node scripts/test-course-generation.mjs"
   },
   "devDependencies": {
     "jsdom": "^24.1.3",
