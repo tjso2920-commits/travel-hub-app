@@ -430,6 +430,9 @@
   .place-top{display:flex;align-items:flex-start;gap:8px}
   .place-name{font-size:14px;font-weight:800;flex:1}
   .place-cat{font-size:10px;color:var(--wasabi);background:rgba(180,194,74,.12);border-radius:10px;padding:3px 7px;white-space:nowrap}
+  .place-cat-wrap{display:flex;align-items:center;gap:4px;flex-shrink:0}
+  .place-cat-select{font-size:10px;color:var(--wasabi);background:rgba(180,194,74,.12);border:0;border-radius:10px;padding:3px 7px;white-space:nowrap;min-height:24px;max-width:96px}
+  .place-cat-guess{font-size:9px;color:#a06a2a;background:rgba(200,140,50,.14);border-radius:8px;padding:2px 5px;white-space:nowrap}
   .place-note{font-size:11.5px;color:var(--muted);margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .place-btns{display:flex;gap:6px;margin-top:9px}
   .place-btns button,.place-btns a{border:1px solid var(--line2);background:var(--surface2);color:var(--muted);
@@ -2960,7 +2963,7 @@ function fmSetFilter(v){foodMap.filter=v;save('foodmap_v1',foodMap);renderFoodMa
 function fmToggleAdd(){const el=document.getElementById('fmAddBox');if(el)el.style.display=el.style.display==='none'?'block':'none';}
 function fmRenderList(){const el=document.getElementById('fmList');if(!el)return;const a=fmFiltered(),show=a.slice(0,250);
  el.innerHTML=show.length?show.map(p=>'<div class="place '+(p.id===foodMap.selected?'sel ':'')+(p.visited?'visited':'')+'" onclick="fmSelect(\''+p.id+'\')">'+
-  '<div class="place-top"><div class="place-name">'+(p.fav?'★ ':'')+esc(p.name||'이름 없음')+'</div><span class="place-cat">'+esc(fmCatLabel(p.cat||'기타'))+'</span></div>'+
+  '<div class="place-top"><div class="place-name">'+(p.fav?'★ ':'')+esc(p.name||'이름 없음')+'</div><span class="place-cat-wrap"><select class="place-cat-select" onclick="event.stopPropagation()" onchange="event.stopPropagation();fmSetCat(\''+p.id+'\',this.value)">'+FM_CATS.slice(4).map(function(c){return'<option value="'+esc(c)+'"'+(p.cat===c?' selected':'')+'>'+esc(fmCatLabel(c))+'</option>';}).join('')+'</select>'+(p.catConfirmed?'':'<span class="place-cat-guess" title="이름으로 짐작한 분류입니다 — 다르면 위에서 고쳐 주세요">짐작</span>')+'</span></div>'+
   '<div class="place-note">'+esc(p.note||p.address||((p.lat&&p.lng)?(p.lat+', '+p.lng):'메모 없음'))+'</div>'+
   ((p.rating||p.openNow!==undefined)?'<div class="xsmall" style="margin-top:5px">'+(p.rating?'★ '+p.rating+' ('+(p.ratingCount||0)+')':'')+(p.openNow!==undefined?' · '+(p.openNow?'영업 중':'현재 영업 아님'):'')+'</div>':'')+'<div class="place-btns">'+
   '<button class="'+(p.fav?'fav':'')+'" onclick="event.stopPropagation();fmToggle(\''+p.id+'\',\'fav\')">'+(p.fav?'★ 저장':'☆ 즐겨찾기')+'</button>'+
@@ -2974,6 +2977,9 @@ function fmRenderMap(){const el=document.getElementById('fmMap');if(!el)return;c
  const q=p.lat&&p.lng?(p.lat+','+p.lng):(p.name+' '+fmAreaHint());el.innerHTML='<iframe loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="'+esc(p.name)+' 지도" src="https://www.google.com/maps?q='+encodeURIComponent(q)+'&output=embed"></iframe>';}
 function fmSelect(id){foodMap.selected=id;save('foodmap_v1',foodMap);fmRenderList();fmRenderMap();const el=document.getElementById('fmMap');if(el)el.scrollIntoView({behavior:'smooth',block:'nearest'});}
 function fmToggle(id,k){const p=foodMap.places.find(x=>x.id===id);if(!p)return;p[k]=!p[k];save('foodmap_v1',foodMap);renderFoodMap();}
+/* 2026-09-09 코드 검토 반영 — 확인된 유형을 우선 쓰되, 사용자가 직접
+   고른 분류는 catConfirmed로 표시해 재가져오기에서도 절대 안 덮는다. */
+function fmSetCat(id,cat){const p=foodMap.places.find(x=>x.id===id);if(!p)return;p.cat=cat;p.catConfirmed=true;p.kind=fm2Kind(p.name+' '+p.note,p.cat);save('foodmap_v1',foodMap);renderFoodMap();}
 function fmDelete(id){const p=foodMap.places.find(x=>x.id===id);if(!p||!confirm('“'+p.name+'”을 맛집지도에서 삭제할까요?'))return;foodMap.places=foodMap.places.filter(x=>x.id!==id);if(foodMap.selected===id)foodMap.selected=null;save('foodmap_v1',foodMap);renderFoodMap();}
 /* ── 정품 등록 ───────────────────────────────────────────────────────────
    코드 = base64(이름|날짜) + '.' + 서명 12자.
@@ -5830,7 +5836,11 @@ fmMerge=function(arr,sourceLabel){let added=0,updated=0,skipped=0,blocked=0,dupC
    if(x.lat!==null&&x.lat!==undefined)exact.lat=x.lat;
    if(x.lng!==null&&x.lng!==undefined)exact.lng=x.lng;
    if(x.videos&&x.videos.length)exact.videos=x.videos;
-   if(!exact.cat)exact.cat=x.cat||fmInfer(exact.name+' '+exact.note+' '+exact.address);
+   /* 유형 분류 — 2026-09-09 코드 검토: 확인된 유형(가져온 원본에 실제로
+      cat이 있는 경우, 예: Places API로 보강된 정식 분류)을 이름 기반
+      추정보다 우선하고, 사용자가 직접 고친 분류(catConfirmed)는 재수입
+      때도 절대 덮지 않는다. */
+   if(!exact.catConfirmed){exact.cat=x.cat||fmInfer(exact.name+' '+exact.note+' '+exact.address);exact.catConfirmed=!!x.cat;}
    if(!exact.kind)exact.kind=x.kind||fm2Kind(exact.name+' '+exact.note,exact.cat);
    if(!exact.region)exact.region=x.region||fm2Region(exact.address+' '+exact.name);
    if(!exact.cityConfirmed)exact.city=fmCityGuess(exact);
@@ -5841,6 +5851,11 @@ fmMerge=function(arr,sourceLabel){let added=0,updated=0,skipped=0,blocked=0,dupC
   if(licRoom()<1){blocked++;return;}
   const p=fm2Normalize(Object.assign({id:'fm'+Date.now()+added+Math.floor(Math.random()*9999)},x));
   p.originName=x.name;p.originNote=x.note||'';p.originAddress=x.address||'';
+  /* 확인된 유형(원본에 실제 cat이 있으면)을 이름 기반 추정보다 우선한다.
+     추정으로 채운 값은 catConfirmed=false로 남겨 화면에서 "짐작"으로
+     표시하고 수정하게 한다(fmSetCat). */
+  p.cat=x.cat||fmInfer(p.name+' '+p.note+' '+p.address);
+  p.catConfirmed=!!x.cat;
   p.city=fmCityGuess(p);
   p.sourceLists=sourceLabel?[sourceLabel]:[];
   /* 이름만 같은 기존 장소가 있고, 다른 곳이라는 증거가 없으면 "중복 후보"로

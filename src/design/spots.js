@@ -106,7 +106,36 @@ function detail(id) {
         `<button class="text-button" data-dup-dismiss="${id}|${o.id}">다른 곳이에요</button></div>`).join('');
     }
   }
-  open(usingSample ? '샘플 장소' : '내 장소', `<div class="detail">${photoHTML(p, 'detail-photo')}<h2>${A.esc(p.name)}</h2><span class="category">${A.esc(p.category)}</span>${!usingSample ? ` <span class="category">${A.esc(p.city)}${p.cityKnown && !p.cityConfirmed ? '(짐작)' : ''}</span>` : ''}<p>${A.esc(p.area) || '위치 정보 없음'}</p>${p.memo ? `<p>“${A.esc(p.memo)}”</p>` : ''}<button class="primary" data-detail-pick="${id}">${selected.has(id) ? '선택에서 빼기' : '오늘 갈 곳으로 선택'}</button>${mapHref ? `<a target="_blank" rel="noopener noreferrer" href="${mapHref}">${mapLabel}</a>` : ''}${cityBlock}${notes.map((n) => `<small>${n}</small>`).join('')}</div>`);
+  const catBlock = usingSample ? '' :
+    ` <button class="text-button" data-cat-edit="${id}" style="padding:0;font-size:11px">${p.catConfirmed ? '유형 다시 고르기' : '유형이 맞나요? 수정'}</button>`;
+  open(usingSample ? '샘플 장소' : '내 장소', `<div class="detail">${photoHTML(p, 'detail-photo')}<h2>${A.esc(p.name)}</h2><span class="category">${A.esc(p.category)}${!usingSample && !p.catConfirmed ? '(짐작)' : ''}</span>${catBlock}${!usingSample ? ` <span class="category">${A.esc(p.city)}${p.cityKnown && !p.cityConfirmed ? '(짐작)' : ''}</span>` : ''}<p>${A.esc(p.area) || '위치 정보 없음'}</p>${p.memo ? `<p>“${A.esc(p.memo)}”</p>` : ''}<button class="primary" data-detail-pick="${id}">${selected.has(id) ? '선택에서 빼기' : '오늘 갈 곳으로 선택'}</button>${mapHref ? `<a target="_blank" rel="noopener noreferrer" href="${mapHref}">${mapLabel}</a>` : ''}${cityBlock}${notes.map((n) => `<small>${n}</small>`).join('')}</div>`);
+}
+/* 유형 지정 시트 — 확인된 유형(실제 데이터에 있던 분류)을 이름 기반 추정
+   보다 우선하지만, 추정이 틀렸으면 사용자가 여기서 직접 고칠 수 있다.
+   한 번 고르면 catConfirmed=true로 남아 재수입해도 안 덮인다
+   (2026-09-09 코드 검토 — 후쿠오카 전용 상호명 목록에 기대지 않는
+   범용 유형 목록을 그대로 쓴다). */
+function catAssignSheet(id) {
+  const p = spots.find((s) => s.id === id); if (!p) return;
+  const cats = A.knownCats;
+  open('유형 지정', `<div class="detail"><h2>이 장소는 어떤 유형인가요?</h2>` +
+    `<p>${A.esc(p.name)}</p>` +
+    `<div class="city-options">${cats.map((c) => `<button class="city-option" data-assign-cat="${A.esc(c)}"><span><b>${A.esc(c)}</b></span><span class="city-check">${p.category === c ? '✓' : '›'}</span></button>`).join('')}</div></div>`);
+  $('#sheetContent').querySelectorAll('[data-assign-cat]').forEach((b) => {
+    b.onclick = () => finishCatAssign(id, b.dataset.assignCat);
+  });
+}
+function finishCatAssign(id, cat) {
+  A.setCat(foodMap.places, id, cat);
+  const saved = A.saveFoodMap(foodMap);
+  if (!saved) {
+    foodMap = A.loadFoodMap();
+    alert('저장에 실패했어요. 브라우저 저장 공간을 확인해 주세요.');
+    return;
+  }
+  refreshFromStorage();
+  updateCity();
+  detail(id);
 }
 /* 도시 지정 시트 — 여러 곳을 한 번에(다중 선택 뒤 "도시 지정하기"), 또는
    장소 하나만(detail() 의 "이 장소 도시 지정하기"). 좌표를 만들어내지
@@ -252,6 +281,7 @@ $('#sheetContent').onclick = (e) => {
   if (b.dataset.detailPick) { toggle(b.dataset.detailPick); detail(b.dataset.detailPick); }
   if (b.dataset.remove) { route.delete(b.dataset.remove); showRoute(); }
   if (b.dataset.citySingle) return cityAssignSheet([b.dataset.citySingle]);
+  if (b.dataset.catEdit) return catAssignSheet(b.dataset.catEdit);
   if (b.dataset.dupMerge) { const [x, y] = b.dataset.dupMerge.split('|'); return resolveDup(x, y, 'merge'); }
   if (b.dataset.dupDismiss) { const [x, y] = b.dataset.dupDismiss.split('|'); return resolveDup(x, y, 'dismiss'); }
 };

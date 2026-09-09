@@ -136,6 +136,47 @@ const afterReimport = await p.evaluate(() => foodMap.places.length);
 t('합쳐서 없어진 쪽 URL로 재수입해도 새 레코드가 안 생김(별칭 등록 확인)', afterReimport === afterMerge.count);
 await p.evaluate(() => document.getElementById('close').click());
 
+// 유형 분류 — 이름 기반 짐작을 화면에서 직접 고쳐보고, 재수입해도 안
+// 덮이는지 확인한다(2026-09-09 코드 검토 ⑤).
+const catCsvPath = path.join(tmp, 'cat-check.csv');
+fs.writeFileSync(catCsvPath, '제목,메모,URL,태그,댓글\n분류확인가게,,,,\n', 'utf8');
+await p.click('[data-add]');
+const [fc5] = await Promise.all([p.waitForEvent('filechooser'), p.click('#realFileBtn')]);
+await fc5.setFiles(catCsvPath);
+await p.waitForTimeout(700);
+await p.evaluate(() => document.getElementById('close').click());
+await p.waitForTimeout(200);
+const catTarget = await p.evaluate(() => {
+  const d = foodMap.places.find((x) => x.name === '분류확인가게');
+  return d ? { id: d.id, cat: d.cat, catConfirmed: d.catConfirmed } : null;
+});
+t('이름으로 짐작한 분류가 붙음(기타)', catTarget && catTarget.cat === '기타');
+t('짐작 상태는 미확정으로 표시됨', catTarget && catTarget.catConfirmed === false);
+await p.evaluate((id) => { detail(id); }, catTarget.id);
+await p.waitForTimeout(150);
+await p.click('[data-cat-edit]');
+await p.waitForTimeout(150);
+await p.click('[data-assign-cat="숙소"]');
+await p.waitForTimeout(200);
+const afterCatEdit = await p.evaluate(() => {
+  const d = foodMap.places.find((x) => x.name === '분류확인가게');
+  return { cat: d.cat, catConfirmed: d.catConfirmed };
+});
+t('화면에서 유형을 직접 고르면 실제로 바뀜', afterCatEdit.cat === '숙소');
+t('직접 고른 뒤엔 확정으로 표시됨', afterCatEdit.catConfirmed === true);
+await p.evaluate(() => document.getElementById('close').click());
+// 재수입해도 사용자가 고른 분류는 안 덮임
+await p.click('[data-add]');
+const [fc6] = await Promise.all([p.waitForEvent('filechooser'), p.click('#realFileBtn')]);
+await fc6.setFiles(catCsvPath);
+await p.waitForTimeout(700);
+await p.evaluate(() => document.getElementById('close').click());
+const afterReimportCat = await p.evaluate(() => {
+  const d = foodMap.places.find((x) => x.name === '분류확인가게');
+  return d ? d.cat : null;
+});
+t('재수입해도 사용자가 고른 분류는 유지됨(이름만 같고 식별자 없어 별개 후보가 됐어도 기존 레코드는 그대로)', afterReimportCat === '숙소');
+
 t('최종 콘솔/런타임 오류 0', errs.length === 0);
 if (errs.length) console.log('  ', errs.slice(0, 5));
 

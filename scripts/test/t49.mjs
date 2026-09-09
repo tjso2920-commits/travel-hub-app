@@ -199,6 +199,27 @@ t('두 도시 이름이 동시에 걸리면 애매하니 확정 안 함', w.eval
 t('메모에 다른 도시 이름이 있어도(비교 코멘트 등) 도시로 확정하지 않음 — fmCityGuess 는 주소만 봄',
   w.eval("fmCityGuess({address:'',note:'예전에 가 본 삿포로 가게가 더 좋았다'})") === null);
 
+/* ── 7. 유형 분류 — 확인된 유형 우선 + 사용자 수정 보존(2026-09-09 코드 검토) ── */
+w.eval("foodMap.places=[];");
+const csvNoCat = '제목,메모,URL,태그,댓글\n동네라멘가게,,,,';
+w.eval(`fmMerge(fmCsv(${JSON.stringify(csvNoCat)}),'목록')`);
+t('원본에 유형 정보가 없으면 이름으로 짐작(맛집·식당)', w.eval('foodMap.places[0].cat') === '맛집·식당');
+t('짐작한 값은 확정 아님(catConfirmed=false)', w.eval('foodMap.places[0].catConfirmed') === false);
+/* 확인된 유형(예: Places API 보강 결과의 cat)이 있으면 이름 짐작보다 우선.
+   재수입 시나리오이므로 URL(검증된 식별자)을 공유해 exact 매칭시킨다. */
+w.eval("foodMap.places=[]");
+const catUrl = 'https://www.google.com/maps/place/x/data=!4m2!3m1!1s0xCAT1';
+w.eval(`fmMerge([{name:'동네라멘가게',url:${JSON.stringify(catUrl)},cat:'카페·디저트'}],'보강됨')`);
+t('원본에 확인된 유형이 있으면 그걸 그대로 씀(이름 짐작 무시)', w.eval('foodMap.places[0].cat') === '카페·디저트');
+t('확인된 유형은 catConfirmed=true', w.eval('foodMap.places[0].catConfirmed') === true);
+/* 사용자가 fmSetCat으로 직접 고친 분류는 재수입해도 안 덮임 */
+w.eval("fmSetCat(foodMap.places[0].id,'바·이자카야');");
+t('사용자가 직접 고르면 catConfirmed=true', w.eval('foodMap.places[0].catConfirmed') === true);
+w.eval(`fmMerge([{name:'동네라멘가게',url:${JSON.stringify(catUrl)},cat:'쇼핑'}],'다른보강')`);
+t('사용자가 고친 분류는 재수입해도(같은 곳, 원본이 다른 값을 줘도) 안 덮임', w.eval('foodMap.places[0].cat') === '바·이자카야');
+t('범용 유형 목록 사용 — 후쿠오카 전용 상호명에 의존하지 않음(맛집·바·카페 등 어느 여행지든 통용)',
+  ['맛집·식당','바·이자카야','카페·디저트','관광·명소','쇼핑','숙소','교통','사우나·온천','마사지·스파','약국·병원','기타'].includes(w.eval('fmInfer("아무 상호명")')));
+
 /* ── 나라 바꿔도 장소는 안 지워진다(핵심 산업 결정 — t46 에서 fmSetCountry 는 따로 검증) ── */
 w.eval("foodMap.places=[{id:'x1',name:'테스트','address':'福岡市',lat:33.59,lng:130.40}];save('foodmap_v1',foodMap);");
 t('fmMerge 로 담긴 장소는 destCountry 와 무관하게 그대로 유지됨(별도 검증은 t46)', w.eval('foodMap.places.length') === 1);

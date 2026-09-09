@@ -208,6 +208,28 @@ function daLink(p) {
 }
 
 /* private/personal.html: const FM_CITY_ALT — 그대로 옮김(도시 이름 → 대체 표기 정규식). */
+/* private/personal.html: const FM_INFER / function fmInfer — 그대로 옮김.
+   이름·메모·주소 텍스트로 유형을 짐작한다. 한국어뿐 아니라 일본어·영어·
+   프랑스어·터키어·베트남어 등 여러 언어 낱말을 같이 봐서 특정 여행지
+   전용이 아니다(2026-09-09 코드 검토 — 후쿠오카 전용으로 만들지 말 것).
+   순서가 규칙이다 — 위에서 걸리면 아래는 안 본다. */
+const FM_INFER = [
+  ['숙소', /ホテル|旅館|民宿|hotel|hôtel|otel\b|hostel|호스텔|호텔|숙소|료칸|inn\b|resort|guest ?house|ryokan|khách sạn|pension|auberge|albergo|posada|hospedaje|b&b|motel|lodge/],
+  ['교통', /駅|空港|港|バス|station|gare\b|istasyon|havaliman|aéroport|airport|aeropuerto|flughafen|bahnhof|metro|subway|터미널|역$|공항|terminal|bến xe|ga hà|bus stop|port\b|ferry|pier/],
+  ['사우나·온천', /温泉|銭湯|サウナ|onsen|sento|온천|사우나|찜질|족욕|열탕|노천탕|sauna|hamam|hammam|banya|therme|thermal|bath ?house|ancient baths|\bbaths\b|bagno termale/],
+  ['마사지·스파', /マッサージ|エステ|massage|\bspa\b|마사지|스파|에스테|아로마|경락|발마사지|타이마사지|foot ?massage|reflexolog|masaj|mát ?xa|wellness|salon de massage|masaje/],
+  ['약국·병원', /薬局|ドラッグ|病院|クリニック|pharmac|farmacia|farmácia|apotheke|eczane|nhà thuốc|drug ?store|hospital|hôpital|hastane|bệnh viện|clinic|clinique|klinik|약국|병원|의원|응급|치과|드럭스토어|메디컬|boots\b|walgreens|\bcvs\b|medical/],
+  ['카페·디저트', /カフェ|珈琲|喫茶|パン|coffee|caf[eé]|kahve|kaffee|caff[eè]|cà ?phê|kopi\b|boulangerie|p[aâ]tisserie|bakery|panader|konditorei|pasticceria|gelat|dessert|tea ?house|tearoom|çay|카페|디저트|베이커리|제과|빵집|brunch/],
+  ['바·이자카야', /居酒屋|酒場|屋台|バー|クラブ|パブ|\bbar\b|\bbars\b|\bpub\b|\bclub\b|lounge|meyhane|birahane|bodega|cantina|taberna|kneipe|weinstube|brauerei|brewery|taproom|\bale\b|\bbia\b|\bbeer\b|birreria|cocktail|whisk|vinoteca|wine ?bar|이자카야|포차|술집|클럽|나이트|펍|라운지|와인바|위스키/],
+  ['관광·명소', /神社|寺|城|公園|展望|博物館|美術館|shrine|temple|tempel|\bwat\b|chùa|đền|cami|camii|mosque|mezquita|church|chiesa|iglesia|kirche|église|cathedral|cathédrale|basilica|museum|mus[eé]e|museo|müze|gallery|galleria|galerie d'art|palace|palais|palazzo|saray|castle|château|schloss|castillo|kale\b|tower|\btour\b|kule|park\b|parc\b|parque|jardin|garden|bahçe|giardin|square|plaza|meydan|piazza|bridge|pont\b|köprü|puente|monument|statue|beach|plage|playa|sahil|공원|신사|사찰|전망|박물관|미술관|해변|성당|사원/],
+  ['쇼핑', /百貨店|モール|市場|ショップ|\bstore\b|\bshop\b|market|marché|mercado|mercato|markt|pazar|pasar\b|çarşı|\bmall\b|galeries|boutique|chợ|department|outlet|쇼핑|시장|백화점|마트|편의점/],
+  ['맛집·식당', /寿司|鮨|刺身|海鮮|ラーメン|うどん|焼鳥|焼肉|restaurant|restaurante|ristorante|trattoria|osteria|taverna|lokanta|sofras|meze|bistro|brasserie|comptoir|pizzeria|pizza|burger|steak|grill|kitchen|diner|eatery|noodle|\bphở?\b|\bbún\b|\bcơm\b|nhà hàng|quán\b|warung|som ?tam|pad ?thai|khao\b|tom ?yum|\bkrua\b|taquer|taco|tapas|curry|kebab|döner|dönerci|식당|맛집|스시|라멘|우동|야키토리|고기|국밥|분식/],
+];
+function daInfer(s) {
+  s = String(s || '').toLowerCase();
+  for (let i = 0; i < FM_INFER.length; i++) if (FM_INFER[i][1].test(s)) return FM_INFER[i][0];
+  return '기타';
+}
 const FM_CITY_ALT = {
   '후쿠오카': '福岡|fukuoka|hakata|博多', '도쿄': '東京|tokyo|shibuya|shinjuku', '오사카': '大阪|osaka|namba|umeda',
   '교토': '京都|kyoto', '삿포로': '札幌|sapporo', '오키나와': '沖縄|okinawa|naha|那覇', '나고야': '名古屋|nagoya',
@@ -331,13 +353,19 @@ function daMerge(arr, sourceLabel, places) {
       if (x.lat !== null && x.lat !== undefined) exact.lat = x.lat;
       if (x.lng !== null && x.lng !== undefined) exact.lng = x.lng;
       if (!exact.cityConfirmed) exact.city = daCityGuess(exact);
+      /* 유형 분류 — 확인된 유형(원본에 실제 cat이 있으면)을 이름 기반
+         추정보다 우선하고, 사용자가 직접 고친 분류(catConfirmed)는
+         재수입 때도 절대 덮지 않는다(2026-09-09 코드 검토). */
+      if (!exact.catConfirmed) { exact.cat = x.cat || daInfer(exact.name + ' ' + exact.note + ' ' + exact.address); exact.catConfirmed = !!x.cat; }
       if (sourceLabel) { exact.sourceLists = Array.isArray(exact.sourceLists) ? exact.sourceLists : []; if (!exact.sourceLists.includes(sourceLabel)) exact.sourceLists.push(sourceLabel); }
       regKeys(exact);
       updated++; return;
     }
-    const p = Object.assign({ id: 'fm' + Date.now() + added + Math.floor(Math.random() * 9999), cat: x.cat || '기타' }, x);
+    const p = Object.assign({ id: 'fm' + Date.now() + added + Math.floor(Math.random() * 9999) }, x);
     delete p.title;
     p.originName = x.name; p.originNote = x.note || ''; p.originAddress = x.address || '';
+    p.cat = x.cat || daInfer(p.name + ' ' + p.note + ' ' + p.address);
+    p.catConfirmed = !!x.cat;
     p.city = daCityGuess(p);
     p.sourceLists = sourceLabel ? [sourceLabel] : [];
     /* 이름만 같아도 사람이 이미 "다른 곳이에요"로 확인해 둔 조합
@@ -360,6 +388,15 @@ function daMerge(arr, sourceLabel, places) {
    "여러 장소 선택 → 여행지 일괄 지정과 개별 수정"). 좌표를 만들어내지
    않는다 — 도시 지정과 실제 좌표 확인은 다른 것이다. 동선 계산은
    여전히 hasCoords 가 true 인 곳에만 쓸 수 있다. */
+/* private/personal.html: function fmSetCat — 그대로 옮김. 사용자가 직접
+   고른 분류는 catConfirmed=true로 남겨 재수입 때도 절대 안 덮는다. */
+function daSetCat(places, id, cat) {
+  const p = (places || []).find((x) => x.id === id);
+  if (!p) return false;
+  p.cat = cat;
+  p.catConfirmed = true;
+  return true;
+}
 function daAssignCity(places, placeIds, city) {
   const set = new Set(placeIds);
   let n = 0;
@@ -441,6 +478,7 @@ function daBuildSpots(foodMap) {
     id: p.id,
     name: p.name || '이름 없음',
     category: p.cat || '기타',
+    catConfirmed: !!p.catConfirmed,
     area: p.address || '',
     memo: p.note || '',
     image: null, // 실 사진 미연결 — 카드가 이 값을 보고 빈 상태를 그린다
@@ -475,6 +513,8 @@ window.DesignAdapter = {
   cityHint: daCityHint,
   assignCity: daAssignCity,
   resolveDup: daResolveDup,
+  setCat: daSetCat,
+  knownCats: FM_INFER.map((x) => x[0]).concat('기타'),
   knownCities: Object.keys(FM_CITY_ALT),
   esc: daEsc,
   hasCoords: daHasCoords,
