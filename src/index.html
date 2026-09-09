@@ -2873,6 +2873,11 @@ function fmInfer(s){
  return'기타';
 }
 function fmInFukuoka(p){const a=String((p.address||'')+' '+(p.note||'')).toLowerCase();if(/福岡|fukuoka|후쿠오카|糸島|itoshima|이토시마|北九州|kitakyushu/.test(a))return true;
+ /* 실제 구글 Takeout CSV 는 주소도 좌표도 안 준다(제목·메모·URL 뿐).
+    좌표가 없으면 이 아래 범위 비교가 null>=32.7 처럼 항상 false 로 새서
+    CSV 로 담은 곳 전부가 조용히 빠졌다 — 실제 파일(178곳 중 165곳)로 확인됨.
+    fmInArea() 의 "잴 근거 없으면 빼지 않는다" 원칙을 여기도 그대로 적용한다. */
+ if(p.lat===null||p.lat===undefined||p.lng===null||p.lng===undefined)return true;
  return p.lat>=32.7&&p.lat<=34.15&&p.lng>=129.2&&p.lng<=131.25;}
 function fmLink(p){if(p.url)return p.url;const q=p.lat&&p.lng?(p.lat+','+p.lng):(p.name+' '+fmAreaHint());return'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(q);}
 function fmFiltered(){const q=String(foodMap.q||'').toLowerCase().trim(),f=foodMap.filter||'전체';return foodMap.places.filter(p=>{
