@@ -1,0 +1,5 @@
+Approved design v5
+Source commit: 8baa1e2fdb723eeed430272efa1151011a198b36
+Preview: https://travelhub-design-preview.tjso2920.chatgpt.site
+Original functional repository: https://github.com/tjso2920-commits/travel-hub-app
+Original repository current HEAD has NOT been checked for this handoff.
