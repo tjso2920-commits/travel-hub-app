@@ -5704,10 +5704,30 @@ fmJson=function(j){const direct=j&&(j.places||j.spots);if(Array.isArray(direct))
    너무 세게 정규화하면(괄호 제거 등) 다른 가게를 같은 곳으로 오인할 수 있어
    여기서는 대소문자·앞뒤 공백만 정리하는 선에서 멈춘다. */
 const fmNameKey=n=>String(n||'').trim().toLowerCase().replace(/\s+/g,' ');
+/* 2026-09-09 코드 검토 반영 — URL이라고 다 같은 URL이 아니다. "검색 결과"
+   URL(/maps/search/, 좌표·이름만으로 만든 링크)은 여러 곳 중 하나를
+   가리킬 뿐 "이 장소가 맞다"는 증거가 아니다. 반면 /maps/place/, cid=,
+   place_id:, FID(!1s0x...:0x...) 가 붙은 URL은 구글이 특정 장소 하나에
+   부여한 식별자라 믿을 수 있다. 이 구분이 없으면 fmLink() 류가 만드는
+   대체 검색 링크가 우연히 같은 문자열이 될 때 서로 다른 장소가 같은
+   식별자로 오인될 수 있다 — 검증된 식별자로만 자동 병합한다는 원칙에
+   어긋난다. */
+function fmIsPlaceUrl(u){
+ const t=String(u||'');
+ if(!t)return false;
+ if(/\/maps\/search\//i.test(t))return false;
+ if(/place_id[:=]/i.test(t))return true;
+ if(/[?&]cid=/i.test(t))return true;
+ if(/!1s0x[0-9a-f]+:0x[0-9a-f]+/i.test(t))return true;
+ if(/\/maps\/place\//i.test(t))return true;
+ return false;
+}
 /* 두 장소가 "다른 곳"이라는 증거가 있는지 본다. 도시가 서로 다르게
-   확정돼 있거나(주소로), 좌표가 둘 다 있는데 5km 넘게 떨어져 있으면
-   증거가 있는 것 — 이때는 이름이 같아도 후보로도 안 묶는다. */
+   확정돼 있거나(주소로), 좌표가 둘 다 있는데 5km 넘게 떨어져 있거나,
+   구글이 부여한 placeId 자체가 서로 다르면(둘 다 있는데) 증거가 있는
+   것 — 이때는 이름이 같아도 후보로도 안 묶는다. */
 function fmPlacesConflict(a,x){
+ if(a.placeId&&x.placeId&&a.placeId!==x.placeId)return true;
  const ca=fmCityGuess(a),cx=fmCityGuess(x);
  if(ca&&cx&&ca!==cx)return true;
  if(fm2HasCoords(a)&&fm2HasCoords(x)&&fmGpsDistance(a,x)>5000)return true;
@@ -5722,32 +5742,55 @@ function fmPlacesConflict(a,x){
    이름만 같으면 "중복 후보"(dupCandidateIds)로 남겨서 화면에서 사람이
    확인하게 한다. 도시·좌표로 이미 다른 곳이라는 증거가 있으면 후보로도
    안 묶는다. */
+/* 두 장소를 견줄 때 쓰는 "내용 기반" 키 — 이름·주소·URL이 같은 새 항목이
+   다시 들어오면 같은 후보 쌍으로 본다. 안정적인 식별자가 없는 항목(같은
+   파일을 반복 업로드하는 경우 등)도 이 키로 "같은 출처의 같은 행"임을
+   알아본다. */
+function fmDupKey(p){return fmNameKey(p.name)+'|'+String(p.address||'').trim().toLowerCase()+'|'+String(p.url||'').trim();}
 fmMerge=function(arr,sourceLabel){let added=0,updated=0,skipped=0,blocked=0,dupCandidates=0;
  const byKey=new Map(),byName=new Map();
  /* 좌표가 진짜 있을 때만 이름+좌표를 검증된 식별자로 쓴다.
     null|null 은 "좌표가 없다"는 뜻이지 "같은 좌표"가 아니다. */
  const kName=p=>fm2HasCoords(p)?((p.name||'').toLowerCase()+'|'+p.lat+'|'+p.lng):null;
  const addName=(nk,p)=>{if(!nk)return;if(!byName.has(nk))byName.set(nk,[]);byName.get(nk).push(p);};
+ const urlKey=p=>fmIsPlaceUrl(p.url)?p.url:null;
+ /* 합친 뒤 삭제되는 쪽의 URL·placeId를 별칭으로 등록해 둔다(fmResolveDup
+    참고) — 그 파일을 다시 가져와도 별칭 식별자로 살아남은 레코드를 찾아
+    "갱신"으로 처리되지, 새 레코드가 또 생기지 않는다. */
+ const regKeys=p=>{[p.placeId,urlKey(p),kName(p)].forEach(k=>{if(k)byKey.set(k,p);});
+  (p.aliasUrls||[]).forEach(u=>{if(u)byKey.set(u,p);});
+  (p.aliasPlaceIds||[]).forEach(id=>{if(id)byKey.set(id,p);});};
  foodMap.places.forEach(p=>{
   fm2Normalize(p);
-  [p.placeId,p.url,kName(p)].forEach(k=>{if(k)byKey.set(k,p);});
+  regKeys(p);
   addName(fmNameKey(p.name),p);
  });
  arr.forEach(x=>{
   if(!x||!x.name){skipped++;return;}
   const nk=fmNameKey(x.name);
   const kx=kName(x);
-  const exact=(x.placeId&&byKey.get(x.placeId))||(x.url&&byKey.get(x.url))||(kx&&byKey.get(kx));
+  let exact=(x.placeId&&byKey.get(x.placeId))||(urlKey(x)&&byKey.get(urlKey(x)))||(kx&&byKey.get(kx));
+  /* 강한 식별자 충돌 검사 — 이름+좌표(또는 URL)로 후보를 찾았어도, 양쪽에
+     placeId가 실제로 있고 서로 다르면 구글 기준으로 이미 다른 장소라는
+     확실한 증거다. 자동 병합하지 않는다(아래 이름 기반 후보 경로로 넘어감 —
+     fmPlacesConflict도 이 조건을 보므로 후보로도 안 묶인다). */
+  if(exact&&x.placeId&&exact.placeId&&x.placeId!==exact.placeId)exact=null;
   if(exact){
    /* 검증된 식별자로 확인된 경우만 자동으로 합친다.
       메모·주소·이름은 사용자가 원본에서 이미 고쳤으면(= 지금 값이 저장해 둔
       원본과 다르면) 새로 들어온 값으로 덮지 않는다 — 원본 값만 갱신해서
-      나중에도 "원본이 뭐였는지"는 계속 알 수 있게 한다. */
-   if(x.name&&exact.name===(exact.originName!==undefined?exact.originName:exact.name))exact.name=x.name;
+      나중에도 "원본이 뭐였는지"는 계속 알 수 있게 한다.
+      2026-09-09 코드 검토 반영: origin* 필드 자체가 아직 없는 기존 레코드
+      (마이그레이션 전에 만들어졌거나 fmAdd로 손으로 추가된 곳)는
+      "지금 값 === undefined"가 항상 참이 되어 버려서 무조건 덮어써지고
+      있었다 — 원본을 모르면 사용자가 이미 고쳐 놨을 수도 있으니 보수적으로
+      "안 건드림"이 맞다. origin*이 없으면 이번엔 값을 그대로 두고 origin*만
+      새로 채워서, 다음 재수입부터 정상적으로 비교할 수 있게 한다. */
+   if(x.name&&exact.originName!==undefined&&exact.name===exact.originName)exact.name=x.name;
    exact.originName=x.name!==undefined?x.name:exact.originName;
-   if(exact.note===(exact.originNote!==undefined?exact.originNote:exact.note))exact.note=x.note||'';
+   if(exact.originNote!==undefined&&exact.note===exact.originNote)exact.note=x.note||'';
    exact.originNote=x.note!==undefined?x.note:exact.originNote;
-   if(exact.address===(exact.originAddress!==undefined?exact.originAddress:exact.address))exact.address=x.address||exact.address;
+   if(exact.originAddress!==undefined&&exact.address===exact.originAddress)exact.address=x.address||exact.address;
    exact.originAddress=x.address!==undefined?x.address:exact.originAddress;
    if(x.placeId)exact.placeId=x.placeId;
    if(x.url)exact.url=x.url;
@@ -5761,7 +5804,7 @@ fmMerge=function(arr,sourceLabel){let added=0,updated=0,skipped=0,blocked=0,dupC
    if(!exact.region)exact.region=x.region||fm2Region(exact.address+' '+exact.name);
    if(!exact.cityConfirmed)exact.city=fmCityGuess(exact);
    if(sourceLabel){exact.sourceLists=Array.isArray(exact.sourceLists)?exact.sourceLists:[];if(!exact.sourceLists.includes(sourceLabel))exact.sourceLists.push(sourceLabel);}
-   [exact.placeId,exact.url,kName(exact)].forEach(k=>{if(k)byKey.set(k,exact);});
+   regKeys(exact);
    updated++;return;
   }
   if(licRoom()<1){blocked++;return;}
@@ -5770,20 +5813,78 @@ fmMerge=function(arr,sourceLabel){let added=0,updated=0,skipped=0,blocked=0,dupC
   p.city=fmCityGuess(p);
   p.sourceLists=sourceLabel?[sourceLabel]:[];
   /* 이름만 같은 기존 장소가 있고, 다른 곳이라는 증거가 없으면 "중복 후보"로
-     서로 연결한다. 자동으로 합치지 않는다 — 사람이 확인해야 한다. */
-  const sameName=(byName.get(nk)||[]).filter(o=>!fmPlacesConflict(o,p));
+     서로 연결한다. 자동으로 합치지 않는다 — 사람이 확인해야 한다.
+     단, 사람이 이미 "다른 곳이에요"로 확인해 둔 조합(dismissedDupKeys)이면
+     같은 판단을 또 묻지 않는다 — 같은 파일을 다시 올려도 매번 같은
+     질문을 반복하지 않기 위함이다. */
+  const pKey=fmDupKey(p);
+  const sameName=(byName.get(nk)||[]).filter(o=>!fmPlacesConflict(o,p)&&!(o.dismissedDupKeys||[]).includes(pKey));
   if(sameName.length){
    p.dupCandidateIds=sameName.map(o=>o.id);
    sameName.forEach(o=>{o.dupCandidateIds=Array.isArray(o.dupCandidateIds)?o.dupCandidateIds:[];if(!o.dupCandidateIds.includes(p.id))o.dupCandidateIds.push(p.id);});
    dupCandidates++;
   }
   foodMap.places.push(p);
-  [p.placeId,p.url,kName(p)].forEach(k=>{if(k)byKey.set(k,p);});
+  regKeys(p);
   addName(nk,p);
   added++;
  });
  save('foodmap_v1',foodMap);
  return{added:added,updated:updated,skipped:skipped,blocked:blocked,dupCandidates:dupCandidates};};
+/* 중복 후보 하나를 해결한다 — src/design/spots.js 의 daResolveDup 와
+   동일 로직(2026-09-09). foodMap.places 는 두 화면이 같은 storage 키를
+   쓰므로, 어느 화면에서 병합했든 이 필드들을 서로 존중해야 한다.
+   'dismiss': 후보 연결만 끊는다(둘 다 남는다 — 실제로 다른 곳). 같은
+   조합(dismissedDupKeys)을 나중에 또 후보로 올리지 않는다.
+   'merge': 진짜 합친다 — 사람이 "같은 곳 맞다"고 확인한 뒤에만 불러야
+   한다(자동 병합 아님). 삭제되는 쪽의 URL·placeId는 별칭으로 남겨서,
+   그 파일을 나중에 다시 가져와도 새 레코드가 또 생기지 않게 한다. 메모가
+   양쪽에 다 있고 다르면 하나를 버리지 않고 이어붙인다. */
+function fmResolveDup(places,aId,bId,action){
+ const a=(places||[]).find(p=>p.id===aId),b=(places||[]).find(p=>p.id===bId);
+ if(!a||!b)return false;
+ if(action==='dismiss'){
+  a.dupCandidateIds=(a.dupCandidateIds||[]).filter(id=>id!==bId);
+  b.dupCandidateIds=(b.dupCandidateIds||[]).filter(id=>id!==aId);
+  a.dismissedDupKeys=Array.isArray(a.dismissedDupKeys)?a.dismissedDupKeys:[];
+  if(!a.dismissedDupKeys.includes(fmDupKey(b)))a.dismissedDupKeys.push(fmDupKey(b));
+  b.dismissedDupKeys=Array.isArray(b.dismissedDupKeys)?b.dismissedDupKeys:[];
+  if(!b.dismissedDupKeys.includes(fmDupKey(a)))b.dismissedDupKeys.push(fmDupKey(a));
+  return true;
+ }
+ a.aliasUrls=Array.isArray(a.aliasUrls)?a.aliasUrls:[];
+ a.aliasPlaceIds=Array.isArray(a.aliasPlaceIds)?a.aliasPlaceIds:[];
+ if(a.url&&a.url!==b.url&&!a.aliasUrls.includes(a.url))a.aliasUrls.push(a.url);
+ if(b.url&&b.url!==a.url&&!a.aliasUrls.includes(b.url))a.aliasUrls.push(b.url);
+ if(a.placeId&&a.placeId!==b.placeId&&!a.aliasPlaceIds.includes(a.placeId))a.aliasPlaceIds.push(a.placeId);
+ if(b.placeId&&b.placeId!==a.placeId&&!a.aliasPlaceIds.includes(b.placeId))a.aliasPlaceIds.push(b.placeId);
+ (b.aliasUrls||[]).forEach(u=>{if(u&&u!==a.url&&!a.aliasUrls.includes(u))a.aliasUrls.push(u);});
+ (b.aliasPlaceIds||[]).forEach(id=>{if(id&&id!==a.placeId&&!a.aliasPlaceIds.includes(id))a.aliasPlaceIds.push(id);});
+ if(!a.address&&b.address)a.address=b.address;
+ if(b.note&&b.note!==a.note)a.note=a.note?(a.note+' / '+b.note):b.note;
+ if(!fm2HasCoords(a)&&fm2HasCoords(b)){a.lat=b.lat;a.lng=b.lng;}
+ if(!a.url&&b.url)a.url=b.url;
+ if(!a.placeId&&b.placeId)a.placeId=b.placeId;
+ if(!a.city&&b.city){a.city=b.city;a.cityConfirmed=b.cityConfirmed;}
+ if(!a.visited&&b.visited){a.visited=b.visited;if(b.visitedAt)a.visitedAt=b.visitedAt;}
+ if((!a.cat||a.cat==='기타')&&b.cat&&b.cat!=='기타')a.cat=b.cat;
+ if(!a.kind&&b.kind)a.kind=b.kind;
+ a.sourceLists=Array.from(new Set([...(a.sourceLists||[]),...(b.sourceLists||[])]));
+ a.dupCandidateIds=(a.dupCandidateIds||[]).filter(id=>id!==bId);
+ (b.dupCandidateIds||[]).forEach(id=>{
+  if(id===aId)return;
+  const other=(places||[]).find(p=>p.id===id);
+  if(other){
+   other.dupCandidateIds=(other.dupCandidateIds||[]).filter(x=>x!==bId);
+   if(!other.dupCandidateIds.includes(aId))other.dupCandidateIds.push(aId);
+   a.dupCandidateIds=a.dupCandidateIds||[];
+   if(!a.dupCandidateIds.includes(id))a.dupCandidateIds.push(id);
+  }
+ });
+ const idx=(places||[]).findIndex(p=>p.id===bId);
+ if(idx>=0)places.splice(idx,1);
+ return{mergedId:bId,survivorId:aId};
+}
 fmSaveApi=function(silent){const a=document.getElementById('fmApiKey'),y=document.getElementById('fmYoutubeKey');if(a)foodMap.apiKey=a.value.trim();if(y)foodMap.youtubeKey=y.value.trim();save('foodmap_v1',foodMap);if(!silent)alert('API 키를 이 기기에만 저장했습니다.');};
 let fmBulk={running:false,cancel:false,done:0,total:0,ok:0,fail:[]};
 let fmBulkLast='';

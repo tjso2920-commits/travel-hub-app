@@ -134,7 +134,14 @@ function cityAssignSheet(ids) {
 function finishCityAssign(ids, cityName) {
   A.assignCity(foodMap.places, ids, cityName);
   const saved = A.saveFoodMap(foodMap);
-  if (!saved) { alert('저장에 실패했어요. 브라우저 저장 공간을 확인해 주세요.'); return; }
+  if (!saved) {
+    /* 저장 실패를 성공처럼 진행하지 않는다. 메모리도 저장소와 다시
+       맞춰서, 실패한 변경이 다음 저장에 몰래 섞여 들어가지 않게 한다
+       (2026-09-09 코드 검토 — handleRealFile과 동일 패턴). */
+    foodMap = A.loadFoodMap();
+    alert('저장에 실패했어요. 브라우저 저장 공간을 확인해 주세요.');
+    return;
+  }
   selected.clear(); selecting = false;
   refreshFromStorage();
   city = cityName;
@@ -249,9 +256,23 @@ $('#sheetContent').onclick = (e) => {
   if (b.dataset.dupDismiss) { const [x, y] = b.dataset.dupDismiss.split('|'); return resolveDup(x, y, 'dismiss'); }
 };
 function resolveDup(aId, bId, action) {
-  A.resolveDup(foodMap.places, aId, bId, action);
+  const result = A.resolveDup(foodMap.places, aId, bId, action);
+  if (!result) return;
   const saved = A.saveFoodMap(foodMap);
-  if (!saved) { alert('저장에 실패했어요. 브라우저 저장 공간을 확인해 주세요.'); return; }
+  if (!saved) {
+    /* 저장 실패 시 원상태로 복구 — 방금 합치거나 끊은 변경이 메모리에만
+       남아 다음 저장에 몰래 섞이지 않게 한다(2026-09-09 코드 검토). */
+    foodMap = A.loadFoodMap();
+    alert('저장에 실패했어요. 브라우저 저장 공간을 확인해 주세요.');
+    return;
+  }
+  /* "오늘 갈 곳"(selected)·"오늘 동선"(route)에 방금 삭제된 쪽 id가
+     들어 있었으면 살아남는 쪽으로 옮긴다 — 안 옮기면 화면에서 조용히
+     빠진다(2026-09-09 코드 검토 — 일정 참조 이전). */
+  if (result.survivorId && result.mergedId) {
+    if (route.has(result.mergedId)) { route.delete(result.mergedId); route.add(result.survivorId); }
+    if (selected.has(result.mergedId)) { selected.delete(result.mergedId); selected.add(result.survivorId); }
+  }
   refreshFromStorage();
   updateCity();
   const stillThere = spots.find((s) => s.id === aId);

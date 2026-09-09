@@ -3,7 +3,7 @@ import { JSDOM, VirtualConsole } from 'jsdom';
 import fs from 'fs';
 const file=process.argv[2]||'private/personal.html';
 const html=fs.readFileSync(file,'utf8');
-const csv=fs.readFileSync('private/후쿠오카_137.csv','utf8');
+const csv=fs.readFileSync('scripts/test/fixtures/synthetic-137.csv','utf8');
 const errs=[]; const vc=new VirtualConsole(); vc.on('jsdomError',e=>errs.push(e.message));
 const dom=new JSDOM(html,{runScripts:'dangerously',pretendToBeVisual:true,virtualConsole:vc,url:'https://local.test/'});
 const w=dom.window;
@@ -15,7 +15,7 @@ t('런타임 오류 0', errs.length===0);
 // 1. CSV 파싱
 const parsed=w.fmCsv(csv);
 t('CSV 137건 파싱', parsed.length===137);
-t('이름 매핑(제목)', parsed[0].name==='호텔 리브맥스 후쿠오카 텐진');
+t('이름 매핑(제목)', parsed[0].name==='텐진스테이 호텔');
 t('메모 매핑', parsed[0].note.includes('숙소'));
 t('URL 매핑', parsed[0].url.startsWith('https://'));
 t('좌표는 비어있음', parsed.every(x=>x.lat===null&&x.lng===null));

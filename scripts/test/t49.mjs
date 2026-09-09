@@ -88,12 +88,87 @@ const enriched = JSON.parse(w.eval("JSON.stringify(foodMap.places[0])"));
 t('병합 후 좌표가 채워짐(GeoJSON 쪽 정보로 보강)', enriched.lat !== null && enriched.lng !== null);
 t('두 목록 다 보존됨', enriched.sourceLists.includes('기본 목록') && enriched.sourceLists.includes('저장한 장소'));
 
+/* ── 3-1. origin* 필드 자체가 없는 기존 레코드(마이그레이션 전 데이터·
+   fmAdd로 손으로 추가한 곳)는 원본을 모르니 보수적으로 안 건드림.
+   2026-09-09 코드 검토: exact.originNote가 undefined면
+   "exact.note===undefined?exact.note:exact.note" 꼴이 되어 항상 참이라서
+   무조건 덮어써지고 있었다. ── */
+w.eval("foodMap.places=[{id:'legacy1',name:'옛날에 넣은 가게',note:'내가 손으로 적은 메모',address:'서울 마포구',url:'https://www.google.com/maps/place/legacy/data=!4m2!3m1!1s0xLEGACY',sourceLists:[]}];save('foodmap_v1',foodMap);");
+const csvLegacy = '제목,메모,URL,주소,댓글\n옛날에 넣은 가게,CSV 원본 메모,https://www.google.com/maps/place/legacy/data=!4m2!3m1!1s0xLEGACY,서울 마포구,';
+w.eval(`fmMerge(fmCsv(${JSON.stringify(csvLegacy)}),'기본 목록')`);
+t('origin* 없는 기존 레코드는 재수입해도 손으로 적은 메모를 안 덮음(보수적 보존)',
+  w.eval('foodMap.places[0].note') === '내가 손으로 적은 메모');
+t('대신 origin* 은 이번 값으로 채워져서 다음부터는 원본이 뭐였는지 추적 가능', w.eval('foodMap.places[0].originNote') === 'CSV 원본 메모');
+/* 주의: 이 레코드는 "손으로 적은 메모"가 실제로는 원래 이 CSV 값 그대로였을
+   수도, 사용자가 진짜 고친 것일 수도 있어 구분할 방법이 없다 — 그래서 한
+   번 보수적으로 보존하면 그 이후로도 "지금 값 !== origin"인 채로 남아
+   자동 갱신 대상에서 계속 빠진다(안전한 쪽으로 영구히 치우침). 이건 의도한
+   동작이다 — 자동으로 다시 덮어쓰기 시작하는 것보다 사람이 확인하게
+   남겨두는 쪽이 안전하다. */
+const csvLegacy2 = csvLegacy.replace('CSV 원본 메모', 'CSV 갱신된 메모');
+w.eval(`fmMerge(fmCsv(${JSON.stringify(csvLegacy2)}),'기본 목록')`);
+t('한 번 보수적으로 보존된 뒤에도 계속 안전하게 보존됨(자동으로 다시 덮지 않음)', w.eval('foodMap.places[0].note') === '내가 손으로 적은 메모');
+t('원본 추적은 계속 최신 값으로 갱신됨(나중에 비교용)', w.eval('foodMap.places[0].originNote') === 'CSV 갱신된 메모');
+
 /* ── 4. 좌표 둘 다 없으면 이름+좌표(null|null) 로도 검증된 식별자 취급 안 함 ── */
 w.eval("foodMap.places=[{id:'x',name:'같은이름',address:'서울 종로구',city:'서울',lat:null,lng:null,sourceLists:[]}];save('foodmap_v1',foodMap);");
 const csvNoCoord = '제목,메모,URL,태그,댓글\n같은이름,,,,';
 const z4 = JSON.parse(w.eval(`JSON.stringify(fmMerge(fmCsv(${JSON.stringify(csvNoCoord)}),'다른 목록'))`));
 t('좌표 없는 동명 장소는 null|null 로 자동 합쳐지지 않음(핵심 원인이었던 버그)', z4.added === 1);
 t('대신 도시가 같으니(서울) 후보로는 남음', (w.eval('foodMap.places[0].dupCandidateIds')||[]).length > 0);
+
+/* ── 4-1. 이름+좌표가 같아도 placeId가 서로 다르면 강한 충돌 증거로 본다
+   (2026-09-09 코드 검토) — 같은 건물에 다른 가게가 여럿 있을 때 좌표가
+   거의 같아 보일 수 있다. 구글이 이미 서로 다른 placeId를 줬다면 이름+
+   좌표 일치보다 그 판정을 믿어야 한다. ── */
+w.eval("foodMap.places=[{id:'pidA',name:'같은건물가게',placeId:'ChIJ_AAA',lat:33.59,lng:130.40,address:'',sourceLists:[]}];save('foodmap_v1',foodMap);");
+const z4b = JSON.parse(w.eval("JSON.stringify(fmMerge([{name:'같은건물가게',placeId:'ChIJ_BBB',lat:33.59,lng:130.40}],'다른 목록'))"));
+t('이름+좌표가 같아도 placeId가 다르면 자동 병합 안 함', z4b.added === 1 && z4b.updated === 0);
+t('placeId 충돌은 후보로도 안 묶임(진짜 다른 곳이라는 강한 증거)',
+  !(w.eval('foodMap.places[0].dupCandidateIds')||[]).length && !(w.eval('foodMap.places[1].dupCandidateIds')||[]).length);
+
+/* ── 4-2. 검색 URL(/maps/search/)은 특정 장소 식별자가 아니다 — 우연히
+   같은 검색 URL을 만들어도 병합 근거로 쓰면 안 된다(2026-09-09 코드 검토,
+   fmLink() 같은 대체 링크 생성 함수가 만드는 형태를 흉내냄). ── */
+w.eval("foodMap.places=[{id:'sA',name:'가게A',url:'https://www.google.com/maps/search/?api=1&query=33.59%2C130.40',lat:null,lng:null,address:'',sourceLists:[]}];save('foodmap_v1',foodMap);");
+const z4c = JSON.parse(w.eval("JSON.stringify(fmMerge([{name:'가게B',url:'https://www.google.com/maps/search/?api=1&query=33.59%2C130.40'}],'다른 목록'))"));
+t('검색 URL이 우연히 같아도 서로 다른 이름이면 자동 병합 안 함(검색 URL은 식별자가 아님)', z4c.added === 1 && z4c.updated === 0);
+
+/* ── 4-4. fmResolveDup — 사람이 "같은 곳이에요"로 합친 뒤에도 삭제된
+   쪽의 식별자로 재수입하면 새 레코드가 또 생기지 않아야 한다(2026-09-09
+   코드 검토 — daResolveDup가 별칭을 안 남겨서 재생성되던 문제). ── */
+w.eval(`foodMap.places=[
+  {id:'wA',name:'중복확인가게',note:'A쪽 메모',url:'https://www.google.com/maps/place/w/data=!4m2!3m1!1s0xW1',placeId:'',visited:false,cat:'기타',sourceLists:['목록A'],dupCandidateIds:['wB']},
+  {id:'wB',name:'중복확인가게',note:'B쪽 메모',address:'福岡市 天神',url:'https://www.google.com/maps/place/w/data=!4m2!3m1!1s0xW2',visited:true,visitedAt:'2026-01-01',cat:'이자카야',sourceLists:['목록B'],dupCandidateIds:['wA']}
+];save('foodmap_v1',foodMap);`);
+const rdup = JSON.parse(w.eval("JSON.stringify(fmResolveDup(foodMap.places,'wA','wB','merge'))"));
+t('합치면 1곳으로 줄어듦', w.eval('foodMap.places.length') === 1);
+t('반환값에 살아남은/삭제된 id가 담김(호출자가 일정 참조를 옮길 수 있게)', rdup.survivorId === 'wA' && rdup.mergedId === 'wB');
+t('양쪽 메모가 다 있고 다르면 하나를 버리지 않고 이어붙임', w.eval('foodMap.places[0].note') === 'A쪽 메모 / B쪽 메모');
+t('방문 기록은 a에 없으면 b에서 가져옴', w.eval('foodMap.places[0].visited') === true && w.eval('foodMap.places[0].visitedAt') === '2026-01-01');
+t('분류도 a가 기타면 b의 확인된 분류로 채움', w.eval('foodMap.places[0].cat') === '이자카야');
+t('삭제된 쪽(wB)의 URL이 별칭으로 남음', (w.eval('foodMap.places[0].aliasUrls')||[]).includes('https://www.google.com/maps/place/w/data=!4m2!3m1!1s0xW2'));
+/* 삭제된 wB의 URL로 다시 가져오면 — 별칭 등록 덕분에 새 레코드가 아니라
+   살아남은 wA가 갱신돼야 한다(진짜 버그였던 재생성 문제). */
+const reimportCsv = '제목,메모,URL,태그,댓글\n중복확인가게,,https://www.google.com/maps/place/w/data=!4m2!3m1!1s0xW2,,';
+const zAfterMerge = JSON.parse(w.eval(`JSON.stringify(fmMerge(fmCsv(${JSON.stringify(reimportCsv)}),'목록B 재수입'))`));
+t('합쳐서 없어진 쪽 URL로 재수입해도 새 레코드가 안 생김(별칭 등록 확인)', zAfterMerge.added === 0 && zAfterMerge.updated === 1);
+t('전체 장소 수 그대로(재생성 안 됨)', w.eval('foodMap.places.length') === 1);
+
+/* ── 4-5. dismiss — "다른 곳이에요"로 확인한 조합은 같은 파일을 다시
+   올려도 또 후보로 묻지 않는다 ── */
+/* 주소·좌표를 안 줘서 fmPlacesConflict 만으로는 후보 제외가 안 되는
+   상황을 만든다 — dismissedDupKeys 가 진짜로 막고 있는지 보기 위해서다. */
+w.eval("foodMap.places=[{id:'dA',name:'흔한상호',address:'',sourceLists:[],dupCandidateIds:['dB']},{id:'dB',name:'흔한상호',address:'',sourceLists:[],dupCandidateIds:['dA']}];save('foodmap_v1',foodMap);");
+w.eval("fmResolveDup(foodMap.places,'dA','dB','dismiss');");
+t('dismiss 후엔 서로 후보 연결이 끊김', !(w.eval("foodMap.places[0].dupCandidateIds")||[]).includes('dB'));
+t('둘 다 안 지워지고 남음(실제로 다른 곳)', w.eval('foodMap.places.length') === 2);
+/* 같은 이름+같은 주소(둘 다 빈 문자열) 조합을 담은 파일을 다시 올리면,
+   dismissedDupKeys가 없었다면 fmPlacesConflict만으로는 걸러지지 않아
+   다시 후보로 묶였을 조합이다 — dismissedDupKeys 덕분에 묶이지 않아야
+   한다. */
+w.eval("fmMerge([{name:'흔한상호',address:''}],'재업로드')");
+t('이미 다른 곳이라고 확인한 조합은 재수입해도 다시 후보로 안 묶임(dismissedDupKeys)', !(w.eval('foodMap.places[2].dupCandidateIds')||[]).length);
 
 /* ── 5. 재수입 시 사용자가 고친 메모를 덮지 않는다 ───────────────────── */
 w.eval("foodMap.places=[];");

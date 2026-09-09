@@ -210,8 +210,23 @@ function daGpsDistance(a, b) {
   const z = Math.sin(da / 2) ** 2 + Math.cos(a1) * Math.cos(a2) * Math.sin(dl / 2) ** 2;
   return 6371000 * 2 * Math.atan2(Math.sqrt(z), Math.sqrt(1 - z));
 }
-/* private/personal.html: function fmPlacesConflict — 그대로 옮김. */
+/* private/personal.html: function fmIsPlaceUrl — 그대로 옮김. 검색 URL은
+   특정 장소 식별자가 아니다(2026-09-09 코드 검토). */
+function daIsPlaceUrl(u) {
+  const t = String(u || '');
+  if (!t) return false;
+  if (/\/maps\/search\//i.test(t)) return false;
+  if (/place_id[:=]/i.test(t)) return true;
+  if (/[?&]cid=/i.test(t)) return true;
+  if (/!1s0x[0-9a-f]+:0x[0-9a-f]+/i.test(t)) return true;
+  if (/\/maps\/place\//i.test(t)) return true;
+  return false;
+}
+/* private/personal.html: function fmPlacesConflict — 그대로 옮김.
+   양쪽에 placeId가 실제로 있고 서로 다르면(2026-09-09 코드 검토 반영)
+   구글 기준으로 이미 다른 장소라는 확실한 증거다. */
 function daPlacesConflict(a, x) {
+  if (a.placeId && x.placeId && a.placeId !== x.placeId) return true;
   const ca = daCityGuess(a), cx = daCityGuess(x);
   if (ca && cx && ca !== cx) return true;
   if (daHasCoords(a) && daHasCoords(x) && daGpsDistance(a, x) > 5000) return true;
@@ -226,6 +241,8 @@ function daPlacesConflict(a, x) {
    근거가 있으면 후보로도 안 남긴다). 재수입 시 사용자가 고친 값(원본과
    달라진 이름·메모·주소)은 새로 들어온 값으로 덮지 않는다. */
 const daNameKey = (n) => String(n || '').trim().toLowerCase().replace(/\s+/g, ' ');
+/* private/personal.html: function fmDupKey — 그대로 옮김. */
+function daDupKey(p) { return daNameKey(p.name) + '|' + String(p.address || '').trim().toLowerCase() + '|' + String(p.url || '').trim(); }
 function daMerge(arr, sourceLabel, places) {
   let added = 0, updated = 0, skipped = 0, dupCandidates = 0;
   const byKey = new Map(); const byName = new Map();
@@ -233,22 +250,37 @@ function daMerge(arr, sourceLabel, places) {
      null|null 은 "좌표가 없다"는 뜻이지 "같은 좌표"가 아니다 — 이걸
      구분 안 해서 좌표 없는 동명 장소가 자동으로 합쳐지고 있었다. */
   const kName = (p) => daHasCoords(p) ? ((p.name || '').toLowerCase() + '|' + p.lat + '|' + p.lng) : null;
+  const urlKey = (p) => daIsPlaceUrl(p.url) ? p.url : null;
   const addName = (nk, p) => { if (!nk) return; if (!byName.has(nk)) byName.set(nk, []); byName.get(nk).push(p); };
+  /* private/personal.html 의 regKeys와 동일 — 합친 뒤 삭제되는 쪽의
+     URL·placeId를 별칭(aliasUrls/aliasPlaceIds)으로도 등록해 둔다. */
+  const regKeys = (p) => {
+    [p.placeId, urlKey(p), kName(p)].forEach((k) => { if (k) byKey.set(k, p); });
+    (p.aliasUrls || []).forEach((u) => { if (u) byKey.set(u, p); });
+    (p.aliasPlaceIds || []).forEach((id) => { if (id) byKey.set(id, p); });
+  };
   places.forEach((p) => {
-    [p.placeId, p.url, kName(p)].forEach((k) => { if (k) byKey.set(k, p); });
+    regKeys(p);
     addName(daNameKey(p.name), p);
   });
   arr.forEach((x) => {
     if (!x || !x.name) { skipped++; return; }
     const nk = daNameKey(x.name);
     const kx = kName(x);
-    const exact = (x.placeId && byKey.get(x.placeId)) || (x.url && byKey.get(x.url)) || (kx && byKey.get(kx));
+    let exact = (x.placeId && byKey.get(x.placeId)) || (urlKey(x) && byKey.get(urlKey(x))) || (kx && byKey.get(kx));
+    /* 강한 식별자 충돌 검사 — 이름+좌표(또는 URL)로 후보를 찾았어도 양쪽
+       placeId가 서로 다르면 병합하지 않는다(2026-09-09 코드 검토). */
+    if (exact && x.placeId && exact.placeId && x.placeId !== exact.placeId) exact = null;
     if (exact) {
-      if (x.name && exact.name === (exact.originName !== undefined ? exact.originName : exact.name)) exact.name = x.name;
+      /* private/personal.html 과 동일 — origin* 필드 자체가 없는 기존
+         레코드는 "지금 값 === undefined"가 항상 참이 되어 무조건
+         덮어써지고 있었다(2026-09-09 코드 검토). 원본을 모르면 사용자가
+         이미 고쳐 놨을 수도 있으니 이번엔 안 건드리고 origin*만 채운다. */
+      if (x.name && exact.originName !== undefined && exact.name === exact.originName) exact.name = x.name;
       exact.originName = x.name !== undefined ? x.name : exact.originName;
-      if (exact.note === (exact.originNote !== undefined ? exact.originNote : exact.note)) exact.note = x.note || '';
+      if (exact.originNote !== undefined && exact.note === exact.originNote) exact.note = x.note || '';
       exact.originNote = x.note !== undefined ? x.note : exact.originNote;
-      if (exact.address === (exact.originAddress !== undefined ? exact.originAddress : exact.address)) exact.address = x.address || exact.address;
+      if (exact.originAddress !== undefined && exact.address === exact.originAddress) exact.address = x.address || exact.address;
       exact.originAddress = x.address !== undefined ? x.address : exact.originAddress;
       if (x.placeId) exact.placeId = x.placeId;
       if (x.url) exact.url = x.url;
@@ -256,7 +288,7 @@ function daMerge(arr, sourceLabel, places) {
       if (x.lng !== null && x.lng !== undefined) exact.lng = x.lng;
       if (!exact.cityConfirmed) exact.city = daCityGuess(exact);
       if (sourceLabel) { exact.sourceLists = Array.isArray(exact.sourceLists) ? exact.sourceLists : []; if (!exact.sourceLists.includes(sourceLabel)) exact.sourceLists.push(sourceLabel); }
-      [exact.placeId, exact.url, kName(exact)].forEach((k) => { if (k) byKey.set(k, exact); });
+      regKeys(exact);
       updated++; return;
     }
     const p = Object.assign({ id: 'fm' + Date.now() + added + Math.floor(Math.random() * 9999), cat: x.cat || '기타' }, x);
@@ -264,14 +296,17 @@ function daMerge(arr, sourceLabel, places) {
     p.originName = x.name; p.originNote = x.note || ''; p.originAddress = x.address || '';
     p.city = daCityGuess(p);
     p.sourceLists = sourceLabel ? [sourceLabel] : [];
-    const sameName = (byName.get(nk) || []).filter((o) => !daPlacesConflict(o, p));
+    /* 이름만 같아도 사람이 이미 "다른 곳이에요"로 확인해 둔 조합
+       (dismissedDupKeys)이면 같은 판단을 또 묻지 않는다. */
+    const pKey = daDupKey(p);
+    const sameName = (byName.get(nk) || []).filter((o) => !daPlacesConflict(o, p) && !(o.dismissedDupKeys || []).includes(pKey));
     if (sameName.length) {
       p.dupCandidateIds = sameName.map((o) => o.id);
       sameName.forEach((o) => { o.dupCandidateIds = Array.isArray(o.dupCandidateIds) ? o.dupCandidateIds : []; if (!o.dupCandidateIds.includes(p.id)) o.dupCandidateIds.push(p.id); });
       dupCandidates++;
     }
     places.push(p);
-    [p.placeId, p.url, kName(p)].forEach((k) => { if (k) byKey.set(k, p); });
+    regKeys(p);
     addName(nk, p);
     added++;
   });
@@ -287,9 +322,19 @@ function daAssignCity(places, placeIds, city) {
   (places || []).forEach((p) => { if (set.has(p.id)) { p.city = city; p.cityConfirmed = true; n++; } });
   return n;
 }
-/* 중복 후보 하나를 해결한다. 'dismiss' 는 그냥 후보 연결만 끊는다(둘 다
-   남는다 — 실제로 다른 곳이라는 뜻). 'merge' 는 진짜 합친다 — 이건 사람이
-   "같은 곳 맞다"고 확인한 뒤에만 불려야 한다(자동 병합이 아니다). */
+/* private/personal.html: fmResolveDup — 그대로 옮김(2026-09-09 코드
+   검토 반영). 중복 후보 하나를 해결한다.
+   'dismiss': 후보 연결만 끊는다(둘 다 남는다 — 실제로 다른 곳). 같은
+   조합(dismissedDupKeys)을 나중에 또 후보로 올리지 않는다 — 같은 파일을
+   다시 올려도 매번 같은 질문을 반복하지 않기 위함이다.
+   'merge': 진짜 합친다 — 사람이 "같은 곳 맞다"고 확인한 뒤에만 불러야
+   한다(자동 병합 아님). 삭제되는 쪽의 URL·placeId는 별칭(aliasUrls/
+   aliasPlaceIds)으로 남겨서, 그 파일을 나중에 다시 가져와도 검증된
+   식별자로 이 레코드를 다시 찾아 "갱신"으로 처리되게 한다 — 새 레코드가
+   또 생기면 안 된다. 메모가 양쪽에 다 있고 다르면 하나를 버리지 않고
+   이어붙인다. 방문 기록·분류도 a에 없으면 b에서 가져온다. 반환값은
+   호출자가 "오늘 동선" 같은 자기만의 참조(route/selected 등)를 삭제되는
+   id에서 살아남는 id로 옮길 수 있게 {mergedId, survivorId}를 준다. */
 function daResolveDup(places, aId, bId, action) {
   const a = (places || []).find((p) => p.id === aId);
   const b = (places || []).find((p) => p.id === bId);
@@ -297,14 +342,29 @@ function daResolveDup(places, aId, bId, action) {
   if (action === 'dismiss') {
     a.dupCandidateIds = (a.dupCandidateIds || []).filter((id) => id !== bId);
     b.dupCandidateIds = (b.dupCandidateIds || []).filter((id) => id !== aId);
+    a.dismissedDupKeys = Array.isArray(a.dismissedDupKeys) ? a.dismissedDupKeys : [];
+    if (!a.dismissedDupKeys.includes(daDupKey(b))) a.dismissedDupKeys.push(daDupKey(b));
+    b.dismissedDupKeys = Array.isArray(b.dismissedDupKeys) ? b.dismissedDupKeys : [];
+    if (!b.dismissedDupKeys.includes(daDupKey(a))) b.dismissedDupKeys.push(daDupKey(a));
     return true;
   }
+  a.aliasUrls = Array.isArray(a.aliasUrls) ? a.aliasUrls : [];
+  a.aliasPlaceIds = Array.isArray(a.aliasPlaceIds) ? a.aliasPlaceIds : [];
+  if (a.url && a.url !== b.url && !a.aliasUrls.includes(a.url)) a.aliasUrls.push(a.url);
+  if (b.url && b.url !== a.url && !a.aliasUrls.includes(b.url)) a.aliasUrls.push(b.url);
+  if (a.placeId && a.placeId !== b.placeId && !a.aliasPlaceIds.includes(a.placeId)) a.aliasPlaceIds.push(a.placeId);
+  if (b.placeId && b.placeId !== a.placeId && !a.aliasPlaceIds.includes(b.placeId)) a.aliasPlaceIds.push(b.placeId);
+  (b.aliasUrls || []).forEach((u) => { if (u && u !== a.url && !a.aliasUrls.includes(u)) a.aliasUrls.push(u); });
+  (b.aliasPlaceIds || []).forEach((id) => { if (id && id !== a.placeId && !a.aliasPlaceIds.includes(id)) a.aliasPlaceIds.push(id); });
   if (!a.address && b.address) a.address = b.address;
-  if (!a.note && b.note) a.note = b.note;
+  if (b.note && b.note !== a.note) a.note = a.note ? (a.note + ' / ' + b.note) : b.note;
   if (!daHasCoords(a) && daHasCoords(b)) { a.lat = b.lat; a.lng = b.lng; }
   if (!a.url && b.url) a.url = b.url;
   if (!a.placeId && b.placeId) a.placeId = b.placeId;
   if (!a.city && b.city) { a.city = b.city; a.cityConfirmed = b.cityConfirmed; }
+  if (!a.visited && b.visited) { a.visited = b.visited; if (b.visitedAt) a.visitedAt = b.visitedAt; }
+  if ((!a.cat || a.cat === '기타') && b.cat && b.cat !== '기타') a.cat = b.cat;
+  if (!a.kind && b.kind) a.kind = b.kind;
   a.sourceLists = Array.from(new Set([...(a.sourceLists || []), ...(b.sourceLists || [])]));
   a.dupCandidateIds = (a.dupCandidateIds || []).filter((id) => id !== bId);
   (b.dupCandidateIds || []).forEach((id) => {
@@ -319,7 +379,7 @@ function daResolveDup(places, aId, bId, action) {
   });
   const idx = (places || []).findIndex((p) => p.id === bId);
   if (idx >= 0) places.splice(idx, 1);
-  return true;
+  return { mergedId: bId, survivorId: aId };
 }
 
 /**

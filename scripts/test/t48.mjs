@@ -32,8 +32,8 @@ w.eval("foodMap.lic={name:'검사',date:'2026-01-01'};foodMap.places=[];foodMap.
    주소 칸 자체가 없다. URL도 좌표가 안 박힌 내부 feature-id 형식이다. */
 const realShapeCsv =
   '제목,메모,URL,태그,댓글\n' +
-  '멘야잇시 라멘,,https://www.google.com/maps/place/%EB%A9%98%EC%95%BC%EC%9E%87%EC%8B%9C/data=!4m2!3m1!1s0x35419194fb180e11:0x994fe0690e9ece48,,\n' +
-  'ASOBIBAR 天神大名店,,https://www.google.com/maps/place/ASOBIBAR/data=!4m2!3m1!1s0x3541916cf44ccce3:0x926d5b2ac3429ed8,,\n' +
+  '라멘가게 1호점,,https://www.google.com/maps/place/%EB%9D%BC%EB%A9%98%EA%B0%80%EA%B2%8C/data=!4m2!3m1!1s0x0000000000000101:0x0000000000000101,,\n' +
+  '이자카야 2호점,,https://www.google.com/maps/place/%EC%9D%B4%EC%9E%90%EC%B9%B4%EC%95%BC/data=!4m2!3m1!1s0x0000000000000102:0x0000000000000102,,\n' +
   'st.763,스탠드바,,,';
 
 w.eval(`fmMerge(fmCsv(${JSON.stringify(realShapeCsv)}))`);
@@ -43,12 +43,12 @@ t('주소·좌표 없어도 후쿠오카권에서 안 빠짐(핵심 버그)', w.
 
 /* 좌표가 있고 실제로 다른 나라면 — 이건 정당하게 빠져야 한다.
    "잴 근거 없으면 안 뺀다"이지, "무조건 다 보여준다"가 아니다. */
-w.eval("foodMap.places.push({id:'kr1',name:'경주고속버스터미널',address:'대한민국 경상북도 경주시',lat:35.8386770,lng:129.2034999,cat:'교통'});save('foodmap_v1',foodMap);");
+w.eval("foodMap.places.push({id:'kr1',name:'샘플시외버스터미널',address:'대한민국 경상북도 샘플시',lat:35.8386770,lng:129.2034999,cat:'교통'});save('foodmap_v1',foodMap);");
 t('좌표가 실제로 후쿠오카 밖이면 정당하게 빠짐', w.eval('fmFiltered().length') === 3);
 t('그 장소 자체는 안 지워짐(담은 것은 그대로)', w.eval('foodMap.places.length') === 4);
 
 /* 주소 텍스트로 판정되는 기존 경로는 그대로 살아 있어야 한다 */
-w.eval("foodMap.places.push({id:'fk1',name:'니카쿠즈시',address:'2 Chome-5-36 Yakuin, Chuo Ward, Fukuoka',lat:null,lng:null,cat:'맛집·식당'});save('foodmap_v1',foodMap);");
+w.eval("foodMap.places.push({id:'fk1',name:'동네초밥집',address:'2 Chome-5-36 Yakuin, Chuo Ward, Fukuoka',lat:null,lng:null,cat:'맛집·식당'});save('foodmap_v1',foodMap);");
 t('주소에 Fukuoka 있으면 좌표 없어도 그대로 보임', w.eval('fmFiltered().length') === 4);
 
 t('최종 런타임 오류 0', errs.length === 0);

@@ -3,7 +3,7 @@ import { JSDOM, VirtualConsole } from 'jsdom';
 import fs from 'fs';
 const file=process.argv[2]||'private/personal.html';
 const html=fs.readFileSync(file,'utf8');
-const csv=fs.readFileSync('private/후쿠오카_137.csv','utf8');
+const csv=fs.readFileSync('scripts/test/fixtures/synthetic-137.csv','utf8');
 const errs=[];const vc=new VirtualConsole();vc.on('jsdomError',e=>errs.push(e.message));
 const dom=new JSDOM(html,{runScripts:'dangerously',pretendToBeVisual:true,virtualConsole:vc,url:'https://local.test/'});
 const w=dom.window;await new Promise(r=>setTimeout(r,600));
@@ -51,7 +51,7 @@ t('반경 저장됨', FM().clusterR===1500);
 w.eval('fm2SetClusterR(700)');
 
 // 숙소 마커
-const hotel=FM().places.find(p=>p.name.includes('리브맥스'));
+const hotel=FM().places.find(p=>p.name.includes('텐진스테이'));
 FM().selected=hotel.id; w.eval('fmSetHotelFromSpot();renderFoodMap();');
 t('숙소 마커 표시', w.document.getElementById('fmOverview').innerHTML.includes('숙소'));
 

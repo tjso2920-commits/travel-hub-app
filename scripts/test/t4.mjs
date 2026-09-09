@@ -2,7 +2,7 @@ import { JSDOM, VirtualConsole } from 'jsdom';
 import fs from 'fs';
 const file=process.argv[2]||'private/personal.html';
 const html=fs.readFileSync(file,'utf8');
-const csv=fs.readFileSync('private/후쿠오카_137.csv','utf8');
+const csv=fs.readFileSync('scripts/test/fixtures/synthetic-137.csv','utf8');
 const errs=[];const vc=new VirtualConsole();vc.on('jsdomError',e=>errs.push(e.message));
 const dom=new JSDOM(html,{runScripts:'dangerously',pretendToBeVisual:true,virtualConsole:vc,url:'https://local.test/'});
 const w=dom.window;await new Promise(r=>setTimeout(r,600));
@@ -16,9 +16,9 @@ w.eval("foodMap.lic={name:'검사',date:'2026-01-01'};");
 w.fmMerge(w.fmCsv(csv));
 // 좌표 부여 (보강 완료 상태 재현)
 FM().places.forEach((p,i)=>{p.lat=33.58+i*0.0007;p.lng=130.39+i*0.0007;});
-const hotel=FM().places.find(p=>p.name.includes('리브맥스'));
+const hotel=FM().places.find(p=>p.name.includes('텐진스테이'));
 FM().selected=hotel.id; w.eval('fmSetHotelFromSpot()');
-t('숙소=리브맥스', FM().hotel.name.includes('리브맥스'));
+t('숙소=텐진스테이', FM().hotel.name.includes('텐진스테이'));
 
 const near=FM().places[1], far=FM().places[120];
 t('가까운 곳 거리 계산됨', w.eval('fm2DistTxt(foodMap.places[1])').length>0);

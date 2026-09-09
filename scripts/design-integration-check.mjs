@@ -19,16 +19,18 @@ import os from 'node:os';
 import path from 'node:path';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'design-check-'));
-/* 파일 내용은 실제 한글 Takeout 형식 그대로 두되, 파일 '이름'은 ASCII로 둔다 —
-   비ASCII 파일명은 이 저장소 밖의 OS 로케일 설정에 좌우되는 문제라(실제로 이
-   샌드박스에는 UTF-8 로케일이 기본으로 없었다) 그건 이 검사가 잴 대상이
-   아니다. 실기기(아이폰 등)는 로케일이 항상 정상이라 해당 없다. */
+/* 파일 내용은 실제 한글 Takeout 형식 그대로 두되(가게 이름·URL은 지어낸 값),
+   파일 '이름'은 ASCII로 둔다 — 비ASCII 파일명은 이 저장소 밖의 OS 로케일
+   설정에 좌우되는 문제라(실제로 이 샌드박스에는 UTF-8 로케일이 기본으로
+   없었다) 그건 이 검사가 잴 대상이 아니다. 이 샌드박스 밖(실제 아이폰 Safari
+   등)에서도 항상 괜찮다는 뜻은 아니다 — 실기기 검증은 별도로 필요하고,
+   아직 안 했다. */
 const csvPath = path.join(tmp, 'basic-list.csv');
 fs.writeFileSync(csvPath,
   '제목,메모,URL,태그,댓글\n' +
   ',,,,\n' +
-  '멘야잇시 라멘,,https://www.google.com/maps/place/%EB%A9%98%EC%95%BC%EC%9E%87%EC%8B%9C/data=!4m2!3m1!1s0x35419194fb180e11:0x994fe0690e9ece48,,\n' +
-  'ASOBIBAR 天神大名店,,https://www.google.com/maps/place/ASOBIBAR/data=!4m2!3m1!1s0x3541916cf44ccce3:0x926d5b2ac3429ed8,,\n' +
+  '라멘가게 1호점,,https://www.google.com/maps/place/%EB%9D%BC%EB%A9%98%EA%B0%80%EA%B2%8C/data=!4m2!3m1!1s0x0000000000000101:0x0000000000000101,,\n' +
+  '이자카야 2호점,,https://www.google.com/maps/place/%EC%9D%B4%EC%9E%90%EC%B9%B4%EC%95%BC/data=!4m2!3m1!1s0x0000000000000102:0x0000000000000102,,\n' +
   'st.763,스탠드바 굴 중심,,,\n',
   'utf8');
 
@@ -83,6 +85,56 @@ t('URL 있는 2곳은 검증된 식별자로 자동 갱신', /2\s*자동 갱신/
 t('URL·주소·좌표가 전부 없는 1곳은 중복 후보로만 남음(자동 병합 안 함)', /1\s*새로 추가/.test(flat));
 await p.evaluate(() => document.getElementById('close').click());
 t('중복 후보는 화면에서 사람이 합치기 전엔 별개 레코드로 남음(4곳)', (await p.evaluate(() => foodMap.places.length)) === 4);
+
+// 중복 후보를 실제로 화면에서 "같은 곳이에요 · 합치기"로 합치기 — 이때
+// 삭제되는 쪽의 URL이 별칭으로 남아, 나중에 그 URL로 다시 가져와도 새
+// 레코드가 또 생기지 않아야 한다(2026-09-09 코드 검토, daResolveDup).
+const dupCsvPath = path.join(tmp, 'dup-candidates.csv');
+fs.writeFileSync(dupCsvPath,
+  '제목,메모,URL,태그,댓글\n' +
+  '두번째상호 1호점,,https://www.google.com/maps/place/dup1/data=!4m2!3m1!1s0x0000000000000201:0x0000000000000201,,\n' +
+  '두번째상호 1호점,,https://www.google.com/maps/place/dup2/data=!4m2!3m1!1s0x0000000000000202:0x0000000000000202,,\n',
+  'utf8');
+await p.evaluate(() => document.getElementById('close').click());
+await p.click('[data-add]');
+const [fc3] = await Promise.all([p.waitForEvent('filechooser'), p.click('#realFileBtn')]);
+await fc3.setFiles(dupCsvPath);
+await p.waitForTimeout(700);
+await p.evaluate(() => document.getElementById('close').click());
+await p.waitForTimeout(200);
+const beforeMergeCount = await p.evaluate(() => foodMap.places.length);
+t('URL이 서로 달라 이름만 같은 두 곳은 후보로 각각 남음(자동 병합 안 함)', beforeMergeCount === 6);
+
+const dupTarget = await p.evaluate(() => {
+  const d = foodMap.places.find((x) => x.name === '두번째상호 1호점' && x.dupCandidateIds && x.dupCandidateIds.length);
+  return d ? d.id : null;
+});
+await p.evaluate((id) => { detail(id); }, dupTarget);
+await p.waitForTimeout(200);
+await p.click('[data-dup-merge]');
+await p.waitForTimeout(300);
+await p.evaluate(() => document.getElementById('close').click());
+await p.waitForTimeout(200);
+const afterMerge = await p.evaluate(() => ({
+  count: foodMap.places.length,
+  survivor: foodMap.places.find((x) => x.name === '두번째상호 1호점'),
+}));
+t('화면에서 합치기를 누르면 실제로 1곳으로 줄어듦', afterMerge.count === beforeMergeCount - 1);
+t('합쳐진 레코드에 삭제된 쪽 URL이 별칭으로 남음', afterMerge.survivor && (afterMerge.survivor.aliasUrls || []).some((u) => u.includes('0x0000000000000201') || u.includes('0x0000000000000202')));
+
+// 삭제된 쪽 URL로 다시 가져오기 — 별칭 덕분에 새 레코드가 또 생기면 안 됨
+const reimportPath = path.join(tmp, 'dup-reimport.csv');
+fs.writeFileSync(reimportPath,
+  '제목,메모,URL,태그,댓글\n' +
+  '두번째상호 1호점,,https://www.google.com/maps/place/dup2/data=!4m2!3m1!1s0x0000000000000202:0x0000000000000202,,\n',
+  'utf8');
+await p.click('[data-add]');
+const [fc4] = await Promise.all([p.waitForEvent('filechooser'), p.click('#realFileBtn')]);
+await fc4.setFiles(reimportPath);
+await p.waitForTimeout(700);
+const afterReimport = await p.evaluate(() => foodMap.places.length);
+t('합쳐서 없어진 쪽 URL로 재수입해도 새 레코드가 안 생김(별칭 등록 확인)', afterReimport === afterMerge.count);
+await p.evaluate(() => document.getElementById('close').click());
 
 t('최종 콘솔/런타임 오류 0', errs.length === 0);
 if (errs.length) console.log('  ', errs.slice(0, 5));

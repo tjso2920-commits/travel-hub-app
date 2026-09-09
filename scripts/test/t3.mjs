@@ -3,7 +3,7 @@ import { JSDOM, VirtualConsole } from 'jsdom';
 import fs from 'fs';
 const file=process.argv[2]||'private/personal.html';
 const html=fs.readFileSync(file,'utf8');
-const csv=fs.readFileSync('private/후쿠오카_137.csv','utf8');
+const csv=fs.readFileSync('scripts/test/fixtures/synthetic-137.csv','utf8');
 const errs=[];const vc=new VirtualConsole();vc.on('jsdomError',e=>errs.push(e.message));
 const dom=new JSDOM(html,{runScripts:'dangerously',pretendToBeVisual:true,virtualConsole:vc,url:'https://local.test/'});
 const w=dom.window;await new Promise(r=>setTimeout(r,600));
@@ -18,8 +18,8 @@ t('D-day 계산 동작', typeof w.eval('ddayTxt()')==='string' && w.eval('ddayTx
 console.log('   현재 표시:', w.eval('ddayTxt()'));
 
 w.fmMerge(w.fmCsv(csv));
-const hotel=FM().places.find(p=>p.name.includes('리브맥스'));
-t('CSV에 리브맥스 있음', !!hotel);
+const hotel=FM().places.find(p=>p.name.includes('텐진스테이'));
+t('CSV에 텐진스테이 있음', !!hotel);
 
 // 좌표 없을 때 거부
 FM().selected=hotel.id;
@@ -31,7 +31,7 @@ t('숙소 미설정 유지', !FM().hotel || !FM().hotel.lat);
 hotel.lat=33.5885; hotel.lng=130.3960; hotel.address='福岡県福岡市中央区天神';
 alerts=[];
 w.eval('fmSetHotelFromSpot()');
-t('숙소 이름 반영', FM().hotel.name.includes('리브맥스'));
+t('숙소 이름 반영', FM().hotel.name.includes('텐진스테이'));
 t('숙소 좌표 반영', FM().hotel.lat===33.5885 && FM().hotel.lng===130.3960);
 t('기준점 호텔로 전환', FM().originMode==='hotel');
 t('저장됨', JSON.parse(w.localStorage.getItem('cp1_foodmap_v1')).hotel.lat===33.5885);
