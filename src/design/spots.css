@@ -1,6 +1,8 @@
-@font-face{font-family:'Noto Sans KR';font-style:normal;font-weight:400;font-display:swap;src:url('assets/fonts/korean-400.woff2') format('woff2')}
-@font-face{font-family:'Noto Sans KR';font-style:normal;font-weight:500;font-display:swap;src:url('assets/fonts/korean-500.woff2') format('woff2')}
-@font-face{font-family:'Noto Sans KR';font-style:normal;font-weight:600;font-display:swap;src:url('assets/fonts/korean-600.woff2') format('woff2')}
+/* Noto Sans KR(한글·가나 등) @font-face는 korean-fonts.css로 분리했다
+   (2026-09-09 코드 검토 — 원래 파일 3개가 294자만 커버해 흔한 한글
+   음절도 시스템 폰트로 대체되던 문제를 고치면서, unicode-range로 나뉜
+   조각이 372개로 늘어 이 파일 안에 그대로 두면 가독성이 떨어져서
+   분리했다. index.html에서 이 파일 다음에 로드한다). */
 @font-face{font-family:'Nunito Sans';font-style:normal;font-weight:400;font-display:swap;src:url('assets/fonts/latin-400.woff2') format('woff2')}
 @font-face{font-family:'Nunito Sans';font-style:normal;font-weight:500;font-display:swap;src:url('assets/fonts/latin-500.woff2') format('woff2')}
 @font-face{font-family:'Nunito Sans';font-style:normal;font-weight:600;font-display:swap;src:url('assets/fonts/latin-600.woff2') format('woff2')}
