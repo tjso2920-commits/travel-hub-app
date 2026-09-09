@@ -18,6 +18,15 @@
  *    여행지 선택은 **필터**다 — 담아 둔 장소를 지우지 않는다.
  *    지금 편집 중인 일정(숙소·날짜·코스·예산)은 여전히 하나만 있고, 나라를
  *    바꾸면 그 일정만 비운다(여러 일정 동시 편집은 다음 단계).
+ *
+ *    2026-09-09 코드 검토 반영: 위 구현이 "여행지를 둘러보는 것"과
+ *    "새 일정을 시작하는 것"을 여전히 섞고 있었다 — 나라를 바꿀 때마다
+ *    확인창이 뜨면 그냥 구경만 하려던 사람도 매번 결정을 강요받는다.
+ *    이제 fmSetCountry() 는 그냥 바꾸기만 한다(확인창 없음). 일정이
+ *    다른 여행지 기준으로 남아 있으면 foodMap.itineraryStale 만 표시해
+ *    두고, 실제로 비우는 건 fmStartNewTrip() 을 명시적으로 불러야만
+ *    일어난다. tripReset() 백업에 예산(budget/spends/tripDays)도 넣었고,
+ *    백업이 실패하면 아예 비우지 않는다.
  */
 import { JSDOM, VirtualConsole } from 'jsdom';
 import fs from 'fs';
@@ -29,7 +38,7 @@ const w = dom.window; await new Promise((r) => setTimeout(r, 700));
 let fail = 0; const t = (n, c) => { console.log((c ? 'PASS ' : 'FAIL ') + n); if (!c) fail++; };
 let asked = []; w.alert = () => {}; w.confirm = (m) => { asked.push(String(m)); return true; };
 w.Element.prototype.scrollIntoView = function () {};
-w.eval("fm2Download=function(n){window.__dl=n;};");
+w.eval("fm2Download=function(n,o){window.__dl=n;window.__dlBody=JSON.stringify(o);};");
 
 /* ── 1. 타임아웃 ─────────────────────────────────────────────────────── */
 t('타임아웃 도구가 있음', w.eval("typeof fetchWait==='function'"));
@@ -53,44 +62,66 @@ function trip() {
       cat:'맛집·식당',lat:33.59+i*0.002,lng:130.40+i*0.002,address:'福岡市',visited:i<20};});
     foodMap.hotel={name:'하카타호텔',lat:33.59,lng:130.42}; foodMap.originMode='hotel';
     foodMap.d1='2026-10-25'; foodMap.d2='2026-10-29';
+    foodMap.budget=500000; foodMap.spends=[{d:'2026-10-25',amt:12000,memo:'라멘'}]; foodMap.tripDays=4;
     save('foodmap_v1',foodMap); delete window.__dl;
   `);
 }
 
+/* ── 2a. 여행지 필터 변경 — 확인창이 절대 안 뜬다 ────────────────────── */
 trip(); asked = []; w.confirm = (m) => { asked.push(String(m)); return true; };
 w.eval("fmSetCountry('FR');");
-t('나라를 바꾸면 물어봄', asked.length === 1);
+t('여행지만 바꿀 때는 확인창이 안 뜸(구경하는 동작과 초기화는 분리)', asked.length === 0);
+t('담아 둔 장소는 절대 안 지워짐(보관함과 일정은 다른 것)', w.eval('foodMap.places.length') === 30);
+t('숙소·날짜도 안 지워짐 — 필터 변경은 일정을 안 건드림',
+  w.eval("(foodMap.hotel||{}).name") === '하카타호텔' && w.eval('foodMap.d1') === '2026-10-25');
+t('일정이 다른 여행지 기준이라는 표시만 남음', w.eval('!!foodMap.itineraryStale') === true);
+t('나라는 바뀜(필터로서)', w.eval('fmCountry()') === 'FR');
+t('이전에 담아 둔 곳도 필터에서 그대로 보임(주소 근거가 있으면)', w.eval('fmFiltered().length') === 30);
+
+/* 같은 나라로 "바꾸면" stale 이 새로 켜지지 않는다(실제로 안 바뀌었으니) */
+w.eval("delete foodMap.itineraryStale;save('foodmap_v1',foodMap);fmSetCountry('FR');");
+t('실제로 안 바뀌면 stale 표시도 안 켜짐', w.eval('!!foodMap.itineraryStale') === false);
+
+/* ── 2b. 새 여행 일정 시작하기 — 명시적으로 불러야만 일어난다 ─────────── */
+trip();
+w.eval("fmSetCountry('FR');"); // 필터만 바꿔서 itineraryStale 켜 둔 상태로 시작
+asked = []; w.confirm = (m) => { asked.push(String(m)); return true; };
+w.eval('fmStartNewTrip();');
+t('명시적으로 부르면 확인창이 뜸', asked.length === 1);
 t('장소 개수 대신 몇 곳이 "그대로 보관"되는지 알려줌', asked[0] && asked[0].includes('30곳') && asked[0].includes('보관'));
 t('백업을 먼저 받는다고 알려줌', asked[0] && asked[0].includes('백업'));
-t('취소하면 어떻게 되는지 알려줌', asked[0] && asked[0].includes('취소'));
 t('비우기 전에 지금 일정을 파일로 실제로 내려받음', typeof w.eval('window.__dl') === 'string');
-t('담아 둔 장소는 절대 안 지워짐(보관함과 일정은 다른 것)', w.eval('foodMap.places.length') === 30);
-t('숙소는 비워짐 (이름·좌표 없음) — 지금 일정만 초기화',
+t('백업 파일에 예산도 들어감(budget/spends/tripDays)', w.eval("(function(){var b=JSON.parse(window.__dlBody);return ('budget' in b)&&('spends' in b)&&('tripDays' in b);})()") === true);
+t('담아 둔 장소는 여전히 안 지워짐', w.eval('foodMap.places.length') === 30);
+t('숙소는 비워짐 (이름·좌표 없음) — 이제 진짜 초기화됨',
   !w.eval("(foodMap.hotel||{}).name") && !w.eval("(foodMap.hotel||{}).lat"));
 t('거리 계산 기준점이 사라짐', w.eval('fmOrigin()') === null);
 t('여행 날짜가 비워짐', !w.eval('foodMap.d1') && !w.eval('foodMap.d2'));
-t('나라는 바뀜', w.eval('fmCountry()') === 'FR');
-t('이전에 담아 둔 곳도 필터에서 그대로 보임(주소 근거가 있으면)', w.eval('fmFiltered().length') === 30);
+t('stale 표시도 꺼짐', w.eval('!!foodMap.itineraryStale') === false);
+t('예산·지출도 같이 비워짐(전에는 budget_v1 이라는 존재하지 않는 키를 봐서 안 비워지고 있었다)',
+  w.eval('foodMap.budget') === undefined && w.eval('(foodMap.spends||[]).length') === 0 && w.eval('foodMap.tripDays') === undefined);
 
 /* [취소] 를 누르면 지금 것을 그대로 둔다 */
-trip(); w.confirm = () => false;
-w.eval("fmSetCountry('FR');");
+trip(); w.eval("fmSetCountry('FR');"); w.confirm = () => false;
+w.eval("fmStartNewTrip();");
 t('취소하면 장소가 남음', w.eval('foodMap.places.length') === 30);
 t('취소하면 숙소도 남음', w.eval("(foodMap.hotel||{}).name") === '하카타호텔');
-t('취소해도 나라는 바뀜', w.eval('fmCountry()') === 'FR');
 
-/* 물어보면 안 되는 때 */
+/* 백업이 실패하면 절대 비우지 않는다 */
+trip(); w.eval("fmSetCountry('FR');");
+w.eval("fm2Download=function(){throw new Error('다운로드 실패');};");
+w.confirm = () => true;
+let alerted = '';
+w.alert = (m) => { alerted = String(m); };
+w.eval('fmStartNewTrip();');
+t('백업 실패 시 안 비워짐', w.eval("(foodMap.hotel||{}).name") === '하카타호텔');
+t('백업 실패를 알려줌', /백업하지 못|다시 시도/.test(alerted));
+w.eval("fm2Download=function(n,o){window.__dl=n;window.__dlBody=JSON.stringify(o);};"); w.alert = () => {};
+
+/* 물어보면 안 되는 때(첫 설정 중 — 일정 자체가 없음) */
 asked = []; w.confirm = (m) => { asked.push(m); return true; };
-w.eval("foodMap.destCountry='JP';foodMap.dest='후쿠오카';save('foodmap_v1',foodMap);fmSetCountry('JP');");
-t('같은 나라면 안 물어봄', asked.length === 0);
-
-asked = [];
-w.eval("foodMap.places=[];delete foodMap.hotel;delete foodMap.d1;foodMap.destCountry='JP';save('foodmap_v1',foodMap);fmSetCountry('TH');");
-t('담은 게 없으면 안 물어봄 (처음 설정 중)', asked.length === 0);
-
-asked = [];
-w.eval("foodMap.places=[];delete foodMap.hotel;delete foodMap.d1;delete foodMap.destCountry;save('foodmap_v1',foodMap);fmSetCountry('FR');");
-t('나라를 처음 정할 때도 안 물어봄', asked.length === 0);
+w.eval("foodMap.places=[];delete foodMap.hotel;delete foodMap.d1;foodMap.destCountry='JP';save('foodmap_v1',foodMap);fmSetCountry('TH');fmStartNewTrip();");
+t('일정 자체가 없으면 새 일정 시작도 안 물어봄', asked.length === 0);
 
 t('최종 런타임 오류 0', errs.length === 0);
 if (errs.length) console.log('  ', errs.slice(0, 3));

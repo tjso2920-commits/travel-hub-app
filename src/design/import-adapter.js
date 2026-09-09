@@ -14,9 +14,12 @@
  * 자세한 근거·실측 수치는 docs/DESIGN_INTEGRATION_REPORT.md 참고.
  */
 
-/* private/personal.html: const SALE_MODE / const PFX — 그대로 옮김.
-   이 화면도 같은 foodmap_v1 저장 데이터를 읽고 써야 하므로 접두어가 같아야 한다. */
-const SALE_MODE = false; // TODO: 판매용 화면(design/index.html → src/index.html 대체 시) true 로
+/* private/personal.html: const SALE_MODE / const PFX 와 같은 접두어를 써야
+   같은 foodmap_v1 저장 데이터를 읽고 쓴다. 하드코딩 상수 대신 index.html의
+   <meta name="sale-mode"> 를 읽는다 — 이 화면이 나중에 판매용(src/index.html)
+   자리를 대체할 때 이 파일을 안 고치고 그 메타 태그 하나만 바꾸면 되게
+   하기 위해서다(출시 전 체크리스트: docs/DESIGN_INTEGRATION_REPORT.md). */
+const SALE_MODE = (document.querySelector('meta[name="sale-mode"]') || {}).content === 'true';
 const PFX = SALE_MODE ? 'cs1_' : 'cp1_';
 
 function daLoad(k, f) {
@@ -175,65 +178,148 @@ const FM_CITY_ALT = {
   '파리': 'paris', '로마': 'roma|rome', '바르셀로나': 'barcelona', '런던': 'london',
   '시드니': 'sydney', '이스탄불': 'istanbul|i̇stanbul', '두바이': 'dubai|دبي',
 };
-/* private/personal.html: function fmCityGuess — 2026-09-09 신설, 그대로 옮김.
-   증거 없이 도시를 확정하지 않는다 — 텍스트에 도시 이름이 정확히 하나만
-   걸리면 그 도시, 여러 개 걸리면 애매하니 확정 안 함. 텍스트로 못 찾았으면
-   좌표로 후쿠오카만 교차검증(지금 정확한 범위를 아는 게 후쿠오카뿐이라).
-   그래도 없으면 null — 화면은 이걸 "지역 확인 필요"로 보여준다. */
+/* private/personal.html: function fmCityGuess — 2026-09-09 수정본 그대로 옮김.
+   증거 없이 도시를 확정하지 않는다 — 주소 텍스트에 아는 도시 이름이 정확히
+   하나만 걸리면 그 도시, 여러 개 걸리면(또는 하나도 없으면) 확정 안 함.
+   메모는 안 쓴다(실제로 다른 도시와 비교하는 개인 코멘트를 도시로 오인한
+   적이 있다). 좌표만으로는 여기서 확정하지 않는다 — daCityHint() 참고. */
 function daCityGuess(p) {
-  /* 메모는 안 쓴다 — 실제로 후쿠오카의 한 가게 메모가 다른 도시와 비교하는
-     개인 코멘트였고, 메모까지 보면 이걸 엉뚱한 도시로 잘못 확정했다.
-     주소만 신뢰할 수 있는 장소 정보로 쓴다. */
   const txt = String(p.address || '').toLowerCase();
-  if (txt.trim()) {
-    const hit = [];
-    for (const city in FM_CITY_ALT) {
-      const pat = city.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + (FM_CITY_ALT[city] ? ('|' + FM_CITY_ALT[city]) : '');
-      let re; try { re = new RegExp(pat, 'i'); } catch (e) { continue; }
-      if (re.test(txt)) hit.push(city);
-    }
-    if (hit.length === 1) return hit[0];
-    if (hit.length > 1) return null;
+  if (!txt.trim()) return null;
+  const hit = [];
+  for (const city in FM_CITY_ALT) {
+    const pat = city.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + (FM_CITY_ALT[city] ? ('|' + FM_CITY_ALT[city]) : '');
+    let re; try { re = new RegExp(pat, 'i'); } catch (e) { continue; }
+    if (re.test(txt)) hit.push(city);
   }
+  if (hit.length === 1) return hit[0];
+  return null;
+}
+/* private/personal.html: function fmCityHint — 그대로 옮김.
+   좌표 기반 "짐작"이다. 후쿠오카 사각 범위는 실제 후쿠오카시보다 넓어서
+   (사가·나가사키·구마모토 일부까지 포함) 박스 안에 있다고 후쿠오카가
+   확정은 아니다. p.city(확정값)에는 안 쓰고, 화면 제안에만 쓴다. */
+function daCityHint(p) {
   if (daHasCoords(p) && p.lat >= 32.7 && p.lat <= 34.15 && p.lng >= 129.2 && p.lng <= 131.25) return '후쿠오카';
   return null;
 }
+/* private/personal.html: function fmGpsDistance — 그대로 옮김(미터 단위). */
+function daGpsDistance(a, b) {
+  if (!a || !b) return 0;
+  const r = Math.PI / 180, a1 = a.lat * r, a2 = b.lat * r, da = (b.lat - a.lat) * r, dl = (b.lng - a.lng) * r;
+  const z = Math.sin(da / 2) ** 2 + Math.cos(a1) * Math.cos(a2) * Math.sin(dl / 2) ** 2;
+  return 6371000 * 2 * Math.atan2(Math.sqrt(z), Math.sqrt(1 - z));
+}
+/* private/personal.html: function fmPlacesConflict — 그대로 옮김. */
+function daPlacesConflict(a, x) {
+  const ca = daCityGuess(a), cx = daCityGuess(x);
+  if (ca && cx && ca !== cx) return true;
+  if (daHasCoords(a) && daHasCoords(x) && daGpsDistance(a, x) > 5000) return true;
+  return false;
+}
 
-/* private/personal.html: fmMerge — 2026-09-09 개정본 그대로 옮김(카테고리 자동분류
-   호출부만 뺐다 — fmInfer 는 다음 단계(로드맵 ③)에서 연결한다). 이름만으로도
-   겹치는 걸 잡고(좌표·URL 형식이 달라도), 겹친 곳은 목록 소속을 다 보존한다. */
+/* private/personal.html: fmMerge — 2026-09-09 재작성본 그대로 옮김(카테고리
+   자동분류 호출부만 뺐다 — fmInfer 는 로드맵 ③에서 연결한다).
+   "이름만 같으면 자동으로 합친다"를 없앴다 — 서울·부산 동명 가게가 하나로
+   합쳐지는 실제 버그가 있었다. 이제 검증된 식별자(placeId·URL·이름+실좌표)
+   만 자동 병합하고, 이름만 같으면 dupCandidateIds 로 후보만 남긴다(충돌
+   근거가 있으면 후보로도 안 남긴다). 재수입 시 사용자가 고친 값(원본과
+   달라진 이름·메모·주소)은 새로 들어온 값으로 덮지 않는다. */
 const daNameKey = (n) => String(n || '').trim().toLowerCase().replace(/\s+/g, ' ');
 function daMerge(arr, sourceLabel, places) {
-  let added = 0, updated = 0, skipped = 0, merged = 0;
+  let added = 0, updated = 0, skipped = 0, dupCandidates = 0;
   const byKey = new Map(); const byName = new Map();
-  const kName = (p) => (p.name || '').toLowerCase() + '|' + p.lat + '|' + p.lng;
+  /* 좌표가 진짜 있을 때만 이름+좌표를 검증된 식별자로 쓴다.
+     null|null 은 "좌표가 없다"는 뜻이지 "같은 좌표"가 아니다 — 이걸
+     구분 안 해서 좌표 없는 동명 장소가 자동으로 합쳐지고 있었다. */
+  const kName = (p) => daHasCoords(p) ? ((p.name || '').toLowerCase() + '|' + p.lat + '|' + p.lng) : null;
+  const addName = (nk, p) => { if (!nk) return; if (!byName.has(nk)) byName.set(nk, []); byName.get(nk).push(p); };
   places.forEach((p) => {
     [p.placeId, p.url, kName(p)].forEach((k) => { if (k) byKey.set(k, p); });
-    const nk = daNameKey(p.name); if (nk) byName.set(nk, p);
+    addName(daNameKey(p.name), p);
   });
   arr.forEach((x) => {
     if (!x || !x.name) { skipped++; return; }
-    const key = x.placeId || x.url || kName(x);
     const nk = daNameKey(x.name);
-    const exact = byKey.get(x.placeId) || byKey.get(x.url) || byKey.get(kName(x));
-    const old = exact || (nk && byName.get(nk));
-    if (old) {
-      if (!exact) merged++;
-      ['name', 'note', 'address', 'url', 'placeId', 'rating', 'ratingCount'].forEach((k) => { if (x[k] !== undefined && x[k] !== null && x[k] !== '') old[k] = x[k]; });
-      if (x.lat !== null && x.lat !== undefined) old.lat = x.lat;
-      if (x.lng !== null && x.lng !== undefined) old.lng = x.lng;
-      if (!old.cityConfirmed) old.city = daCityGuess(old);
-      if (sourceLabel) { old.sourceLists = Array.isArray(old.sourceLists) ? old.sourceLists : []; if (!old.sourceLists.includes(sourceLabel)) old.sourceLists.push(sourceLabel); }
-      byKey.set(key, old); if (nk) byName.set(nk, old);
+    const kx = kName(x);
+    const exact = (x.placeId && byKey.get(x.placeId)) || (x.url && byKey.get(x.url)) || (kx && byKey.get(kx));
+    if (exact) {
+      if (x.name && exact.name === (exact.originName !== undefined ? exact.originName : exact.name)) exact.name = x.name;
+      exact.originName = x.name !== undefined ? x.name : exact.originName;
+      if (exact.note === (exact.originNote !== undefined ? exact.originNote : exact.note)) exact.note = x.note || '';
+      exact.originNote = x.note !== undefined ? x.note : exact.originNote;
+      if (exact.address === (exact.originAddress !== undefined ? exact.originAddress : exact.address)) exact.address = x.address || exact.address;
+      exact.originAddress = x.address !== undefined ? x.address : exact.originAddress;
+      if (x.placeId) exact.placeId = x.placeId;
+      if (x.url) exact.url = x.url;
+      if (x.lat !== null && x.lat !== undefined) exact.lat = x.lat;
+      if (x.lng !== null && x.lng !== undefined) exact.lng = x.lng;
+      if (!exact.cityConfirmed) exact.city = daCityGuess(exact);
+      if (sourceLabel) { exact.sourceLists = Array.isArray(exact.sourceLists) ? exact.sourceLists : []; if (!exact.sourceLists.includes(sourceLabel)) exact.sourceLists.push(sourceLabel); }
+      [exact.placeId, exact.url, kName(exact)].forEach((k) => { if (k) byKey.set(k, exact); });
       updated++; return;
     }
     const p = Object.assign({ id: 'fm' + Date.now() + added + Math.floor(Math.random() * 9999), cat: x.cat || '기타' }, x);
     delete p.title;
+    p.originName = x.name; p.originNote = x.note || ''; p.originAddress = x.address || '';
     p.city = daCityGuess(p);
     p.sourceLists = sourceLabel ? [sourceLabel] : [];
-    places.push(p); byKey.set(key, p); if (nk) byName.set(nk, p); added++;
+    const sameName = (byName.get(nk) || []).filter((o) => !daPlacesConflict(o, p));
+    if (sameName.length) {
+      p.dupCandidateIds = sameName.map((o) => o.id);
+      sameName.forEach((o) => { o.dupCandidateIds = Array.isArray(o.dupCandidateIds) ? o.dupCandidateIds : []; if (!o.dupCandidateIds.includes(p.id)) o.dupCandidateIds.push(p.id); });
+      dupCandidates++;
+    }
+    places.push(p);
+    [p.placeId, p.url, kName(p)].forEach((k) => { if (k) byKey.set(k, p); });
+    addName(nk, p);
+    added++;
   });
-  return { added, updated, skipped, merged };
+  return { added, updated, skipped, dupCandidates };
+}
+/* 여러 장소를 한 번에, 또는 하나씩 도시로 확정한다(로드맵 ④에서 요구한
+   "여러 장소 선택 → 여행지 일괄 지정과 개별 수정"). 좌표를 만들어내지
+   않는다 — 도시 지정과 실제 좌표 확인은 다른 것이다. 동선 계산은
+   여전히 hasCoords 가 true 인 곳에만 쓸 수 있다. */
+function daAssignCity(places, placeIds, city) {
+  const set = new Set(placeIds);
+  let n = 0;
+  (places || []).forEach((p) => { if (set.has(p.id)) { p.city = city; p.cityConfirmed = true; n++; } });
+  return n;
+}
+/* 중복 후보 하나를 해결한다. 'dismiss' 는 그냥 후보 연결만 끊는다(둘 다
+   남는다 — 실제로 다른 곳이라는 뜻). 'merge' 는 진짜 합친다 — 이건 사람이
+   "같은 곳 맞다"고 확인한 뒤에만 불려야 한다(자동 병합이 아니다). */
+function daResolveDup(places, aId, bId, action) {
+  const a = (places || []).find((p) => p.id === aId);
+  const b = (places || []).find((p) => p.id === bId);
+  if (!a || !b) return false;
+  if (action === 'dismiss') {
+    a.dupCandidateIds = (a.dupCandidateIds || []).filter((id) => id !== bId);
+    b.dupCandidateIds = (b.dupCandidateIds || []).filter((id) => id !== aId);
+    return true;
+  }
+  if (!a.address && b.address) a.address = b.address;
+  if (!a.note && b.note) a.note = b.note;
+  if (!daHasCoords(a) && daHasCoords(b)) { a.lat = b.lat; a.lng = b.lng; }
+  if (!a.url && b.url) a.url = b.url;
+  if (!a.placeId && b.placeId) a.placeId = b.placeId;
+  if (!a.city && b.city) { a.city = b.city; a.cityConfirmed = b.cityConfirmed; }
+  a.sourceLists = Array.from(new Set([...(a.sourceLists || []), ...(b.sourceLists || [])]));
+  a.dupCandidateIds = (a.dupCandidateIds || []).filter((id) => id !== bId);
+  (b.dupCandidateIds || []).forEach((id) => {
+    if (id === aId) return;
+    const other = (places || []).find((p) => p.id === id);
+    if (other) {
+      other.dupCandidateIds = (other.dupCandidateIds || []).filter((x) => x !== bId);
+      if (!other.dupCandidateIds.includes(aId)) other.dupCandidateIds.push(aId);
+      a.dupCandidateIds = a.dupCandidateIds || [];
+      if (!a.dupCandidateIds.includes(id)) a.dupCandidateIds.push(id);
+    }
+  });
+  const idx = (places || []).findIndex((p) => p.id === bId);
+  if (idx >= 0) places.splice(idx, 1);
+  return true;
 }
 
 /**
@@ -256,10 +342,13 @@ function daBuildSpots(foodMap) {
     image: null, // 실 사진 미연결 — 카드가 이 값을 보고 빈 상태를 그린다
     city: p.city || UNKNOWN_CITY,
     cityKnown: !!p.city,
+    cityConfirmed: !!p.cityConfirmed,
+    cityHint: p.city ? null : daCityHint(p), // 확정 아님 — 제안용
     url: daLink(p),
     hasCoords: daHasCoords(p),
     lat: p.lat, lng: p.lng,
     sourceLists: Array.isArray(p.sourceLists) ? p.sourceLists : [],
+    dupCandidateIds: Array.isArray(p.dupCandidateIds) ? p.dupCandidateIds : [],
   }));
   const byCity = new Map();
   spots.forEach((s) => { byCity.set(s.city, (byCity.get(s.city) || 0) + 1); });
@@ -271,6 +360,7 @@ function daBuildSpots(foodMap) {
 
 window.DesignAdapter = {
   UNKNOWN_CITY,
+  SALE_MODE,
   loadFoodMap: () => daLoad('foodmap_v1', { places: [], dest: '', destCountry: '' }),
   saveFoodMap: (fm) => daSave('foodmap_v1', fm),
   parseCsv: daCsv,
@@ -278,6 +368,10 @@ window.DesignAdapter = {
   merge: daMerge,
   buildSpots: daBuildSpots,
   cityGuess: daCityGuess,
+  cityHint: daCityHint,
+  assignCity: daAssignCity,
+  resolveDup: daResolveDup,
+  knownCities: Object.keys(FM_CITY_ALT),
   esc: daEsc,
   hasCoords: daHasCoords,
 };

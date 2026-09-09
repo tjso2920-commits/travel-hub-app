@@ -68,6 +68,9 @@ function render() {
   $('#selectionbar').hidden = !activeSelected;
   $('#selectedCount').textContent = activeSelected;
   $('#selectMode').textContent = selecting ? '선택 마치기' : '장소 선택';
+  /* "지역 확인 필요"를 보고 있으면 선택바 동작을 동선 담기 대신 도시
+     지정으로 바꾼다 — 로드맵 ④: 여러 장소 선택 → 여행지 일괄 지정. */
+  $('#addRoute').textContent = city === A.UNKNOWN_CITY ? '도시 지정하기 ↗' : '오늘 동선에 담기 ↗';
   $('.demo').textContent = usingSample ? '샘플 컬렉션' : (foodMap.places && foodMap.places.length ? '내 컬렉션' : '');
   $('.demo').hidden = !usingSample && !(foodMap.places && foodMap.places.length);
 }
@@ -85,13 +88,58 @@ function detail(id) {
   const mapLabel = usingSample ? `Google Maps에서 주변 ${A.esc(p.category)} 찾기 ↗` : '이 장소를 Google Maps에서 보기 ↗';
   const mapHref = usingSample ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent((p.area || '') + ' ' + p.category)}` : A.esc(p.url || '');
   const notes = [];
+  let cityBlock = '';
   if (usingSample) notes.push('실제 매장이 아닌 디자인 예시입니다. 사진은 분위기 참고용이며 주소·전화번호는 실제 장소 연결 후 표시됩니다.');
   else {
     if (!p.image) notes.push('사진은 아직 연결되지 않았습니다. 주소·전화번호·영업시간은 다음 단계에서 연결합니다.');
-    if (!p.cityKnown) notes.push('도시를 확인하지 못했습니다. 주소나 지도 링크로 나중에 확인해 주세요.');
     if (p.sourceLists && p.sourceLists.length > 1) notes.push('여러 목록(' + p.sourceLists.map(A.esc).join(' · ') + ')에 저장돼 있어 하나로 합쳤습니다.');
+    if (!p.cityKnown) {
+      /* 도시 지정 ≠ 좌표 확인. 지정해도 동선 계산에는 못 쓴다는 걸 바로 옆에 적는다. */
+      cityBlock = `<div class="inline-note">도시가 아직 확인되지 않았습니다.${p.cityHint ? ` 좌표로 보면 <b>${A.esc(p.cityHint)}</b> 근처일 수 있어요(짐작일 뿐, 확정 아님).` : ''}<br>` +
+        `<button class="text-button" data-city-single="${id}">이 장소 도시 지정하기</button></div>` +
+        (p.hasCoords ? '' : '<small>좌표가 없어서 도시를 지정해도 최단 동선·거리 계산에는 쓸 수 없습니다. 실제 위치 확인은 별도로 필요합니다.</small>');
+    }
+    if (p.dupCandidateIds && p.dupCandidateIds.length) {
+      const others = p.dupCandidateIds.map((did) => spots.find((s) => s.id === did)).filter(Boolean);
+      cityBlock += others.map((o) => `<div class="inline-note">이름이 같은 곳이 또 있어요: <b>${A.esc(o.name)}</b>(${A.esc(o.city)})<br>` +
+        `<button class="text-button" data-dup-merge="${id}|${o.id}">같은 곳이에요 · 합치기</button> ` +
+        `<button class="text-button" data-dup-dismiss="${id}|${o.id}">다른 곳이에요</button></div>`).join('');
+    }
   }
-  open(usingSample ? '샘플 장소' : '내 장소', `<div class="detail">${photoHTML(p, 'detail-photo')}<h2>${A.esc(p.name)}</h2><span class="category">${A.esc(p.category)}</span>${!usingSample ? ` <span class="category">${A.esc(p.city)}</span>` : ''}<p>${A.esc(p.area) || '위치 정보 없음'}</p>${p.memo ? `<p>“${A.esc(p.memo)}”</p>` : ''}<button class="primary" data-detail-pick="${id}">${selected.has(id) ? '선택에서 빼기' : '오늘 갈 곳으로 선택'}</button>${mapHref ? `<a target="_blank" rel="noopener noreferrer" href="${mapHref}">${mapLabel}</a>` : ''}${notes.map((n) => `<small>${n}</small>`).join('')}</div>`);
+  open(usingSample ? '샘플 장소' : '내 장소', `<div class="detail">${photoHTML(p, 'detail-photo')}<h2>${A.esc(p.name)}</h2><span class="category">${A.esc(p.category)}</span>${!usingSample ? ` <span class="category">${A.esc(p.city)}${p.cityKnown && !p.cityConfirmed ? '(짐작)' : ''}</span>` : ''}<p>${A.esc(p.area) || '위치 정보 없음'}</p>${p.memo ? `<p>“${A.esc(p.memo)}”</p>` : ''}<button class="primary" data-detail-pick="${id}">${selected.has(id) ? '선택에서 빼기' : '오늘 갈 곳으로 선택'}</button>${mapHref ? `<a target="_blank" rel="noopener noreferrer" href="${mapHref}">${mapLabel}</a>` : ''}${cityBlock}${notes.map((n) => `<small>${n}</small>`).join('')}</div>`);
+}
+/* 도시 지정 시트 — 여러 곳을 한 번에(다중 선택 뒤 "도시 지정하기"), 또는
+   장소 하나만(detail() 의 "이 장소 도시 지정하기"). 좌표를 만들어내지
+   않는다 — 목록에서 골라 붙이는 것뿐이라 동선 계산 가능 여부(hasCoords)는
+   전혀 안 바뀐다는 걸 여기서도 다시 알린다. */
+function cityAssignSheet(ids) {
+  if (!ids.length) return;
+  const known = A.knownCities;
+  const hints = ids.map((id) => spots.find((s) => s.id === id)).filter(Boolean).map((s) => s.cityHint).filter(Boolean);
+  const suggested = hints.length ? hints[0] : '';
+  open('도시 지정', `<div class="detail"><h2>${ids.length}곳을 어느 도시로 볼까요?</h2>` +
+    `<p>목록에서 고르거나 직접 입력하세요. 도시 지정은 화면 정리용입니다 — 좌표가 없으면 최단 동선·거리 계산에는 여전히 쓸 수 없습니다.</p>` +
+    (suggested ? `<div class="inline-note">좌표로 보면 <b>${A.esc(suggested)}</b> 근처일 수 있어요(짐작). 맞으면 아래에서 그대로 골라도 됩니다.</div>` : '') +
+    `<div class="city-options">${known.map((c) => `<button class="city-option" data-assign-city="${A.esc(c)}"><span class="city-initial">${A.esc(c.slice(0, 1))}</span><span><b>${A.esc(c)}</b></span><span class="city-check">›</span></button>`).join('')}</div>` +
+    `<input class="xinput" id="customCityIn" placeholder="목록에 없으면 직접 입력" style="margin-top:10px;width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit">` +
+    `<button class="primary" id="customCityBtn" style="margin-top:10px">이 이름으로 지정</button></div>`);
+  $('#sheetContent').querySelectorAll('[data-assign-city]').forEach((b) => {
+    b.onclick = () => finishCityAssign(ids, b.dataset.assignCity);
+  });
+  $('#customCityBtn').onclick = () => {
+    const v = $('#customCityIn').value.trim();
+    if (v) finishCityAssign(ids, v);
+  };
+}
+function finishCityAssign(ids, cityName) {
+  A.assignCity(foodMap.places, ids, cityName);
+  const saved = A.saveFoodMap(foodMap);
+  if (!saved) { alert('저장에 실패했어요. 브라우저 저장 공간을 확인해 주세요.'); return; }
+  selected.clear(); selecting = false;
+  refreshFromStorage();
+  city = cityName;
+  updateCity();
+  sheet.close();
 }
 function showRoute() {
   const list = spots.filter((p) => p.city === city && route.has(p.id));
@@ -124,7 +172,10 @@ function cityPicker() {
    그래서 버튼 문구도 "ZIP 선택"이 아니라 "CSV/JSON 파일 선택"으로 뒀다. */
 let importMsg = '';
 function add() {
-  open('내 장소 가져오기', `<div class="detail import-flow"><span class="flow-tag">실제 가져오기</span><h2>저장한 곳,<br>그대로 모아볼까요?</h2><p>구글맵에서 내보낸 <b>CSV 또는 JSON</b> 파일로 시작해요. (ZIP은 아직 자동으로 못 풀어요 — 먼저 압축을 풀어 주세요.)</p><div class="file-surface"><span class="file-symbol">↓</span><b>내보낸 파일 가져오기</b><span>CSV · JSON</span></div><input type="file" id="realFileIn" accept=".csv,text/csv,.json,application/json" style="display:none"><button class="primary" id="realFileBtn">받은 CSV 또는 JSON 선택</button>${importMsg ? `<p class="inline-note">${importMsg}</p>` : ''}<button class="text-button" id="sampleBtn">샘플로 먼저 둘러보기</button><details class="import-help"><summary>구글맵에서 파일은 어떻게 받나요?</summary><ol><li>Google Takeout을 열어요.</li><li>‘저장됨(Saved)’ 항목을 선택해 내보내세요.</li><li>받은 zip을 풀고, 그 안의 csv/json 파일을 이 화면에서 가져옵니다.</li></ol><a href="https://takeout.google.com/" target="_blank" rel="noopener noreferrer">Google Takeout 열기 ↗</a><p>계정에 따라 내보내기 준비 시간이 걸릴 수 있어요.</p></details></div>`);
+  /* 06_UPDATES_AND_EXPORT_CORRECTION.md 정정: 일반 저장 목록은 'Saved',
+     별표로 저장했거나 구분이 불명확하면 'Saved' + '지도(내 장소)'를 함께
+     내보내야 한다. 'Saved'만 안내하면 별표 장소를 놓친다. */
+  open('내 장소 가져오기', `<div class="detail import-flow"><span class="flow-tag">실제 가져오기</span><h2>저장한 곳,<br>그대로 모아볼까요?</h2><p>구글맵에서 내보낸 <b>CSV 또는 JSON</b> 파일로 시작해요. (ZIP은 아직 자동으로 못 풀어요 — 먼저 압축을 풀어 주세요.)</p><div class="file-surface"><span class="file-symbol">↓</span><b>내보낸 파일 가져오기</b><span>CSV · JSON</span></div><input type="file" id="realFileIn" accept=".csv,text/csv,.json,application/json" style="display:none"><button class="primary" id="realFileBtn">받은 CSV 또는 JSON 선택</button>${importMsg ? `<p class="inline-note">${importMsg}</p>` : ''}<button class="text-button" id="sampleBtn">샘플로 먼저 둘러보기</button><details class="import-help"><summary>구글맵에서 파일은 어떻게 받나요?</summary><ol><li>Google Takeout을 열어요.</li><li>일반 저장 목록은 <b>‘저장됨(Saved)’</b>을 선택하세요. 별표로 저장한 장소도 챙기려면(또는 어느 쪽인지 잘 모르겠으면) <b>‘지도(내 장소)’</b>도 함께 선택하세요.</li><li>받은 zip을 풀면 목록별 csv 와 별표 장소 json이 따로 나옵니다 — 여러 개면 하나씩 이 화면에서 가져오세요(같은 곳은 자동으로 겹쳐지지 않습니다).</li></ol><a href="https://takeout.google.com/" target="_blank" rel="noopener noreferrer">Google Takeout 열기 ↗</a><p>계정에 따라 내보내기 준비 시간이 걸릴 수 있어요.</p></details></div>`);
   $('#realFileBtn').onclick = () => $('#realFileIn').click();
   $('#realFileIn').onchange = handleRealFile;
   $('#sampleBtn').onclick = () => { usingSample = true; spots = SAMPLE_SPOTS; cities = SAMPLE_CITIES; city = cities[0].name; updateCity(); sheet.close(); };
@@ -145,11 +196,19 @@ async function handleRealFile(e) {
   if (!parsed.length) { importMsg = '이 파일에서 저장된 장소를 찾지 못했어요.'; add(); return; }
   /* 병합 로직은 private/personal.html 의 fmMerge 를 그대로 옮긴
      A.merge() 를 쓴다 — 여기서 다시 만들지 않는다(중복 판정이 갈리는 사고를
-     막는다). 이름만 같아도 겹치는 걸 잡고, 겹친 목록 소속은 다 보존한다. */
+     막는다). 검증된 식별자만 자동으로 합치고, 이름만 같은 건 후보로 남긴다. */
   foodMap.places = foodMap.places || [];
   const label = f.name.replace(/\.(csv|json)$/i, '');
   const z = A.merge(parsed, label, foodMap.places);
-  A.saveFoodMap(foodMap);
+  const saved = A.saveFoodMap(foodMap);
+  if (!saved) {
+    /* 저장 실패를 성공처럼 진행하지 않는다. 메모리 상태도 저장소와 다시
+       맞춘다 — 반쯤 반영된 채로 남기지 않는다. */
+    foodMap = A.loadFoodMap();
+    importMsg = '저장에 실패해서 방금 가져온 내용이 반영되지 않았습니다. 이 브라우저의 저장 공간이 가득 찼거나 시크릿 모드일 수 있어요. 저장 공간을 확인한 뒤 다시 시도해 주세요.';
+    add();
+    return;
+  }
   usingSample = false;
   refreshFromStorage();
   /* 지금 보고 있는 도시가 사라졌으면 물론 바꾸고, "지역 확인 필요"를 보던
@@ -164,7 +223,7 @@ async function handleRealFile(e) {
 function importDone(z) {
   const total = (foodMap.places || []).length;
   const unknown = spots.filter((p) => !p.cityKnown).length;
-  open('가져오기 결과', `<div class="detail import-flow"><span class="flow-tag">실제 결과</span><h2>${z.added + z.updated}곳을 확인했어요.</h2><p>도시별로 모아뒀어요.</p><div class="import-summary"><span><b>${z.added}</b>새로 추가</span><span><b>${z.updated}</b>기존 갱신</span><span><b>${total}</b>전체</span></div>${z.merged ? `<p class="inline-note">그중 ${z.merged}곳은 다른 목록에도 있던 같은 곳이라 하나로 합쳤어요(메모·소속 목록은 다 남겼어요).</p>` : ''}${cities.map((c) => `<button class="city-option" data-city="${A.esc(c.name)}"><span class="city-initial">${A.esc(c.name.slice(0, 1))}</span><span><b>${A.esc(c.name)}</b><small>${c.count}곳</small></span><span class="city-check">↗</span></button>`).join('')}<small>실제 파일 분석 결과입니다.${unknown ? ' 그중 ' + unknown + '곳은 도시를 확인 못 해 "지역 확인 필요"로 넣어 뒀어요.' : ''}</small></div>`);
+  open('가져오기 결과', `<div class="detail import-flow"><span class="flow-tag">실제 결과</span><h2>${z.added + z.updated}곳을 확인했어요.</h2><p>도시별로 모아뒀어요.</p><div class="import-summary"><span><b>${z.added}</b>새로 추가</span><span><b>${z.updated}</b>자동 갱신</span><span><b>${total}</b>전체</span></div>${z.dupCandidates ? `<p class="inline-note">그중 ${z.dupCandidates}곳은 이름이 같은 기존 장소가 있었어요. 자동으로 합치지 않았습니다 — 장소 상세에서 같은 곳인지 확인해 주세요.</p>` : ''}${cities.map((c) => `<button class="city-option" data-city="${A.esc(c.name)}"><span class="city-initial">${A.esc(c.name.slice(0, 1))}</span><span><b>${A.esc(c.name)}</b><small>${c.count}곳</small></span><span class="city-check">↗</span></button>`).join('')}<small>실제 파일 분석 결과입니다.${unknown ? ' 그중 ' + unknown + '곳은 도시를 확인 못 해 "지역 확인 필요"로 넣어 뒀어요 — 여러 개 선택해서 한 번에 지정할 수 있어요.' : ''}</small></div>`);
 }
 function nearby() {
   open('내 주변', `<div class="detail"><h2>지금 가까운 곳부터.</h2><p>현재 위치를 출발점으로, ${A.esc(city)}에 저장한 장소를 가까운 순서로 보여줄 공간입니다.</p><div class="inline-note">선택한 여행지: ${A.esc(city)}<br>위치 권한은 이 기능을 사용할 때만 요청합니다.</div><small>GPS 연결 전인 화면입니다. 현재 위치를 수집하거나 거리순으로 정렬하지 않습니다.</small><button class="primary" data-dismiss>저장한 스팟 계속 보기</button><button class="text-button" data-city-picker>여행지 바꾸기</button></div>`);
@@ -185,8 +244,25 @@ $('#sheetContent').onclick = (e) => {
   if (b.hasAttribute('data-dismiss')) sheet.close();
   if (b.dataset.detailPick) { toggle(b.dataset.detailPick); detail(b.dataset.detailPick); }
   if (b.dataset.remove) { route.delete(b.dataset.remove); showRoute(); }
+  if (b.dataset.citySingle) return cityAssignSheet([b.dataset.citySingle]);
+  if (b.dataset.dupMerge) { const [x, y] = b.dataset.dupMerge.split('|'); return resolveDup(x, y, 'merge'); }
+  if (b.dataset.dupDismiss) { const [x, y] = b.dataset.dupDismiss.split('|'); return resolveDup(x, y, 'dismiss'); }
 };
-$('#addRoute').onclick = () => { spots.filter((p) => p.city === city && selected.has(p.id)).forEach((p) => { route.add(p.id); selected.delete(p.id); }); selecting = false; render(); showRoute(); };
+function resolveDup(aId, bId, action) {
+  A.resolveDup(foodMap.places, aId, bId, action);
+  const saved = A.saveFoodMap(foodMap);
+  if (!saved) { alert('저장에 실패했어요. 브라우저 저장 공간을 확인해 주세요.'); return; }
+  refreshFromStorage();
+  updateCity();
+  const stillThere = spots.find((s) => s.id === aId);
+  if (stillThere) detail(aId); else sheet.close();
+}
+$('#addRoute').onclick = () => {
+  const ids = spots.filter((p) => p.city === city && selected.has(p.id)).map((p) => p.id);
+  if (city === A.UNKNOWN_CITY) return cityAssignSheet(ids);
+  ids.forEach((id) => { route.add(id); selected.delete(id); });
+  selecting = false; render(); showRoute();
+};
 $('#route').onclick = showRoute;
 document.querySelectorAll('[data-profile]').forEach((b) => { b.onclick = profile; });
 document.querySelectorAll('[data-add]').forEach((b) => { b.onclick = add; });

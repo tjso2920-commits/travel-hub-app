@@ -70,15 +70,19 @@ t('지도 링크가 실제 저장 URL을 그대로 씀(검색 링크로 안 바�
 await p.evaluate(() => document.getElementById('close').click());
 await p.waitForTimeout(200);
 
-// 재수입 — 중복 방지
+// 재수입 — URL 있는 곳은 자동 갱신, URL·주소·좌표가 전부 없는 곳(st.763)은
+// 검증할 방법이 없어 "중복 후보"로만 남는다(2026-09-09 코드 검토 반영 —
+// 증거 없이 자동으로 합치지 않는다. 이건 회귀가 아니라 의도한 동작이다).
 await p.click('[data-add]');
 const [fc2] = await Promise.all([p.waitForEvent('filechooser'), p.click('#realFileBtn')]);
 await fc2.setFiles(csvPath);
 await p.waitForTimeout(700);
 const summary = await p.textContent('.import-summary').catch(() => '');
-t('같은 파일 재수입 시 새로 추가 0곳', /0\s*새로 추가/.test(summary.replace(/\s+/g, ' ')));
+const flat = summary.replace(/\s+/g, ' ');
+t('URL 있는 2곳은 검증된 식별자로 자동 갱신', /2\s*자동 갱신/.test(flat));
+t('URL·주소·좌표가 전부 없는 1곳은 중복 후보로만 남음(자동 병합 안 함)', /1\s*새로 추가/.test(flat));
 await p.evaluate(() => document.getElementById('close').click());
-t('재수입해도 전체 개수 그대로(중복 없음)', (await p.evaluate(() => foodMap.places.length)) === 3);
+t('중복 후보는 화면에서 사람이 합치기 전엔 별개 레코드로 남음(4곳)', (await p.evaluate(() => foodMap.places.length)) === 4);
 
 t('최종 콘솔/런타임 오류 0', errs.length === 0);
 if (errs.length) console.log('  ', errs.slice(0, 5));

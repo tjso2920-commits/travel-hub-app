@@ -3337,20 +3337,28 @@ function fmCityGuess(p){
     비교하는 개인 코멘트("예전에 가 본 ○○ 가게가 더 좋았다" 식)였는데,
     메모까지 보면 이런 걸 엉뚱한 도시로 잘못 확정한다. 주소만 "신뢰할 수 있는 장소 정보"로
     쓴다 — 메모는 사람이 자유롭게 쓴 글이라 지명이 나와도 위치를 뜻하지 않을
-    수 있다. */
+    수 있다.
+    좌표만으로는 여기서 확정하지 않는다 — fmCityHint() 를 따로 둔다.
+    "박스 안에 있다"는 "이 도시가 맞다"와 다르다(아래 fmCityHint 주석). */
  const txt=String(p.address||'').toLowerCase();
- if(txt.trim()){
-  const hit=[];
-  for(const city in FM_CITY_ALT){
-   /* fmCityRe() 와 같은 규칙 — 도시 한글 이름 자체도 매칭 대상에 넣는다.
-      FM_CITY_ALT 값만 쓰면 "후쿠오카"라는 한글 텍스트 자체는 안 걸린다. */
-   const pat=city.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+(FM_CITY_ALT[city]?('|'+FM_CITY_ALT[city]):'');
-   let re; try{re=new RegExp(pat,'i');}catch(e){continue;}
-   if(re.test(txt))hit.push(city);
-  }
-  if(hit.length===1)return hit[0];
-  if(hit.length>1)return null;
+ if(!txt.trim())return null;
+ const hit=[];
+ for(const city in FM_CITY_ALT){
+  /* fmCityRe() 와 같은 규칙 — 도시 한글 이름 자체도 매칭 대상에 넣는다.
+     FM_CITY_ALT 값만 쓰면 "후쿠오카"라는 한글 텍스트 자체는 안 걸린다. */
+  const pat=city.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+(FM_CITY_ALT[city]?('|'+FM_CITY_ALT[city]):'');
+  let re; try{re=new RegExp(pat,'i');}catch(e){continue;}
+  if(re.test(txt))hit.push(city);
  }
+ if(hit.length===1)return hit[0];
+ return null; // 0개(모름) 또는 2개 이상(애매함) 모두 확정 안 함
+}
+/* 좌표 기반 "짐작"이다. 후쿠오카 사각 범위(32.7~34.15, 129.2~131.25)는
+   실제 후쿠오카시보다 훨씬 넓다 — 사가·나가사키·구마모토 일부, 야마구치
+   건너편까지 들어간다. 이 박스 안에 있다고 "후쿠오카가 확정"은 아니다.
+   그래서 이 값은 p.city(확정값)에는 절대 안 쓰고, 화면에서 "이 근처일 수도
+   있어요" 같은 제안에만 쓴다. */
+function fmCityHint(p){
  if(fm2HasCoords(p)&&p.lat>=32.7&&p.lat<=34.15&&p.lng>=129.2&&p.lng<=131.25)return '후쿠오카';
  return null;
 }
@@ -4954,35 +4962,67 @@ function fmPlaceLang(){return fmCountryRow()[2];}
    이 앱은 아직 그 일정을 하나만 동시에 편집한다(여러 일정 동시 편집은 다음
    단계 — docs/DESIGN_INTEGRATION_REPORT.md 참고). */
 function tripHasData(){
- return !!foodMap.hotel||!!foodMap.d1;
+ /* renderFoodMap() 이 foodMap.hotel 을 지워도 곧바로 빈 껍데기 객체
+    ({name:'',lat:null,...})로 다시 만든다 — 객체 자체는 항상 있어서
+    !!foodMap.hotel 만으로는 "숙소를 잡아 뒀다"를 구분 못 한다.
+    이름이 실제로 있는지로 봐야 한다. */
+ return !!(foodMap.hotel&&foodMap.hotel.name)||!!foodMap.d1;
 }
-/* 지금 일정만 파일로 내려받고 비운다. 담아 둔 장소는 절대 건드리지 않는다. */
+/* 지금 일정(숙소·날짜·코스)과 예산을 전부 백업하고 비운다.
+   백업이 안 되면 절대 안 비운다 — 되돌릴 방법이 없는 삭제를 확인 안 된
+   백업 뒤에 하지 않는다. (웹에서는 다운로드가 실제로 저장됐는지까지는
+   확인할 수 없다 — 여기서 "성공"은 "만드는 과정에서 오류가 안 났다"는
+   뜻이다. 최선이지만 완전한 보장은 아니다.) */
 function tripReset(){
- try{fm2Download((foodMap.dest||'여행')+'_일정백업_'+TODAY+'.json',{dest:foodMap.dest,destCountry:foodMap.destCountry,hotel:foodMap.hotel,d1:foodMap.d1,d2:foodMap.d2,course:foodMap.course,plan:foodMap.plan});}catch(e){}
+ /* 예산·지출은 budget_v1 같은 별도 키가 아니라 foodMap.budget/spends/tripDays
+    로 이 안에 같이 들어 있다(이전에 별도 키로 착각해서 실제로는 예산이
+    하나도 안 비워지고 있었다 — 백업도 안 되고 삭제도 안 됐다). */
+ let ok=false;
+ try{
+  fm2Download((foodMap.dest||'여행')+'_일정백업_'+TODAY+'.json',
+   {dest:foodMap.dest,destCountry:foodMap.destCountry,hotel:foodMap.hotel,
+    d1:foodMap.d1,d2:foodMap.d2,course:foodMap.course,plan:foodMap.plan,
+    budget:foodMap.budget,spends:foodMap.spends,tripDays:foodMap.tripDays});
+  ok=true;
+ }catch(e){ok=false;}
+ if(!ok){
+  alert('일정을 백업하지 못해 비우지 않았습니다.\n다시 시도해 주세요.');
+  return false;
+ }
  delete foodMap.hotel; delete foodMap.d1; delete foodMap.d2;
  delete foodMap.course; delete foodMap.plan; delete foodMap.cluster;
  delete foodMap.selected; delete foodMap.fx; delete foodMap.fxCur;
- try{const b=load('budget_v1',null);if(b){save('budget_v1',{spends:[]});}}catch(e){}
+ delete foodMap.budget; delete foodMap.spends; delete foodMap.tripDays;
+ delete foodMap.itineraryStale;
  save('foodmap_v1',foodMap);
+ return true;
 }
+/* 여행지(나라)만 바꾼다 — 여행지 선택은 필터다. 담아 둔 장소도, 지금
+   편집 중인 일정(숙소·날짜·코스)도 여기서는 절대 안 건드린다.
+   예전에는 여행지를 바꿀 때마다 "일정을 비울까요?" 확인창이 떴다 —
+   구경만 하려던 사람도 매번 결정을 강요받았다. 이제 그냥 바뀐다.
+   대신 일정이 다른 여행지 기준으로 남아 있으면 그 사실만 표시해 둔다
+   (itineraryStale) — 화면에서 "새 일정 시작하기"로 안내하되 강제하지
+   않는다. 실제로 새 일정을 시작하려면 fmStartNewTrip() 을 명시적으로
+   불러야 한다. */
 function fmSetCountry(v){
  const next=String(v||'').toUpperCase();
  const now=String(foodMap.destCountry||'').toUpperCase();
- /* 나라가 실제로 바뀌고, 지금 편집 중인 일정이 남아 있을 때만 묻는다.
-    담아 둔 장소 개수는 안내에서 뺐다 — 그건 이제 안 지워지기 때문이다. */
- if(now&&next&&now!==next&&tripHasData()){
-  if(confirm('새 여행 일정으로 시작할까요?\n\n'+
-   '지금 잡아 둔 숙소·날짜·코스·예산을 비웁니다.\n'+
-   '담아 둔 장소('+(foodMap.places||[]).length+'곳)는 지워지지 않고 그대로 보관됩니다.\n'+
-   '비우기 전에 지금 일정을 백업 파일로 자동 내려받습니다.\n\n'+
-   '[취소] 를 누르면 지금 것을 그대로 두고 목적지만 바꿉니다.')){
-   tripReset();
-  }
- }
+ if(now&&next&&now!==next&&tripHasData())foodMap.itineraryStale=true;
  foodMap.destCountry=next;
  /* 나라가 바뀌면 통화도 바뀐다. 손으로 통화를 골라 둔 게 아니면 그것도 따라가게 비운다. */
  if(foodMap.fxCur&&!foodMap.fxCurManual)delete foodMap.fxCur;
  save('foodmap_v1',foodMap);renderFoodMap();
+}
+/* "새 여행 일정 시작하기" 버튼이 명시적으로 부르는 함수. 여행지를 그냥
+   바꾸는 것만으로는 절대 안 불린다 — 이게 이번에 분리한 지점이다. */
+function fmStartNewTrip(){
+ if(!tripHasData()){delete foodMap.itineraryStale;save('foodmap_v1',foodMap);renderFoodMap();return;}
+ if(!confirm('새 여행 일정을 시작할까요?\n\n'+
+  '지금 잡아 둔 숙소·날짜·코스·예산을 비웁니다.\n'+
+  '담아 둔 장소('+(foodMap.places||[]).length+'곳)는 지워지지 않고 그대로 보관됩니다.\n'+
+  '비우기 전에 지금 일정을 백업 파일로 자동 내려받습니다.'))return;
+ if(tripReset())renderFoodMap();
 }
 /* 이름만 있는 장소를 찾을 때 붙이는 꼬리말. 도시 이름이 가장 잘 듣는다. */
 function fmAreaHint(){return affDest();}
@@ -5012,10 +5052,14 @@ function affHTML(){
   '<label class="xsmall" style="display:block;margin-top:8px">'+esc(AFF_LABEL[k])+' 링크 템플릿'+
   '<input class="xinput" style="margin-top:4px" value="'+esc(foodMap.aff&&foodMap.aff[k]||'')+'" placeholder="'+esc(AFF_DEFAULT[k])+'" onchange="affSetTpl(\''+k+'\',this.value)"></label>').join('');
  return fmPanel('aff','TRIP','여행 준비',affDest()+' · '+d.in.slice(5)+'~'+d.out.slice(5),
+  (foodMap.itineraryStale?'<div class="xsmall" style="margin:0 0 10px;padding:9px 11px;border:1px solid var(--line2);border-radius:10px;background:var(--surface2)">'+
+   '여행지가 바뀌었습니다. 지금 숙소·날짜·코스는 이전 여행지 기준일 수 있습니다.'+
+   '<button class="xaction sub" style="margin-top:7px" onclick="fmStartNewTrip()">새 여행 일정 시작하기</button></div>':'')+
   '<div class="fm-grid"><input class="xinput" value="'+esc(affDest())+'" placeholder="목적지" onchange="affSetDest(this.value)">'+
   '<input class="xinput" value="'+esc((foodMap.destIata||'FUK'))+'" placeholder="공항 코드" onchange="affSetIata(this.value)"></div>'+
   '<div class="xsmall" style="margin-top:8px">출발일과 일수는 여행 일정 배분 설정을 따릅니다.</div>'+
   '<div class="xactions">'+btns+'</div>'+
+  (tripHasData()&&!foodMap.itineraryStale?'<button class="xaction sub" style="margin-top:8px" onclick="fmStartNewTrip()">🔄 새 여행 일정 시작하기</button>':'')+
   (affHasCustom()?'<div class="xsmall" style="margin-top:8px">일부 링크는 제휴 링크이며, 예약이 발생하면 수수료를 받을 수 있습니다.</div>':'')+
   '<details style="margin-top:10px"><summary class="xsmall">링크 템플릿 직접 지정</summary>'+
   '<div class="xsmall" style="margin-top:6px">제휴 링크를 발급받으면 여기에 붙여 넣습니다. '+
@@ -5660,48 +5704,86 @@ fmJson=function(j){const direct=j&&(j.places||j.spots);if(Array.isArray(direct))
    너무 세게 정규화하면(괄호 제거 등) 다른 가게를 같은 곳으로 오인할 수 있어
    여기서는 대소문자·앞뒤 공백만 정리하는 선에서 멈춘다. */
 const fmNameKey=n=>String(n||'').trim().toLowerCase().replace(/\s+/g,' ');
-fmMerge=function(arr,sourceLabel){let added=0,updated=0,skipped=0,blocked=0,merged=0;
+/* 두 장소가 "다른 곳"이라는 증거가 있는지 본다. 도시가 서로 다르게
+   확정돼 있거나(주소로), 좌표가 둘 다 있는데 5km 넘게 떨어져 있으면
+   증거가 있는 것 — 이때는 이름이 같아도 후보로도 안 묶는다. */
+function fmPlacesConflict(a,x){
+ const ca=fmCityGuess(a),cx=fmCityGuess(x);
+ if(ca&&cx&&ca!==cx)return true;
+ if(fm2HasCoords(a)&&fm2HasCoords(x)&&fmGpsDistance(a,x)>5000)return true;
+ return false;
+}
+/* 2026-09-09 재작성 — "이름만 같으면 자동으로 합친다"를 없앴다.
+   서울과 부산의 동명 가게가 하나로 합쳐지는 게 실제로 재현됐다. 원인은
+   둘: (1) 좌표가 둘 다 없으면 name|null|null 로 "정확히 같은 키"로
+   잘못 잡혔다(이건 원래부터 있던 버그다). (2) 정확한 키가 안 맞아도
+   이름만 같으면 자동으로 합치던 경로가 있었다(지난 턴에 추가한 것).
+   이제 자동 병합은 검증된 식별자(placeId·URL·이름+실좌표)로만 하고,
+   이름만 같으면 "중복 후보"(dupCandidateIds)로 남겨서 화면에서 사람이
+   확인하게 한다. 도시·좌표로 이미 다른 곳이라는 증거가 있으면 후보로도
+   안 묶는다. */
+fmMerge=function(arr,sourceLabel){let added=0,updated=0,skipped=0,blocked=0,dupCandidates=0;
  const byKey=new Map(),byName=new Map();
- const kName=p=>(p.name||'').toLowerCase()+'|'+p.lat+'|'+p.lng;
+ /* 좌표가 진짜 있을 때만 이름+좌표를 검증된 식별자로 쓴다.
+    null|null 은 "좌표가 없다"는 뜻이지 "같은 좌표"가 아니다. */
+ const kName=p=>fm2HasCoords(p)?((p.name||'').toLowerCase()+'|'+p.lat+'|'+p.lng):null;
+ const addName=(nk,p)=>{if(!nk)return;if(!byName.has(nk))byName.set(nk,[]);byName.get(nk).push(p);};
  foodMap.places.forEach(p=>{
   fm2Normalize(p);
   [p.placeId,p.url,kName(p)].forEach(k=>{if(k)byKey.set(k,p);});
-  const nk=fmNameKey(p.name);if(nk)byName.set(nk,p);
+  addName(fmNameKey(p.name),p);
  });
  arr.forEach(x=>{
   if(!x||!x.name){skipped++;return;}
-  const key=x.placeId||x.url||kName(x);
   const nk=fmNameKey(x.name);
-  /* 1순위: placeId·URL·이름+좌표가 정확히 같음(같은 내보내기를 두 번 넣은 경우)
-     2순위: 좌표나 URL 형식이 달라도 이름이 같음(같은 곳을 다른 목록·다른
-     내보내기 방식으로 두 번 저장한 경우 — 실제로 CSV 판과 GeoJSON 판이 같은
-     가게를 이렇게 겹쳐 냈다). 이름만으로 합치는 거라 완전히 다른 곳을
-     같은 곳으로 오인할 여지가 아예 없진 않지만, 개인이 저장한 특정 상호명
-     기준이라 위험이 낮다고 보고 합친다 — 대신 두 출처를 다 남긴다. */
-  const exact=byKey.get(x.placeId)||byKey.get(x.url)||byKey.get(kName(x));
-  const old=exact||(nk&&byName.get(nk));
-  if(old){
-   if(!exact)merged++; // 정확히 같은 키가 아니라 이름만으로 겹친 것 — 다른 목록의 같은 곳
-   ['name','note','address','url','placeId','rating','ratingCount'].forEach(k=>{if(x[k]!==undefined&&x[k]!==null&&x[k]!=='')old[k]=x[k];});
-   if(x.lat!==null&&x.lat!==undefined)old.lat=x.lat;
-   if(x.lng!==null&&x.lng!==undefined)old.lng=x.lng;
-   if(x.videos&&x.videos.length)old.videos=x.videos;
-   old.cat=x.cat||old.cat||fmInfer(old.name+' '+old.note+' '+old.address);
-   old.kind=x.kind||old.kind||fm2Kind(old.name+' '+old.note,old.cat);
-   old.region=x.region||old.region||fm2Region(old.address+' '+old.name);
-   if(!old.cityConfirmed)old.city=fmCityGuess(old);
-   if(sourceLabel){old.sourceLists=Array.isArray(old.sourceLists)?old.sourceLists:[];if(!old.sourceLists.includes(sourceLabel))old.sourceLists.push(sourceLabel);}
-   byKey.set(key,old);if(nk)byName.set(nk,old);
+  const kx=kName(x);
+  const exact=(x.placeId&&byKey.get(x.placeId))||(x.url&&byKey.get(x.url))||(kx&&byKey.get(kx));
+  if(exact){
+   /* 검증된 식별자로 확인된 경우만 자동으로 합친다.
+      메모·주소·이름은 사용자가 원본에서 이미 고쳤으면(= 지금 값이 저장해 둔
+      원본과 다르면) 새로 들어온 값으로 덮지 않는다 — 원본 값만 갱신해서
+      나중에도 "원본이 뭐였는지"는 계속 알 수 있게 한다. */
+   if(x.name&&exact.name===(exact.originName!==undefined?exact.originName:exact.name))exact.name=x.name;
+   exact.originName=x.name!==undefined?x.name:exact.originName;
+   if(exact.note===(exact.originNote!==undefined?exact.originNote:exact.note))exact.note=x.note||'';
+   exact.originNote=x.note!==undefined?x.note:exact.originNote;
+   if(exact.address===(exact.originAddress!==undefined?exact.originAddress:exact.address))exact.address=x.address||exact.address;
+   exact.originAddress=x.address!==undefined?x.address:exact.originAddress;
+   if(x.placeId)exact.placeId=x.placeId;
+   if(x.url)exact.url=x.url;
+   if(x.rating!==undefined&&x.rating!==null&&x.rating!=='')exact.rating=x.rating;
+   if(x.ratingCount!==undefined&&x.ratingCount!==null&&x.ratingCount!=='')exact.ratingCount=x.ratingCount;
+   if(x.lat!==null&&x.lat!==undefined)exact.lat=x.lat;
+   if(x.lng!==null&&x.lng!==undefined)exact.lng=x.lng;
+   if(x.videos&&x.videos.length)exact.videos=x.videos;
+   if(!exact.cat)exact.cat=x.cat||fmInfer(exact.name+' '+exact.note+' '+exact.address);
+   if(!exact.kind)exact.kind=x.kind||fm2Kind(exact.name+' '+exact.note,exact.cat);
+   if(!exact.region)exact.region=x.region||fm2Region(exact.address+' '+exact.name);
+   if(!exact.cityConfirmed)exact.city=fmCityGuess(exact);
+   if(sourceLabel){exact.sourceLists=Array.isArray(exact.sourceLists)?exact.sourceLists:[];if(!exact.sourceLists.includes(sourceLabel))exact.sourceLists.push(sourceLabel);}
+   [exact.placeId,exact.url,kName(exact)].forEach(k=>{if(k)byKey.set(k,exact);});
    updated++;return;
   }
   if(licRoom()<1){blocked++;return;}
-  const p=fm2Normalize(Object.assign({id:'fm'+Date.now()+added+Math.floor(Math.random()*99)},x));
+  const p=fm2Normalize(Object.assign({id:'fm'+Date.now()+added+Math.floor(Math.random()*9999)},x));
+  p.originName=x.name;p.originNote=x.note||'';p.originAddress=x.address||'';
   p.city=fmCityGuess(p);
   p.sourceLists=sourceLabel?[sourceLabel]:[];
-  foodMap.places.push(p);byKey.set(key,p);if(nk)byName.set(nk,p);added++;
+  /* 이름만 같은 기존 장소가 있고, 다른 곳이라는 증거가 없으면 "중복 후보"로
+     서로 연결한다. 자동으로 합치지 않는다 — 사람이 확인해야 한다. */
+  const sameName=(byName.get(nk)||[]).filter(o=>!fmPlacesConflict(o,p));
+  if(sameName.length){
+   p.dupCandidateIds=sameName.map(o=>o.id);
+   sameName.forEach(o=>{o.dupCandidateIds=Array.isArray(o.dupCandidateIds)?o.dupCandidateIds:[];if(!o.dupCandidateIds.includes(p.id))o.dupCandidateIds.push(p.id);});
+   dupCandidates++;
+  }
+  foodMap.places.push(p);
+  [p.placeId,p.url,kName(p)].forEach(k=>{if(k)byKey.set(k,p);});
+  addName(nk,p);
+  added++;
  });
  save('foodmap_v1',foodMap);
- return{added:added,updated:updated,skipped:skipped,blocked:blocked,merged:merged};};
+ return{added:added,updated:updated,skipped:skipped,blocked:blocked,dupCandidates:dupCandidates};};
 fmSaveApi=function(silent){const a=document.getElementById('fmApiKey'),y=document.getElementById('fmYoutubeKey');if(a)foodMap.apiKey=a.value.trim();if(y)foodMap.youtubeKey=y.value.trim();save('foodmap_v1',foodMap);if(!silent)alert('API 키를 이 기기에만 저장했습니다.');};
 let fmBulk={running:false,cancel:false,done:0,total:0,ok:0,fail:[]};
 let fmBulkLast='';
