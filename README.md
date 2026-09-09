@@ -11,19 +11,21 @@
 ```
 private/          ← .gitignore 로 제외됨. 절대 커밋하지 않는다
   personal.html     개인용 마스터. 모든 수정은 여기서 시작한다
-  후쿠오카_137.csv   개인 장소 데이터(지인·가족 이름 포함)
+  후쿠오카_137.csv   테스트용 픽스처. 지금은 합성(익명) 데이터 — docs/DESIGN_HANDOFF.md 8절 참고
 src/              ← GitHub Pages 로 배포되는 폴더
   index.html        판매용. 생성물이므로 직접 수정하지 않는다
   sw.js             오프라인 캐시
+  landing.html      소개 페이지
   manifest.webmanifest, icon-*.png
 scripts/
   build-sales.mjs        개인용 → 판매용 생성기
   verify.mjs             개인용·판매용 전체 검사(로컬)
   verify-sales-only.mjs  판매용만 검사(CI·배포 전)
-  test/                  JSDOM 기능 검사 28종 + 실행기
+  test/                  JSDOM 기능 검사 47종 + 실행기
   audit.mjs              실제 브라우저 화면 검수(대비·터치영역·가로넘침·오류)
 docs/
-  HANDOFF.md        전체 작업 이력. 새 작업자는 이것부터 읽는다
+  HANDOFF.md         기능 작업 이력 1~44절(~2026-07-30). 새 작업자는 이것부터 읽는다
+  DESIGN_HANDOFF.md  그 이후(2026-08~) 작업 요약 + 디자인 인수인계. 최신 상태는 이것부터 읽는다
 ```
 
 ## 명령
@@ -51,16 +53,20 @@ npm run audit        # 실제 브라우저로 화면 검수 (대비·터치영�
 
 ## 배포
 
-`main` 에 푸시하면 GitHub Actions 가 판매용을 검사하고 `src/` 만 GitHub Pages 로 올린다.
-`private/` 는 저장소에 없으므로 배포 대상에 애초에 포함되지 않는다.
+`master`(또는 `main`)에 푸시하면 GitHub Actions 가 판매용을 검사하고 `src/` 만
+GitHub Pages 로 올린다. `private/` 는 저장소에 없으므로 배포 대상에 애초에 포함되지 않는다.
+
+실제 배포 브랜치는 `master` 다. 개발은 `claude/continue-work-naix3t` 브랜치에서 하고,
+배포할 준비가 되면 그 브랜치를 `master` 로 fast-forward 푸시한다.
 
 무료 플랜은 공개 저장소에서만 Pages 를 지원한다. 개인용 마스터와 사업 메모를 감추고 싶으면
 별도의 **비공개 저장소**(Pages 없이 보관만)를 하나 더 두면 된다. 비공개 저장소 자체는 무료다.
 
 ## 새 작업자에게
 
-`docs/HANDOFF.md` 를 먼저 읽는다. 44개 절에 걸쳐 무엇을 왜 그렇게 만들었는지,
-어떤 결함을 어떻게 잡았는지, 무엇을 건드리면 안 되는지가 전부 적혀 있다.
+`docs/HANDOFF.md`(1~44절, ~2026-07-30)를 먼저 읽고, 그 이후 작업과 지금 상태는
+`docs/DESIGN_HANDOFF.md` 를 본다. 무엇을 왜 그렇게 만들었는지, 어떤 결함을 어떻게
+잡았는지, 무엇을 건드리면 안 되는지가 전부 적혀 있다.
 
 **2026-07-30 부로 운동/운동2 탭과 관련 코드(`V`, `personalDays()`, 달력, 칼로리·단백질
 계산, 체중 프로필)는 이 앱에서 완전히 삭제됐다.** (HANDOFF 35절 참고) 이 앱은 이제
