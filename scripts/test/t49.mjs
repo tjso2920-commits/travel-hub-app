@@ -220,6 +220,19 @@ t('사용자가 고친 분류는 재수입해도(같은 곳, 원본이 다른 �
 t('범용 유형 목록 사용 — 후쿠오카 전용 상호명에 의존하지 않음(맛집·바·카페 등 어느 여행지든 통용)',
   ['맛집·식당','바·이자카야','카페·디저트','관광·명소','쇼핑','숙소','교통','사우나·온천','마사지·스파','약국·병원','기타'].includes(w.eval('fmInfer("아무 상호명")')));
 
+/* ── 8. 실제 위치 확인 — 저장된 식별자 우선, 추가 조회 필요 항목 구분
+   (2026-09-09 코드 검토 ⑦). personal.html에는 daNeedsLookup 이 없으므로
+   ("보관함" 화면에는 좌표 없는 곳을 그냥 "지역 확인 필요"로만 다룬다)
+   이 절은 fmCoordFromUrl(이미 저장된 URL에서 추가 조회 없이 뽑아내는
+   부분)만 여기서 확인하고, "추가 조회 필요" 구분은 design 어댑터 쪽
+   테스트(design-integration-check.mjs)에서 확인한다. ── */
+t('FID(!3d!4d) 형식은 추가 조회 없이 좌표를 바로 뽑아냄',
+  JSON.stringify(w.eval("fmCoordFromUrl('https://www.google.com/maps/place/x/data=!4m2!3m1!1s0x0!8m2!3d33.5902!4d130.4017')")) === JSON.stringify({ lat: 33.5902, lng: 130.4017 }));
+t('지도 중심(@lat,lng) 형식도 추가 조회 없이 뽑아냄',
+  JSON.stringify(w.eval("fmCoordFromUrl('https://www.google.com/maps/place/x/@33.5902,130.4017,17z')")) === JSON.stringify({ lat: 33.5902, lng: 130.4017 }));
+t('축약 링크(goo.gl/maps)는 URL 문자열만으로 좌표를 못 뽑음(추가 조회가 실제로 필요한 경우)',
+  w.eval("fmCoordFromUrl('https://goo.gl/maps/abcXYZ123')") === null);
+
 /* ── 나라 바꿔도 장소는 안 지워진다(핵심 산업 결정 — t46 에서 fmSetCountry 는 따로 검증) ── */
 w.eval("foodMap.places=[{id:'x1',name:'테스트','address':'福岡市',lat:33.59,lng:130.40}];save('foodmap_v1',foodMap);");
 t('fmMerge 로 담긴 장소는 destCountry 와 무관하게 그대로 유지됨(별도 검증은 t46)', w.eval('foodMap.places.length') === 1);

@@ -177,6 +177,30 @@ const afterReimportCat = await p.evaluate(() => {
 });
 t('재수입해도 사용자가 고른 분류는 유지됨(이름만 같고 식별자 없어 별개 후보가 됐어도 기존 레코드는 그대로)', afterReimportCat === '숙소');
 
+// 실제 위치 확인 — 축약 링크는 URL만으로 좌표를 못 뽑으니 "추가 조회
+// 필요"로 구분해서 보여주고, API 키 입력 없이 지도로 바로 열게만 한다
+// (2026-09-09 코드 검토 ⑦, 소비자 API 키 입력 금지 원칙).
+const lookupCsvPath = path.join(tmp, 'lookup-check.csv');
+fs.writeFileSync(lookupCsvPath, '제목,메모,URL,태그,댓글\n축약링크가게,,https://goo.gl/maps/abcXYZ123,,\n', 'utf8');
+await p.click('[data-add]');
+const [fc7] = await Promise.all([p.waitForEvent('filechooser'), p.click('#realFileBtn')]);
+await fc7.setFiles(lookupCsvPath);
+await p.waitForTimeout(700);
+await p.evaluate(() => document.getElementById('close').click());
+await p.waitForTimeout(200);
+const lookupTarget = await p.evaluate(() => {
+  const d = foodMap.places.find((x) => x.name === '축약링크가게');
+  return d ? d.id : null;
+});
+await p.evaluate((id) => { detail(id); }, lookupTarget);
+await p.waitForTimeout(150);
+const lookupDetail = await p.textContent('#sheetContent');
+t('축약 링크는 "추가 조회 필요"로 구분 표시됨(좌표 없음과 다르게)', lookupDetail.includes('축약 링크'));
+t('자동 조회 대신 지도에서 직접 열어보라고 안내(API 키 요구 없음)', lookupDetail.includes('직접 열어'));
+const apiKeyInputExists = await p.evaluate(() => !!document.querySelector('input[type="password"]'));
+t('화면 어디에도 API 키 입력창이 없음', apiKeyInputExists === false);
+await p.evaluate(() => document.getElementById('close').click());
+
 t('최종 콘솔/런타임 오류 0', errs.length === 0);
 if (errs.length) console.log('  ', errs.slice(0, 5));
 

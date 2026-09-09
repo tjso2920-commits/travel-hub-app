@@ -288,6 +288,29 @@ function daIsPlaceUrl(u) {
   if (/\/maps\/place\//i.test(t)) return true;
   return false;
 }
+/* 2026-09-09 코드 검토(로드맵 ④ 후속) — "실제 위치 확인은 저장된 식별자
+   에서 확인 가능한 정보부터 먼저 쓰고, 추가 조회가 필요한 항목만 구분해
+   처리한다." daCoordFromUrl은 URL 문자열 안에 좌표가 그대로 박혀 있는
+   경우(!3d!4d, @lat,lng, q=lat,lng 등)만 추가 조회 없이 뽑아낸다.
+   goo.gl/maps.app.goo.gl 같은 축약 링크나 cid만 있는 링크는 실제
+   목적지를 알려면 리다이렉트를 따라가거나 Places API를 불러야 한다 —
+   이건 "저장된 정보만으로 확인 가능"한 범위를 벗어난 별도 조회다.
+   소비자에게 API 키를 넣게 하지 않는다는 원칙(코드 검토 ④) 때문에
+   여기서 그 조회를 실행하지 않는다 — 대신 "좌표 확인에 추가 조회가
+   필요한 곳"으로 구분해 표시만 한다(서버 쪽 키 보호·조회 한도·비용
+   추정이 정리된 뒤 별도로 연결할 대상). */
+function daIsShortMapsUrl(u) {
+  const t = String(u || '');
+  return /^https?:\/\/(goo\.gl\/maps|maps\.app\.goo\.gl)\//i.test(t);
+}
+function daNeedsLookup(p) {
+  if (daHasCoords(p)) return false;
+  const u = String(p.url || '');
+  if (!u) return false;
+  if (daIsShortMapsUrl(u)) return true;
+  if (/[?&]cid=/i.test(u) && !daCoordFromUrl(u)) return true;
+  return false;
+}
 /* private/personal.html: function fmPlacesConflict — 그대로 옮김.
    양쪽에 placeId가 실제로 있고 서로 다르면(2026-09-09 코드 검토 반영)
    구글 기준으로 이미 다른 장소라는 확실한 증거다. */
@@ -488,6 +511,7 @@ function daBuildSpots(foodMap) {
     cityHint: p.city ? null : daCityHint(p), // 확정 아님 — 제안용
     url: daLink(p),
     hasCoords: daHasCoords(p),
+    needsLookup: daNeedsLookup(p),
     lat: p.lat, lng: p.lng,
     sourceLists: Array.isArray(p.sourceLists) ? p.sourceLists : [],
     dupCandidateIds: Array.isArray(p.dupCandidateIds) ? p.dupCandidateIds : [],
@@ -518,5 +542,6 @@ window.DesignAdapter = {
   knownCities: Object.keys(FM_CITY_ALT),
   esc: daEsc,
   hasCoords: daHasCoords,
+  needsLookup: daNeedsLookup,
   migrateStorage: daMigrateStorage,
 };

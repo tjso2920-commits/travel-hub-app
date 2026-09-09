@@ -99,6 +99,16 @@ function detail(id) {
         `<button class="text-button" data-city-single="${id}">이 장소 도시 지정하기</button></div>` +
         (p.hasCoords ? '' : '<small>좌표가 없어서 도시를 지정해도 최단 동선·거리 계산에는 쓸 수 없습니다. 실제 위치 확인은 별도로 필요합니다.</small>');
     }
+    if (p.needsLookup) {
+      /* 2026-09-09 코드 검토 — 저장된 링크가 축약 링크(goo.gl/maps 등)나
+         cid만 있는 링크라 좌표가 URL 문자열만으로는 안 나온다. 실제
+         목적지를 확인하려면 리다이렉트를 따라가거나 유료 API 조회가
+         필요한데, 소비자에게 API 키를 넣게 하지 않는다는 원칙상 여기서
+         그 조회를 자동으로 하지 않는다 — 사람이 지도에서 직접 열어
+         확인하는 것으로 남겨 둔다. */
+      cityBlock += `<div class="inline-note">저장된 링크만으로는 정확한 위치를 확인할 수 없어요(축약 링크). 자동 조회는 아직 연결되지 않았습니다.<br>` +
+        `<a class="text-button" href="${A.esc(p.url)}" target="_blank" rel="noopener noreferrer">Google 지도에서 직접 열어 확인하기 ↗</a></div>`;
+    }
     if (p.dupCandidateIds && p.dupCandidateIds.length) {
       const others = p.dupCandidateIds.map((did) => spots.find((s) => s.id === did)).filter(Boolean);
       cityBlock += others.map((o) => `<div class="inline-note">이름이 같은 곳이 또 있어요: <b>${A.esc(o.name)}</b>(${A.esc(o.city)})<br>` +
