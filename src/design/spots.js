@@ -211,31 +211,78 @@ function add() {
   /* 06_UPDATES_AND_EXPORT_CORRECTION.md 정정: 일반 저장 목록은 'Saved',
      별표로 저장했거나 구분이 불명확하면 'Saved' + '지도(내 장소)'를 함께
      내보내야 한다. 'Saved'만 안내하면 별표 장소를 놓친다. */
-  open('내 장소 가져오기', `<div class="detail import-flow"><span class="flow-tag">실제 가져오기</span><h2>저장한 곳,<br>그대로 모아볼까요?</h2><p>구글맵에서 내보낸 <b>CSV 또는 JSON</b> 파일로 시작해요. (ZIP은 아직 자동으로 못 풀어요 — 먼저 압축을 풀어 주세요.)</p><div class="file-surface"><span class="file-symbol">↓</span><b>내보낸 파일 가져오기</b><span>CSV · JSON</span></div><input type="file" id="realFileIn" accept=".csv,text/csv,.json,application/json" style="display:none"><button class="primary" id="realFileBtn">받은 CSV 또는 JSON 선택</button>${importMsg ? `<p class="inline-note">${importMsg}</p>` : ''}<button class="text-button" id="sampleBtn">샘플로 먼저 둘러보기</button><details class="import-help"><summary>구글맵에서 파일은 어떻게 받나요?</summary><ol><li>Google Takeout을 열어요.</li><li>일반 저장 목록은 <b>‘저장됨(Saved)’</b>을 선택하세요. 별표로 저장한 장소도 챙기려면(또는 어느 쪽인지 잘 모르겠으면) <b>‘지도(내 장소)’</b>도 함께 선택하세요.</li><li>받은 zip을 풀면 목록별 csv 와 별표 장소 json이 따로 나옵니다 — 여러 개면 하나씩 이 화면에서 가져오세요(같은 곳은 자동으로 겹쳐지지 않습니다).</li></ol><a href="https://takeout.google.com/" target="_blank" rel="noopener noreferrer">Google Takeout 열기 ↗</a><p>계정에 따라 내보내기 준비 시간이 걸릴 수 있어요.</p></details></div>`);
+  open('내 장소 가져오기', `<div class="detail import-flow"><span class="flow-tag">실제 가져오기</span><h2>저장한 곳,<br>그대로 모아볼까요?</h2><p>구글맵에서 받은 <b>Takeout ZIP을 그대로</b> 선택하거나, CSV·JSON 파일로 시작해요. ZIP은 압축을 미리 풀 필요 없이 안에서 저장 목록을 자동으로 찾습니다.</p><div class="file-surface"><span class="file-symbol">↓</span><b>내보낸 파일 가져오기</b><span>ZIP · CSV · JSON</span></div><input type="file" id="realFileIn" accept=".zip,application/zip,application/x-zip-compressed,.csv,text/csv,.json,application/json" style="display:none"><button class="primary" id="realFileBtn">받은 ZIP·CSV·JSON 선택</button>${importMsg ? `<p class="inline-note">${importMsg}</p>` : ''}<button class="text-button" id="sampleBtn">샘플로 먼저 둘러보기</button><details class="import-help"><summary>구글맵에서 파일은 어떻게 받나요?</summary><ol><li>Google Takeout을 열어요.</li><li>일반 저장 목록은 <b>‘저장됨(Saved)’</b>을 선택하세요. 별표로 저장한 장소도 챙기려면(또는 어느 쪽인지 잘 모르겠으면) <b>‘지도(내 장소)’</b>도 함께 선택하세요.</li><li>받은 zip 파일을 <b>그대로</b> 이 화면에서 선택하세요 — 압축을 손으로 풀 필요 없이, 안에 있는 목록별 csv와 별표 장소 json을 자동으로 찾아 한 번에 가져옵니다(같은 곳은 자동으로 안 겹칩니다). 리뷰 파일은 장소가 아니라서 자동으로 뺍니다.</li></ol><a href="https://takeout.google.com/" target="_blank" rel="noopener noreferrer">Google Takeout 열기 ↗</a><p>계정에 따라 내보내기 준비 시간이 걸릴 수 있어요.</p></details></div>`);
   $('#realFileBtn').onclick = () => $('#realFileIn').click();
   $('#realFileIn').onchange = handleRealFile;
   $('#sampleBtn').onclick = () => { usingSample = true; spots = SAMPLE_SPOTS; cities = SAMPLE_CITIES; city = cities[0].name; updateCity(); sheet.close(); };
 }
+/* 병합 로직은 private/personal.html 의 fmMerge 를 그대로 옮긴 A.merge() 를
+   쓴다 — 여기서 다시 만들지 않는다(중복 판정이 갈리는 사고를 막는다).
+   검증된 식별자만 자동으로 합치고, 이름만 같은 건 후보로 남긴다. */
 async function handleRealFile(e) {
   const f = e.target.files && e.target.files[0]; if (!f) return;
   e.target.value = '';
+  foodMap.places = foodMap.places || [];
+
+  if (window.ZipImport && window.ZipImport.isZipFile(f)) { await handleZipFile(f); return; }
+
   let parsed = [];
   try {
     const txt = await f.text();
     if (/\.csv$/i.test(f.name)) parsed = A.parseCsv(txt);
     else if (/\.json$/i.test(f.name)) parsed = A.parseJson(JSON.parse(txt));
-    else { importMsg = '이 형식은 아직 읽지 못해요. CSV 또는 JSON 파일을 선택해 주세요.'; add(); return; }
+    else { importMsg = '이 형식은 아직 읽지 못해요. ZIP·CSV·JSON 파일을 선택해 주세요.'; add(); return; }
   } catch (err) {
     importMsg = '파일을 읽지 못했어요. 구글에서 받은 저장 목록 CSV/JSON이 맞는지 확인해 주세요.';
     add(); return;
   }
   if (!parsed.length) { importMsg = '이 파일에서 저장된 장소를 찾지 못했어요.'; add(); return; }
-  /* 병합 로직은 private/personal.html 의 fmMerge 를 그대로 옮긴
-     A.merge() 를 쓴다 — 여기서 다시 만들지 않는다(중복 판정이 갈리는 사고를
-     막는다). 검증된 식별자만 자동으로 합치고, 이름만 같은 건 후보로 남긴다. */
-  foodMap.places = foodMap.places || [];
   const label = f.name.replace(/\.(csv|json)$/i, '');
-  const z = A.merge(parsed, label, foodMap.places);
+  finishImport([{ label, z: A.merge(parsed, label, foodMap.places) }], []);
+}
+/* Takeout ZIP 직접 가져오기(로드맵 ②) — 압축을 미리 풀 필요가 없다.
+   zip-import.js의 daParseZip이 안전장치(크기·개수·시간 제한)를 갖고
+   파일명으로 대상만 골라 압축을 푼다. 일부 파일이 실패해도 성공한
+   파일은 반영한다 — 하나가 깨졌다고 전체를 버리지 않는다. */
+async function handleZipFile(f) {
+  importMsg = '';
+  open('내 장소 가져오기', '<div class="detail import-flow"><h2>ZIP을 열어 보는 중…</h2><p>파일 안에서 저장 목록을 찾고 있어요. 파일이 크면 시간이 걸릴 수 있어요.</p></div>');
+  const result = await window.ZipImport.parseZip(f);
+  if (!result.ok) {
+    const msgs = {
+      'zip-too-large': '이 ZIP 파일이 너무 커요(300MB 넘음). 서비스별로 나눠서 다시 받아 보세요.',
+      timeout: 'ZIP을 여는 데 너무 오래 걸려서 멈췄어요. 파일이 손상됐거나 너무 클 수 있어요.',
+      corrupt: 'ZIP 파일을 열지 못했어요. 손상됐거나 지원하지 않는 형식일 수 있어요.',
+      'no-target-files': '이 ZIP 안에서 저장 목록(csv)이나 저장한 장소(json)를 찾지 못했어요. Google Takeout에서 받은 파일이 맞는지 확인해 주세요.',
+      'no-zip-support': '이 브라우저에서는 ZIP을 직접 열 수 없어요. 압축을 풀어 CSV·JSON 파일로 다시 선택해 주세요.',
+      empty: '빈 파일이에요.',
+      'read-failed': '파일을 읽지 못했어요.',
+    };
+    importMsg = msgs[result.reason] || '이 ZIP 파일을 처리하지 못했어요.';
+    add();
+    return;
+  }
+  const perFile = [];
+  result.files.forEach((entry) => {
+    const shortName = entry.name.split('/').pop();
+    let parsed = [];
+    try {
+      parsed = entry.kind === 'csv' ? A.parseCsv(entry.text) : A.parseJson(JSON.parse(entry.text));
+    } catch (err) {
+      perFile.push({ label: shortName, error: '이 파일을 읽지 못했어요(형식이 깨졌을 수 있어요)' });
+      return;
+    }
+    if (!parsed.length) { perFile.push({ label: shortName, error: '이 파일에서 저장된 장소를 찾지 못했어요' }); return; }
+    perFile.push({ label: shortName, z: A.merge(parsed, shortName.replace(/\.(csv|json)$/i, ''), foodMap.places) });
+  });
+  if (!perFile.some((x) => x.z)) {
+    importMsg = 'ZIP 안의 파일들에서 저장된 장소를 찾지 못했어요. ' + (result.skipped.length ? '일부 파일은 제외됐습니다 — 아래에서 이유를 확인하세요.' : '');
+    add();
+    return;
+  }
+  finishImport(perFile, result.skipped);
+}
+function finishImport(perFile, skipped) {
   const saved = A.saveFoodMap(foodMap);
   if (!saved) {
     /* 저장 실패를 성공처럼 진행하지 않는다. 메모리 상태도 저장소와 다시
@@ -254,12 +301,30 @@ async function handleRealFile(e) {
   if (!cities.some((c) => c.name === city) || (city === A.UNKNOWN_CITY && known)) city = (known || cities[0]).name;
   filter = '전체';
   updateCity(); // 배경 화면(grid·count·filters·album)도 같이 갱신 — 안 부르면 결과 시트를 닫아도 화면이 그대로 샘플로 남는다
-  importDone(z);
+  importDone(perFile, skipped);
 }
-function importDone(z) {
+/* 파일별 결과·제외 이유를 구분해서 보여준다(로드맵 ② 요청사항) — ZIP 하나에
+   여러 파일이 들어 있을 때 무엇이 성공하고 무엇이 왜 빠졌는지 알아야
+   한다. 단일 CSV/JSON 가져오기도 같은 화면을 재사용한다(파일 1개짜리
+   목록으로 취급). */
+function importDone(perFile, skipped) {
+  perFile = perFile || []; skipped = skipped || [];
   const total = (foodMap.places || []).length;
   const unknown = spots.filter((p) => !p.cityKnown).length;
-  open('가져오기 결과', `<div class="detail import-flow"><span class="flow-tag">실제 결과</span><h2>${z.added + z.updated}곳을 확인했어요.</h2><p>도시별로 모아뒀어요.</p><div class="import-summary"><span><b>${z.added}</b>새로 추가</span><span><b>${z.updated}</b>자동 갱신</span><span><b>${total}</b>전체</span></div>${z.dupCandidates ? `<p class="inline-note">그중 ${z.dupCandidates}곳은 이름이 같은 기존 장소가 있었어요. 자동으로 합치지 않았습니다 — 장소 상세에서 같은 곳인지 확인해 주세요.</p>` : ''}${cities.map((c) => `<button class="city-option" data-city="${A.esc(c.name)}"><span class="city-initial">${A.esc(c.name.slice(0, 1))}</span><span><b>${A.esc(c.name)}</b><small>${c.count}곳</small></span><span class="city-check">↗</span></button>`).join('')}<small>실제 파일 분석 결과입니다.${unknown ? ' 그중 ' + unknown + '곳은 도시를 확인 못 해 "지역 확인 필요"로 넣어 뒀어요 — 여러 개 선택해서 한 번에 지정할 수 있어요.' : ''}</small></div>`);
+  const added = perFile.reduce((s, f) => s + (f.z ? f.z.added : 0), 0);
+  const updated = perFile.reduce((s, f) => s + (f.z ? f.z.updated : 0), 0);
+  const dupCandidates = perFile.reduce((s, f) => s + (f.z ? f.z.dupCandidates : 0), 0);
+  const ok = perFile.filter((f) => f.z);
+  const failed = perFile.filter((f) => f.error);
+  const skipReasonLabel = { 'entry-too-large': '용량이 너무 커서 제외', 'too-many-entries': '한 번에 처리할 수 있는 개수를 넘어 제외', 'review-file': '리뷰 파일이라 제외(장소 아님)' };
+  const fileList = (perFile.length > 1 || failed.length || skipped.length)
+    ? `<div class="import-filelist">${
+        ok.map((f) => `<div class="import-file ok">✓ ${A.esc(f.label)} — 새로 추가 ${f.z.added} · 자동 갱신 ${f.z.updated}</div>`).join('') +
+        failed.map((f) => `<div class="import-file bad">✕ ${A.esc(f.label)} — ${A.esc(f.error)}</div>`).join('') +
+        skipped.map((s) => `<div class="import-file skip">– ${A.esc(s.name.split('/').pop())} — ${A.esc(skipReasonLabel[s.reason] || s.reason)}</div>`).join('')
+      }</div>`
+    : '';
+  open('가져오기 결과', `<div class="detail import-flow"><span class="flow-tag">실제 결과</span><h2>${added + updated}곳을 확인했어요.</h2><p>도시별로 모아뒀어요.</p><div class="import-summary"><span><b>${added}</b>새로 추가</span><span><b>${updated}</b>자동 갱신</span><span><b>${total}</b>전체</span></div>${dupCandidates ? `<p class="inline-note">그중 ${dupCandidates}곳은 이름이 같은 기존 장소가 있었어요. 자동으로 합치지 않았습니다 — 장소 상세에서 같은 곳인지 확인해 주세요.</p>` : ''}${fileList}${cities.map((c) => `<button class="city-option" data-city="${A.esc(c.name)}"><span class="city-initial">${A.esc(c.name.slice(0, 1))}</span><span><b>${A.esc(c.name)}</b><small>${c.count}곳</small></span><span class="city-check">↗</span></button>`).join('')}<small>실제 파일 분석 결과입니다.${unknown ? ' 그중 ' + unknown + '곳은 도시를 확인 못 해 "지역 확인 필요"로 넣어 뒀어요 — 여러 개 선택해서 한 번에 지정할 수 있어요.' : ''}</small></div>`);
 }
 function nearby() {
   open('내 주변', `<div class="detail"><h2>지금 가까운 곳부터.</h2><p>현재 위치를 출발점으로, ${A.esc(city)}에 저장한 장소를 가까운 순서로 보여줄 공간입니다.</p><div class="inline-note">선택한 여행지: ${A.esc(city)}<br>위치 권한은 이 기능을 사용할 때만 요청합니다.</div><small>GPS 연결 전인 화면입니다. 현재 위치를 수집하거나 거리순으로 정렬하지 않습니다.</small><button class="primary" data-dismiss>저장한 스팟 계속 보기</button><button class="text-button" data-city-picker>여행지 바꾸기</button></div>`);
