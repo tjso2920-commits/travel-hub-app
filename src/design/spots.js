@@ -84,10 +84,14 @@ function detail(id) {
   const p = spots.find((x) => x.id === id); if (!p) return;
   const mapLabel = usingSample ? `Google Maps에서 주변 ${A.esc(p.category)} 찾기 ↗` : '이 장소를 Google Maps에서 보기 ↗';
   const mapHref = usingSample ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent((p.area || '') + ' ' + p.category)}` : A.esc(p.url || '');
-  const note = usingSample
-    ? '실제 매장이 아닌 디자인 예시입니다. 사진은 분위기 참고용이며 주소·전화번호는 실제 장소 연결 후 표시됩니다.'
-    : (p.image ? '' : '사진은 아직 연결되지 않았습니다. 주소·전화번호·영업시간은 다음 단계에서 연결합니다.');
-  open(usingSample ? '샘플 장소' : '내 장소', `<div class="detail">${photoHTML(p, 'detail-photo')}<h2>${A.esc(p.name)}</h2><span class="category">${A.esc(p.category)}</span><p>${A.esc(p.area) || '위치 정보 없음'}</p>${p.memo ? `<p>“${A.esc(p.memo)}”</p>` : ''}<button class="primary" data-detail-pick="${id}">${selected.has(id) ? '선택에서 빼기' : '오늘 갈 곳으로 선택'}</button>${mapHref ? `<a target="_blank" rel="noopener noreferrer" href="${mapHref}">${mapLabel}</a>` : ''}${note ? `<small>${note}</small>` : ''}</div>`);
+  const notes = [];
+  if (usingSample) notes.push('실제 매장이 아닌 디자인 예시입니다. 사진은 분위기 참고용이며 주소·전화번호는 실제 장소 연결 후 표시됩니다.');
+  else {
+    if (!p.image) notes.push('사진은 아직 연결되지 않았습니다. 주소·전화번호·영업시간은 다음 단계에서 연결합니다.');
+    if (!p.cityKnown) notes.push('도시를 확인하지 못했습니다. 주소나 지도 링크로 나중에 확인해 주세요.');
+    if (p.sourceLists && p.sourceLists.length > 1) notes.push('여러 목록(' + p.sourceLists.map(A.esc).join(' · ') + ')에 저장돼 있어 하나로 합쳤습니다.');
+  }
+  open(usingSample ? '샘플 장소' : '내 장소', `<div class="detail">${photoHTML(p, 'detail-photo')}<h2>${A.esc(p.name)}</h2><span class="category">${A.esc(p.category)}</span>${!usingSample ? ` <span class="category">${A.esc(p.city)}</span>` : ''}<p>${A.esc(p.area) || '위치 정보 없음'}</p>${p.memo ? `<p>“${A.esc(p.memo)}”</p>` : ''}<button class="primary" data-detail-pick="${id}">${selected.has(id) ? '선택에서 빼기' : '오늘 갈 곳으로 선택'}</button>${mapHref ? `<a target="_blank" rel="noopener noreferrer" href="${mapHref}">${mapLabel}</a>` : ''}${notes.map((n) => `<small>${n}</small>`).join('')}</div>`);
 }
 function showRoute() {
   const list = spots.filter((p) => p.city === city && route.has(p.id));
@@ -107,7 +111,10 @@ function updateCity() {
 }
 function chooseCity(name) { city = name; filter = '전체'; selecting = false; $('#search').value = ''; updateCity(); sheet.close(); }
 function cityPicker() {
-  open('여행지 선택', `<div class="detail"><h2>어디로 떠나세요?</h2><p>저장한 장소가 있는 도시를 골라주세요.</p><div class="city-options">${cities.map((c) => `<button class="city-option ${city === c.name ? 'chosen' : ''}" data-city="${A.esc(c.name)}"><span class="city-initial">${A.esc(c.name.slice(0, 1))}</span><span><b>${A.esc(c.name)}</b><small>${A.esc(c.country || '')} · 저장한 스팟 ${spots.filter((p) => p.city === c.name).length}곳</small></span><span class="city-check">${city === c.name ? '✓' : '›'}</span></button>`).join('')}</div><p class="inline-note">${usingSample ? '지금은 샘플입니다. 파일을 가져오면 실제 저장한 도시가 여기 나타나요.' : '지금은 활성 여행 하나만 관리됩니다. 다른 도시로 바꾸려면 목적지를 새로 설정해야 하고, 그러면 지금 여행이 백업된 뒤 비워집니다.'}</p><button class="primary" data-import>다른 도시의 장소 가져오기</button></div>`);
+  /* 2026-09-09부터: 여행지 선택은 "저장 장소를 걸러 보여주는 필터"일 뿐이다.
+     도시를 바꿔도 다른 도시에 담아 둔 장소는 지워지지 않는다 — 전부 그대로
+     보관돼 있고, 언제든 다시 골라 볼 수 있다. */
+  open('여행지 선택', `<div class="detail"><h2>어디를 보여드릴까요?</h2><p>담아 둔 장소를 도시별로 걸러 보여줍니다. 다른 도시로 바꿔도 지금 장소는 지워지지 않아요.</p><div class="city-options">${cities.map((c) => `<button class="city-option ${city === c.name ? 'chosen' : ''}" data-city="${A.esc(c.name)}"><span class="city-initial">${A.esc(c.name.slice(0, 1))}</span><span><b>${A.esc(c.name)}</b><small>저장한 스팟 ${c.count}곳</small></span><span class="city-check">${city === c.name ? '✓' : '›'}</span></button>`).join('')}</div>${usingSample ? '<p class="inline-note">지금은 샘플입니다. 파일을 가져오면 실제 저장한 도시가 여기 나타나요.</p>' : ''}<button class="primary" data-import>장소 더 가져오기</button></div>`);
 }
 
 /* ── 실제 가져오기 ──────────────────────────────────────────────────────
@@ -136,29 +143,28 @@ async function handleRealFile(e) {
     add(); return;
   }
   if (!parsed.length) { importMsg = '이 파일에서 저장된 장소를 찾지 못했어요.'; add(); return; }
-  const before = (foodMap.places || []).length;
-  const byKey = new Map();
-  (foodMap.places || []).forEach((p) => byKey.set(p.url || (p.name.toLowerCase() + '|' + p.lat + '|' + p.lng), p));
-  let added = 0, updated = 0;
-  parsed.forEach((x) => {
-    const key = x.url || (x.name.toLowerCase() + '|' + x.lat + '|' + x.lng);
-    const old = byKey.get(key);
-    if (old) { if (x.note && !old.note) old.note = x.note; if (x.lat !== null) old.lat = x.lat; if (x.lng !== null) old.lng = x.lng; updated++; return; }
-    const p = Object.assign({ id: 'fm' + Date.now() + added + Math.floor(Math.random() * 9999), cat: '기타' }, x);
-    delete p.title;
-    (foodMap.places = foodMap.places || []).push(p); byKey.set(key, p); added++;
-  });
-  if (!foodMap.dest) foodMap.dest = '내 여행지';
+  /* 병합 로직은 private/personal.html 의 fmMerge 를 그대로 옮긴
+     A.merge() 를 쓴다 — 여기서 다시 만들지 않는다(중복 판정이 갈리는 사고를
+     막는다). 이름만 같아도 겹치는 걸 잡고, 겹친 목록 소속은 다 보존한다. */
+  foodMap.places = foodMap.places || [];
+  const label = f.name.replace(/\.(csv|json)$/i, '');
+  const z = A.merge(parsed, label, foodMap.places);
   A.saveFoodMap(foodMap);
   usingSample = false;
   refreshFromStorage();
-  city = cities[0].name; filter = '전체';
+  /* 지금 보고 있는 도시가 사라졌으면 물론 바꾸고, "지역 확인 필요"를 보던
+     중이었는데 이번에 실제 도시가 새로 확인됐으면 그쪽을 먼저 보여준다 —
+     아는 도시가 생겼는데 계속 "확인 필요" 화면에 머무를 이유가 없다. */
+  const known = cities.find((c) => c.name !== A.UNKNOWN_CITY);
+  if (!cities.some((c) => c.name === city) || (city === A.UNKNOWN_CITY && known)) city = (known || cities[0]).name;
+  filter = '전체';
   updateCity(); // 배경 화면(grid·count·filters·album)도 같이 갱신 — 안 부르면 결과 시트를 닫아도 화면이 그대로 샘플로 남는다
-  importDone(added, updated, before);
+  importDone(z);
 }
-function importDone(added, updated, before) {
+function importDone(z) {
   const total = (foodMap.places || []).length;
-  open('가져오기 결과', `<div class="detail import-flow"><span class="flow-tag">실제 결과</span><h2>${added + updated}곳을 확인했어요.</h2><p>도시별로 모아뒀어요.</p><div class="import-summary"><span><b>${added}</b>새로 추가</span><span><b>${updated}</b>기존 갱신</span><span><b>${total}</b>전체</span></div>${cities.map((c) => `<button class="city-option" data-city="${A.esc(c.name)}"><span class="city-initial">${A.esc(c.name.slice(0, 1))}</span><span><b>${A.esc(c.name)}</b><small>${spots.filter((p) => p.city === c.name).length}곳</small></span><span class="city-check">↗</span></button>`).join('')}<small>실제 파일 분석 결과입니다. 위치가 불분명한 곳은 지도 링크로 나중에 확인할 수 있어요.</small></div>`);
+  const unknown = spots.filter((p) => !p.cityKnown).length;
+  open('가져오기 결과', `<div class="detail import-flow"><span class="flow-tag">실제 결과</span><h2>${z.added + z.updated}곳을 확인했어요.</h2><p>도시별로 모아뒀어요.</p><div class="import-summary"><span><b>${z.added}</b>새로 추가</span><span><b>${z.updated}</b>기존 갱신</span><span><b>${total}</b>전체</span></div>${z.merged ? `<p class="inline-note">그중 ${z.merged}곳은 다른 목록에도 있던 같은 곳이라 하나로 합쳤어요(메모·소속 목록은 다 남겼어요).</p>` : ''}${cities.map((c) => `<button class="city-option" data-city="${A.esc(c.name)}"><span class="city-initial">${A.esc(c.name.slice(0, 1))}</span><span><b>${A.esc(c.name)}</b><small>${c.count}곳</small></span><span class="city-check">↗</span></button>`).join('')}<small>실제 파일 분석 결과입니다.${unknown ? ' 그중 ' + unknown + '곳은 도시를 확인 못 해 "지역 확인 필요"로 넣어 뒀어요.' : ''}</small></div>`);
 }
 function nearby() {
   open('내 주변', `<div class="detail"><h2>지금 가까운 곳부터.</h2><p>현재 위치를 출발점으로, ${A.esc(city)}에 저장한 장소를 가까운 순서로 보여줄 공간입니다.</p><div class="inline-note">선택한 여행지: ${A.esc(city)}<br>위치 권한은 이 기능을 사용할 때만 요청합니다.</div><small>GPS 연결 전인 화면입니다. 현재 위치를 수집하거나 거리순으로 정렬하지 않습니다.</small><button class="primary" data-dismiss>저장한 스팟 계속 보기</button><button class="text-button" data-city-picker>여행지 바꾸기</button></div>`);

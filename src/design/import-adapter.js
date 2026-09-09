@@ -4,13 +4,14 @@
  *
  * 02_DESIGN_CONTRACT.md: "spots.js: 샘플 데이터와 UI 이벤트. 실데이터 어댑터로 대체"
  * 03_INTEGRATION_AND_ACCEPTANCE.md 1절: "현재 구조가 여전히 같은지 확인 후
- * 생성 파일만 단독 편집하는 실수를 피한다" — 그래서 파싱·저장 로직을
- * private/personal.html 에서 새로 만들지 않고 그대로 옮겼다(아래 각 함수
- * 위에 원본 위치를 적어 뒀다). private/personal.html 이 바뀌면 이 파일도
+ * 생성 파일만 단독 편집하는 실수를 피한다" — 그래서 파싱·저장·병합·도시 추측
+ * 로직을 private/personal.html 에서 새로 만들지 않고 그대로 옮겼다(아래 각
+ * 함수 위에 원본 위치를 적어 뒀다). private/personal.html 이 바뀌면 이 파일도
  * 같이 맞춰야 한다.
  *
- * 실제 178곳(구글 Takeout 원본)으로 이 파일 그대로 검증했다.
- * 자세한 수치는 docs/DESIGN_INTEGRATION_REPORT.md 참고.
+ * 2026-09-09 제품 방향 확정: 장소 보관함(여러 도시)과 여행 일정(활성 하나)은
+ * 다른 것이다. 이 파일은 "보관함" 쪽만 다룬다 — 일정 편집 연결은 다음 단계.
+ * 자세한 근거·실측 수치는 docs/DESIGN_INTEGRATION_REPORT.md 참고.
  */
 
 /* private/personal.html: const SALE_MODE / const PFX — 그대로 옮김.
@@ -27,10 +28,7 @@ function daSave(k, v) {
   catch (e) { return false; }
 }
 
-/* private/personal.html: const esc= — 그대로 옮김.
-   승인 spots.js 는 실데이터를 검증 없이 innerHTML 에 꽂았다. 사용자 저장 이름을
-   그대로 꽂으면 이론상 삽입 공격 표면이 된다(빈도는 낮지만 계약이 요구하는
-   sanitization 항목). 실데이터 렌더링 경로 전부에 이 esc 를 적용한다. */
+/* private/personal.html: const esc= — 그대로 옮김. */
 const daEsc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 /* private/personal.html: function fm2Coord — 그대로 옮김 */
@@ -41,9 +39,7 @@ function fm2Coord(v, max) {
   return Number.isFinite(n) && Math.abs(n) <= max ? n : null;
 }
 
-/* private/personal.html: function fmCoordFromUrl — 그대로 옮김.
-   구글맵 URL 안에 좌표가 박혀 있으면(@lat,lng · !3d!4d · ?q=lat,lng 등) 꺼낸다.
-   실제로는 Takeout CSV URL 대부분에 좌표가 없다 — 아래 리포트의 핵심 발견. */
+/* private/personal.html: function fmCoordFromUrl — 그대로 옮김. */
 function daCoordFromUrl(u) {
   const t = String(u || '');
   if (!t) return null;
@@ -57,7 +53,7 @@ function daCoordFromUrl(u) {
   return { lat, lng };
 }
 
-/* private/personal.html: function fmCsvRows — 그대로 옮김 (따옴표·줄바꿈·빈 줄 처리) */
+/* private/personal.html: function fmCsvRows — 그대로 옮김 */
 function daCsvRows(txt) {
   const rows = []; const row = []; let cur = ''; let q = false;
   for (let i = 0; i < txt.length; i++) {
@@ -76,8 +72,7 @@ function daCsvRows(txt) {
   return rows;
 }
 
-/* private/personal.html: function fmCsv — 그대로 옮김.
-   한글 Takeout 헤더(제목·메모·댓글)와 영문 헤더(Title·Note)를 둘 다 받는다. */
+/* private/personal.html: function fmCsv — 그대로 옮김. 한글·영문 헤더 둘 다 받는다. */
 function daCsv(txt) {
   const rows = daCsvRows(txt);
   if (rows.length < 2) return [];
@@ -101,8 +96,7 @@ function daCsv(txt) {
   });
 }
 
-/* private/personal.html: fmObj / fmJson (라이브 재정의판) — 그대로 옮김.
-   "지도(내 장소)/저장한 장소.json" 같은 GeoJSON FeatureCollection도 읽는다. */
+/* private/personal.html: fmObj / fmJson (라이브 재정의판) — 그대로 옮김. */
 function daObj(o) {
   if (!o || typeof o !== 'object') return null;
   const p = o.properties || o;
@@ -145,9 +139,7 @@ function daJson(j) {
   return out;
 }
 
-/* 06_UPDATES_AND_EXPORT_CORRECTION.md: "리뷰/설정 데이터는 장소 목록과 구분하고
-   불필요한 데이터는 수입하지 않는다." 리뷰.json 은 features[].properties 에
-   five_star_rating_published / questions 가 있다 — 저장 장소에는 없는 필드다. */
+/* 06_UPDATES_AND_EXPORT_CORRECTION.md: 리뷰 데이터는 장소가 아니므로 제외. */
 function daIsReviewFeature(x) {
   return !!(x && x.properties && (('five_star_rating_published' in x.properties) || ('questions' in x.properties)));
 }
@@ -161,64 +153,131 @@ function daJsonPlaces(j) {
 /* private/personal.html: function fm2HasCoords — 그대로 옮김 */
 function daHasCoords(p) { return !!p && fm2Coord(p.lat, 90) !== null && fm2Coord(p.lng, 180) !== null; }
 
-/* private/personal.html: function fmLink — 그대로 옮김.
-   03_INTEGRATION_AND_ACCEPTANCE.md: "detail: 검증된 매장 … 지도 …" —
-   실제로 저장했던 구글맵 링크를 최우선으로 쓴다. 없으면 이름으로 검색 링크. */
+/* private/personal.html: function fmLink — 그대로 옮김. 실제 저장된 링크 최우선. */
 function daLink(p) {
   if (p.url) return p.url;
   const q = p.lat && p.lng ? (p.lat + ',' + p.lng) : p.name;
   return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q);
 }
 
-/* private/personal.html: function fmInFukuoka — 2026-09-09 수정본 그대로 옮김.
-   (좌표도 주소도 없으면 빼지 않는다 — 실 데이터 178곳 중 165곳이 이 버그로
-   사라졌던 것을 고친 바로 그 로직. docs/DESIGN_INTEGRATION_REPORT.md 참고) */
-function daInFukuoka(p) {
-  const a = String((p.address || '') + ' ' + (p.note || '')).toLowerCase();
-  if (/福岡|fukuoka|후쿠오카|糸島|itoshima|이토시마|北九州|kitakyushu/.test(a)) return true;
-  if (p.lat === null || p.lat === undefined || p.lng === null || p.lng === undefined) return true;
-  return p.lat >= 32.7 && p.lat <= 34.15 && p.lng >= 129.2 && p.lng <= 131.25;
+/* private/personal.html: const FM_CITY_ALT — 그대로 옮김(도시 이름 → 대체 표기 정규식). */
+const FM_CITY_ALT = {
+  '후쿠오카': '福岡|fukuoka|hakata|博多', '도쿄': '東京|tokyo|shibuya|shinjuku', '오사카': '大阪|osaka|namba|umeda',
+  '교토': '京都|kyoto', '삿포로': '札幌|sapporo', '오키나와': '沖縄|okinawa|naha|那覇', '나고야': '名古屋|nagoya',
+  '서울': '서울|seoul', '부산': '부산|busan', '제주': '제주|jeju',
+  '타이베이': '台北|taipei', '타이중': '台中|taichung', '가오슝': '高雄|kaohsiung',
+  '홍콩': '香港|hong ?kong|kowloon', '상하이': '上海|shanghai', '베이징': '北京|beijing',
+  '방콕': 'bangkok|กรุงเทพ|krung ?thep', '치앙마이': 'chiang ?mai|เชียงใหม่',
+  '하노이': 'hà ?nội|ha ?noi|hanoi', '호치민': 'hồ ?chí ?minh|ho ?chi ?minh|saigon|sài ?gòn',
+  '다낭': 'đà ?nẵng|da ?nang', '후에': 'huế|hue',
+  '싱가포르': 'singapore', '쿠알라룸푸르': 'kuala ?lumpur|\\bkl\\b', '세부': 'cebu', '보라카이': 'boracay',
+  '발리': 'bali|denpasar|ubud|seminyak', '뉴욕': 'new ?york|manhattan|brooklyn',
+  '파리': 'paris', '로마': 'roma|rome', '바르셀로나': 'barcelona', '런던': 'london',
+  '시드니': 'sydney', '이스탄불': 'istanbul|i̇stanbul', '두바이': 'dubai|دبي',
+};
+/* private/personal.html: function fmCityGuess — 2026-09-09 신설, 그대로 옮김.
+   증거 없이 도시를 확정하지 않는다 — 텍스트에 도시 이름이 정확히 하나만
+   걸리면 그 도시, 여러 개 걸리면 애매하니 확정 안 함. 텍스트로 못 찾았으면
+   좌표로 후쿠오카만 교차검증(지금 정확한 범위를 아는 게 후쿠오카뿐이라).
+   그래도 없으면 null — 화면은 이걸 "지역 확인 필요"로 보여준다. */
+function daCityGuess(p) {
+  /* 메모는 안 쓴다 — 실제로 후쿠오카의 한 가게 메모가 다른 도시와 비교하는
+     개인 코멘트였고, 메모까지 보면 이걸 엉뚱한 도시로 잘못 확정했다.
+     주소만 신뢰할 수 있는 장소 정보로 쓴다. */
+  const txt = String(p.address || '').toLowerCase();
+  if (txt.trim()) {
+    const hit = [];
+    for (const city in FM_CITY_ALT) {
+      const pat = city.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + (FM_CITY_ALT[city] ? ('|' + FM_CITY_ALT[city]) : '');
+      let re; try { re = new RegExp(pat, 'i'); } catch (e) { continue; }
+      if (re.test(txt)) hit.push(city);
+    }
+    if (hit.length === 1) return hit[0];
+    if (hit.length > 1) return null;
+  }
+  if (daHasCoords(p) && p.lat >= 32.7 && p.lat <= 34.15 && p.lng >= 129.2 && p.lng <= 131.25) return '후쿠오카';
+  return null;
+}
+
+/* private/personal.html: fmMerge — 2026-09-09 개정본 그대로 옮김(카테고리 자동분류
+   호출부만 뺐다 — fmInfer 는 다음 단계(로드맵 ③)에서 연결한다). 이름만으로도
+   겹치는 걸 잡고(좌표·URL 형식이 달라도), 겹친 곳은 목록 소속을 다 보존한다. */
+const daNameKey = (n) => String(n || '').trim().toLowerCase().replace(/\s+/g, ' ');
+function daMerge(arr, sourceLabel, places) {
+  let added = 0, updated = 0, skipped = 0, merged = 0;
+  const byKey = new Map(); const byName = new Map();
+  const kName = (p) => (p.name || '').toLowerCase() + '|' + p.lat + '|' + p.lng;
+  places.forEach((p) => {
+    [p.placeId, p.url, kName(p)].forEach((k) => { if (k) byKey.set(k, p); });
+    const nk = daNameKey(p.name); if (nk) byName.set(nk, p);
+  });
+  arr.forEach((x) => {
+    if (!x || !x.name) { skipped++; return; }
+    const key = x.placeId || x.url || kName(x);
+    const nk = daNameKey(x.name);
+    const exact = byKey.get(x.placeId) || byKey.get(x.url) || byKey.get(kName(x));
+    const old = exact || (nk && byName.get(nk));
+    if (old) {
+      if (!exact) merged++;
+      ['name', 'note', 'address', 'url', 'placeId', 'rating', 'ratingCount'].forEach((k) => { if (x[k] !== undefined && x[k] !== null && x[k] !== '') old[k] = x[k]; });
+      if (x.lat !== null && x.lat !== undefined) old.lat = x.lat;
+      if (x.lng !== null && x.lng !== undefined) old.lng = x.lng;
+      if (!old.cityConfirmed) old.city = daCityGuess(old);
+      if (sourceLabel) { old.sourceLists = Array.isArray(old.sourceLists) ? old.sourceLists : []; if (!old.sourceLists.includes(sourceLabel)) old.sourceLists.push(sourceLabel); }
+      byKey.set(key, old); if (nk) byName.set(nk, old);
+      updated++; return;
+    }
+    const p = Object.assign({ id: 'fm' + Date.now() + added + Math.floor(Math.random() * 9999), cat: x.cat || '기타' }, x);
+    delete p.title;
+    p.city = daCityGuess(p);
+    p.sourceLists = sourceLabel ? [sourceLabel] : [];
+    places.push(p); byKey.set(key, p); if (nk) byName.set(nk, p); added++;
+  });
+  return { added, updated, skipped, merged };
 }
 
 /**
  * foodMap 을 읽어 승인 디자인이 기대하는 spots/cities 모양으로 바꾼다.
  *
- * ⚠️ 알려진 단순화 — 지금 앱은 "여행 하나만 활성"인 구조다(나라를 바꾸면
- * tripReset() 이 이전 여행을 지운다, HANDOFF.md 35절 이전부터 그랬다).
- * 승인 디자인은 후쿠오카·삿포로·뉴욕을 한 화면에서 동시에 넘나드는 걸
- * 전제로 한다(03_INTEGRATION_AND_ACCEPTANCE.md "후쿠오카에서 선택한 장소가
- * 뉴욕 동선에 섞이지 않음"). 지금은 실제로 여러 여행을 동시에 저장하는
- * 기능이 없으므로, 지금 활성 여행(foodMap.dest) 하나만 city 로 놓는다.
- * 여러 여행을 실제로 병행 저장하려면 데이터 구조를 바꿔야 하고, 그건
- * 기존 저장 데이터에 영향을 주는 결정이라 여기서 임의로 하지 않는다.
- * → docs/DESIGN_INTEGRATION_REPORT.md "결정이 필요한 것" 참고.
+ * 2026-09-09 이전에는 "지금 활성 여행지 하나"만 city 로 취급했다. 이제
+ * places[] 는 여러 도시를 계속 보관하는 창고이므로, 장소마다 실제로 추측된
+ * (또는 사용자가 확정한) city 를 그대로 쓴다. city 가 없는 곳은 "지역 확인
+ * 필요"라는 별도 묶음으로 보여준다 — 후쿠오카로 임의 확정하지 않는다.
  */
+const UNKNOWN_CITY = '지역 확인 필요';
 function daBuildSpots(foodMap) {
-  const dest = foodMap.dest || '내 여행지';
   const places = Array.isArray(foodMap.places) ? foodMap.places : [];
-  const visible = places.filter((p) => (foodMap.destCountry === 'JP' && /후쿠오카|하카타|fukuoka/i.test(dest)) ? daInFukuoka(p) : true);
-  const spots = visible.map((p) => ({
+  const spots = places.map((p) => ({
     id: p.id,
     name: p.name || '이름 없음',
     category: p.cat || '기타',
-    area: p.address || p.note || '',
+    area: p.address || '',
     memo: p.note || '',
     image: null, // 실 사진 미연결 — 카드가 이 값을 보고 빈 상태를 그린다
-    city: dest,
+    city: p.city || UNKNOWN_CITY,
+    cityKnown: !!p.city,
     url: daLink(p),
     hasCoords: daHasCoords(p),
     lat: p.lat, lng: p.lng,
+    sourceLists: Array.isArray(p.sourceLists) ? p.sourceLists : [],
   }));
-  const cities = [{ name: dest, label: dest, country: foodMap.destCountry || '', count: spots.length }];
+  const byCity = new Map();
+  spots.forEach((s) => { byCity.set(s.city, (byCity.get(s.city) || 0) + 1); });
+  const cities = [...byCity.keys()]
+    .sort((a, b) => (a === UNKNOWN_CITY) - (b === UNKNOWN_CITY) || byCity.get(b) - byCity.get(a))
+    .map((name) => ({ name, label: name === UNKNOWN_CITY ? UNKNOWN_CITY : name, country: '', count: byCity.get(name) }));
   return { spots, cities };
 }
 
 window.DesignAdapter = {
+  UNKNOWN_CITY,
   loadFoodMap: () => daLoad('foodmap_v1', { places: [], dest: '', destCountry: '' }),
   saveFoodMap: (fm) => daSave('foodmap_v1', fm),
   parseCsv: daCsv,
   parseJson: daJsonPlaces,
+  merge: daMerge,
   buildSpots: daBuildSpots,
+  cityGuess: daCityGuess,
   esc: daEsc,
   hasCoords: daHasCoords,
 };

@@ -2838,6 +2838,28 @@ function trShowMenu(items,hard,meta){
 /* ── 맛집지도 탭: Takeout 이식형 신규 모듈 ── */
 const FM_CATS=['전체','후쿠오카권','즐겨찾기','미방문','맛집·식당','바·이자카야','카페·디저트','관광·명소','쇼핑','숙소','교통','사우나·온천','마사지·스파','약국·병원','기타'];
 let foodMap=load('foodmap_v1',{places:[],filter:'후쿠오카권',q:'',selected:null,apiKey:'',listName:'여행계획'});
+/* 마이그레이션: 도시 태그가 없던 옛 장소에 한 번만 채워 넣는다.
+   실패해도 원본을 안 건드리게, 백업 파일을 먼저 내려받고 실행한다.
+   한 번 끝나면 foodMap.schemaV 로 표시해서 다시 안 돈다. */
+function fmMigrateCityTags(){
+ if(foodMap.schemaV>=2)return;
+ if(!Array.isArray(foodMap.places)||!foodMap.places.length){foodMap.schemaV=2;save('foodmap_v1',foodMap);return;}
+ const needsMigration=foodMap.places.some(p=>p.city===undefined);
+ if(!needsMigration){foodMap.schemaV=2;save('foodmap_v1',foodMap);return;}
+ try{
+  fm2Download('마이그레이션_백업_'+TODAY+'.json',bkFoodMap());
+  foodMap.places.forEach(function(p){
+   if(p.city===undefined)p.city=fmCityGuess(p);
+   if(!Array.isArray(p.sourceLists))p.sourceLists=[];
+  });
+  foodMap.schemaV=2;
+  save('foodmap_v1',foodMap);
+ }catch(e){
+  /* 실패하면 손대지 않는다 — 다음에 앱을 열 때 다시 시도한다(schemaV 를 안 올렸으므로). */
+  console.error('도시 태그 마이그레이션 실패, 다음 실행 때 재시도:',e);
+ }
+}
+fmMigrateCityTags();
 if(!foodMap||typeof foodMap!=='object')foodMap={places:[],filter:'후쿠오카권',q:'',selected:null,apiKey:'',listName:'여행계획'};
 if(!Array.isArray(foodMap.places))foodMap.places=[];
 /* ── 분류 자동 판정 ──────────────────────────────────────────────────
@@ -3303,6 +3325,34 @@ function fmCityRe(){
  const parts=[dest.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g,'\\$&')];
  if(alt)parts.push(alt);
  try{return new RegExp(parts.join('|'),'i');}catch(e){return null;}
+}
+/* 장소 하나의 도시를 "안다"고 확정할 근거가 있을 때만 도시 이름을 준다.
+   주소·메모 텍스트에 아는 도시 이름이 정확히 하나만 걸리면 그 도시.
+   두 도시가 동시에 걸리면(예: 주소에 두 지명이 다 섞여 있음) 애매하니 확정 안 함.
+   텍스트로 못 찾았는데 좌표가 있으면, 지금 정확한 범위를 아는 후쿠오카에
+   한해서만 좌표로 교차검증한다(다른 도시는 아직 범위 데이터가 없다).
+   그래도 못 찾으면 null — 호출부가 이걸 '지역 확인 필요'로 보여준다. */
+function fmCityGuess(p){
+ /* 메모(note)는 안 쓴다 — 실제로 후쿠오카의 한 가게 메모가 다른 도시와
+    비교하는 개인 코멘트("예전에 가 본 ○○ 가게가 더 좋았다" 식)였는데,
+    메모까지 보면 이런 걸 엉뚱한 도시로 잘못 확정한다. 주소만 "신뢰할 수 있는 장소 정보"로
+    쓴다 — 메모는 사람이 자유롭게 쓴 글이라 지명이 나와도 위치를 뜻하지 않을
+    수 있다. */
+ const txt=String(p.address||'').toLowerCase();
+ if(txt.trim()){
+  const hit=[];
+  for(const city in FM_CITY_ALT){
+   /* fmCityRe() 와 같은 규칙 — 도시 한글 이름 자체도 매칭 대상에 넣는다.
+      FM_CITY_ALT 값만 쓰면 "후쿠오카"라는 한글 텍스트 자체는 안 걸린다. */
+   const pat=city.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+(FM_CITY_ALT[city]?('|'+FM_CITY_ALT[city]):'');
+   let re; try{re=new RegExp(pat,'i');}catch(e){continue;}
+   if(re.test(txt))hit.push(city);
+  }
+  if(hit.length===1)return hit[0];
+  if(hit.length>1)return null;
+ }
+ if(fm2HasCoords(p)&&p.lat>=32.7&&p.lat<=34.15&&p.lng>=129.2&&p.lng<=131.25)return '후쿠오카';
+ return null;
 }
 function fmInArea(p){
  /* 후쿠오카 좌표 범위는 **목적지가 후쿠오카일 때만** 쓴다.
@@ -4896,31 +4946,35 @@ function fmCatLabel(x){
 }
 function fmRegionCode(){return fmCountryRow()[0];}
 function fmPlaceLang(){return fmCountryRow()[2];}
-/* 나라가 바뀌었는데 이전 여행 데이터가 그대로 남으면
-   후쿠오카 가게가 '파리권' 에 뜨고, 하카타 호텔이 파리 여행 기준점이 된다.
-   거리·오늘 동선·예산이 전부 엉뚱해진다. 그래서 한 번 물어본다. */
+/* 2026-09-09 부로 제품 방향 확정: 장소 보관함과 여행 일정은 다른 것이다.
+   담아 둔 장소(foodMap.places)는 여러 도시를 걸쳐 계속 남아 있어야 하고,
+   "여행지 선택"은 그중 무엇을 보여줄지 고르는 필터일 뿐이어야 한다.
+   예전에는 나라를 바꾸면 담아 둔 장소까지 통째로 비웠다 — 이제 절대 안 한다.
+   지우는 건 "지금 편집 중인 여행 일정"(숙소·날짜·코스·예산)뿐이고,
+   이 앱은 아직 그 일정을 하나만 동시에 편집한다(여러 일정 동시 편집은 다음
+   단계 — docs/DESIGN_INTEGRATION_REPORT.md 참고). */
 function tripHasData(){
- return (foodMap.places&&foodMap.places.length>0)||!!foodMap.hotel||!!foodMap.d1;
+ return !!foodMap.hotel||!!foodMap.d1;
 }
-/* 이전 여행을 파일로 내려받고 비운다. 담아 둔 것은 안 없어지고 파일로 남는다. */
+/* 지금 일정만 파일로 내려받고 비운다. 담아 둔 장소는 절대 건드리지 않는다. */
 function tripReset(){
- try{fm2Download((foodMap.dest||'여행')+'_'+TODAY+'.json',bkFoodMap());}catch(e){}
- foodMap.places=[];
+ try{fm2Download((foodMap.dest||'여행')+'_일정백업_'+TODAY+'.json',{dest:foodMap.dest,destCountry:foodMap.destCountry,hotel:foodMap.hotel,d1:foodMap.d1,d2:foodMap.d2,course:foodMap.course,plan:foodMap.plan});}catch(e){}
  delete foodMap.hotel; delete foodMap.d1; delete foodMap.d2;
  delete foodMap.course; delete foodMap.plan; delete foodMap.cluster;
  delete foodMap.selected; delete foodMap.fx; delete foodMap.fxCur;
- foodMap.filter='후쿠오카권'; foodMap.q='';
  try{const b=load('budget_v1',null);if(b){save('budget_v1',{spends:[]});}}catch(e){}
  save('foodmap_v1',foodMap);
 }
 function fmSetCountry(v){
  const next=String(v||'').toUpperCase();
  const now=String(foodMap.destCountry||'').toUpperCase();
- /* 나라가 실제로 바뀌고, 이전 여행 것이 남아 있을 때만 묻는다 */
+ /* 나라가 실제로 바뀌고, 지금 편집 중인 일정이 남아 있을 때만 묻는다.
+    담아 둔 장소 개수는 안내에서 뺐다 — 그건 이제 안 지워지기 때문이다. */
  if(now&&next&&now!==next&&tripHasData()){
-  if(confirm('새 여행으로 시작할까요?\n\n'+
-   '지금 담아 둔 '+(foodMap.places||[]).length+'곳·숙소·날짜·예산을 비웁니다.\n'+
-   '비우기 전에 백업 파일을 자동으로 내려받습니다.\n\n'+
+  if(confirm('새 여행 일정으로 시작할까요?\n\n'+
+   '지금 잡아 둔 숙소·날짜·코스·예산을 비웁니다.\n'+
+   '담아 둔 장소('+(foodMap.places||[]).length+'곳)는 지워지지 않고 그대로 보관됩니다.\n'+
+   '비우기 전에 지금 일정을 백업 파일로 자동 내려받습니다.\n\n'+
    '[취소] 를 누르면 지금 것을 그대로 두고 목적지만 바꿉니다.')){
    tripReset();
   }
@@ -4929,8 +4983,6 @@ function fmSetCountry(v){
  /* 나라가 바뀌면 통화도 바뀐다. 손으로 통화를 골라 둔 게 아니면 그것도 따라가게 비운다. */
  if(foodMap.fxCur&&!foodMap.fxCurManual)delete foodMap.fxCur;
  save('foodmap_v1',foodMap);renderFoodMap();
- /* 환율은 fxRate() 가 통화 짝을 보고 알아서 무시한다. 여기서 지울 필요가 없다 —
-    일본으로 되돌아오면 받아 뒀던 엔화 환율이 그대로 다시 살아난다. */
 }
 /* 이름만 있는 장소를 찾을 때 붙이는 꼬리말. 도시 이름이 가장 잘 듣는다. */
 function fmAreaHint(){return affDest();}
@@ -5604,10 +5656,52 @@ fmObj=function(o){if(!o||typeof o!=='object')return null;const p=o.properties||o
  if(out.lat===null||out.lng===null){const c=fmCoordFromUrl(out.url);if(c){out.lat=c.lat;out.lng=c.lng;out.latFrom='url';}}
  return out;};
 fmJson=function(j){const direct=j&&(j.places||j.spots);if(Array.isArray(direct))return direct.map(fmObj).filter(Boolean);const out=[],seen=new Set();function walk(x){if(!x||typeof x!=='object')return;const v=fmObj(x);if(v){const k=v.placeId||v.url||v.name+'|'+v.lat+'|'+v.lng;if(!seen.has(k)){seen.add(k);out.push(v);return;}}if(Array.isArray(x))x.forEach(walk);else Object.keys(x).forEach(k=>{if(typeof x[k]==='object')walk(x[k]);});}walk(j);return out;};
-fmMerge=function(arr){let added=0,updated=0,skipped=0,blocked=0;const byKey=new Map();const kName=p=>(p.name||'').toLowerCase()+'|'+p.lat+'|'+p.lng;foodMap.places.forEach(p=>{fm2Normalize(p);[p.placeId,p.url,kName(p)].forEach(k=>{if(k)byKey.set(k,p);});});arr.forEach(x=>{if(!x||!x.name){skipped++;return;}const key=x.placeId||x.url||kName(x),old=byKey.get(x.placeId)||byKey.get(x.url)||byKey.get(kName(x));if(old){['name','note','address','url','placeId','rating','ratingCount'].forEach(k=>{if(x[k]!==undefined&&x[k]!==null&&x[k]!=='')old[k]=x[k];});if(x.lat!==null&&x.lat!==undefined)old.lat=x.lat;if(x.lng!==null&&x.lng!==undefined)old.lng=x.lng;if(x.videos&&x.videos.length)old.videos=x.videos;old.cat=x.cat||old.cat||fmInfer(old.name+' '+old.note+' '+old.address);old.kind=x.kind||old.kind||fm2Kind(old.name+' '+old.note,old.cat);old.region=x.region||old.region||fm2Region(old.address+' '+old.name);updated++;return;}
- /* 이미 담아 둔 것은 건드리지 않는다. 넘치는 만큼만 안 담는다. */
- if(licRoom()<1){blocked++;return;}
- const p=fm2Normalize(Object.assign({id:'fm'+Date.now()+added+Math.floor(Math.random()*99)},x));foodMap.places.push(p);byKey.set(key,p);added++;});save('foodmap_v1',foodMap);return{added:added,updated:updated,skipped:skipped,blocked:blocked};};
+/* 이름만 놓고 같은 곳인지 볼 때 쓰는 정규화 — 공백만 정리한다.
+   너무 세게 정규화하면(괄호 제거 등) 다른 가게를 같은 곳으로 오인할 수 있어
+   여기서는 대소문자·앞뒤 공백만 정리하는 선에서 멈춘다. */
+const fmNameKey=n=>String(n||'').trim().toLowerCase().replace(/\s+/g,' ');
+fmMerge=function(arr,sourceLabel){let added=0,updated=0,skipped=0,blocked=0,merged=0;
+ const byKey=new Map(),byName=new Map();
+ const kName=p=>(p.name||'').toLowerCase()+'|'+p.lat+'|'+p.lng;
+ foodMap.places.forEach(p=>{
+  fm2Normalize(p);
+  [p.placeId,p.url,kName(p)].forEach(k=>{if(k)byKey.set(k,p);});
+  const nk=fmNameKey(p.name);if(nk)byName.set(nk,p);
+ });
+ arr.forEach(x=>{
+  if(!x||!x.name){skipped++;return;}
+  const key=x.placeId||x.url||kName(x);
+  const nk=fmNameKey(x.name);
+  /* 1순위: placeId·URL·이름+좌표가 정확히 같음(같은 내보내기를 두 번 넣은 경우)
+     2순위: 좌표나 URL 형식이 달라도 이름이 같음(같은 곳을 다른 목록·다른
+     내보내기 방식으로 두 번 저장한 경우 — 실제로 CSV 판과 GeoJSON 판이 같은
+     가게를 이렇게 겹쳐 냈다). 이름만으로 합치는 거라 완전히 다른 곳을
+     같은 곳으로 오인할 여지가 아예 없진 않지만, 개인이 저장한 특정 상호명
+     기준이라 위험이 낮다고 보고 합친다 — 대신 두 출처를 다 남긴다. */
+  const exact=byKey.get(x.placeId)||byKey.get(x.url)||byKey.get(kName(x));
+  const old=exact||(nk&&byName.get(nk));
+  if(old){
+   if(!exact)merged++; // 정확히 같은 키가 아니라 이름만으로 겹친 것 — 다른 목록의 같은 곳
+   ['name','note','address','url','placeId','rating','ratingCount'].forEach(k=>{if(x[k]!==undefined&&x[k]!==null&&x[k]!=='')old[k]=x[k];});
+   if(x.lat!==null&&x.lat!==undefined)old.lat=x.lat;
+   if(x.lng!==null&&x.lng!==undefined)old.lng=x.lng;
+   if(x.videos&&x.videos.length)old.videos=x.videos;
+   old.cat=x.cat||old.cat||fmInfer(old.name+' '+old.note+' '+old.address);
+   old.kind=x.kind||old.kind||fm2Kind(old.name+' '+old.note,old.cat);
+   old.region=x.region||old.region||fm2Region(old.address+' '+old.name);
+   if(!old.cityConfirmed)old.city=fmCityGuess(old);
+   if(sourceLabel){old.sourceLists=Array.isArray(old.sourceLists)?old.sourceLists:[];if(!old.sourceLists.includes(sourceLabel))old.sourceLists.push(sourceLabel);}
+   byKey.set(key,old);if(nk)byName.set(nk,old);
+   updated++;return;
+  }
+  if(licRoom()<1){blocked++;return;}
+  const p=fm2Normalize(Object.assign({id:'fm'+Date.now()+added+Math.floor(Math.random()*99)},x));
+  p.city=fmCityGuess(p);
+  p.sourceLists=sourceLabel?[sourceLabel]:[];
+  foodMap.places.push(p);byKey.set(key,p);if(nk)byName.set(nk,p);added++;
+ });
+ save('foodmap_v1',foodMap);
+ return{added:added,updated:updated,skipped:skipped,blocked:blocked,merged:merged};};
 fmSaveApi=function(silent){const a=document.getElementById('fmApiKey'),y=document.getElementById('fmYoutubeKey');if(a)foodMap.apiKey=a.value.trim();if(y)foodMap.youtubeKey=y.value.trim();save('foodmap_v1',foodMap);if(!silent)alert('API 키를 이 기기에만 저장했습니다.');};
 let fmBulk={running:false,cancel:false,done:0,total:0,ok:0,fail:[]};
 let fmBulkLast='';
@@ -5721,7 +5815,7 @@ function fmImportDone(z){
  alert(m);
  if(z.blocked)licAskGo('무료판 한도('+FREE_LIMIT+'곳)를 넘어 '+z.blocked+'곳은 담기지 않았습니다.');
 }
-async function fm2ImportFile(f,quiet){const txt=await f.text();let arr;if(/\.csv$/i.test(f.name))arr=fmCsv(txt);else if(/\.kml$/i.test(f.name)||/^\s*</.test(txt))arr=fmKml(txt);else arr=fmJson(JSON.parse(txt));if(/\.csv$/i.test(f.name))foodMap.listName=f.name.replace(/\.csv$/i,'')||'여행계획';const z=fmMerge(arr);if(!quiet)fmImportDone(z);return z;}
+async function fm2ImportFile(f,quiet){const txt=await f.text();let arr;if(/\.csv$/i.test(f.name))arr=fmCsv(txt);else if(/\.kml$/i.test(f.name)||/^\s*</.test(txt))arr=fmKml(txt);else arr=fmJson(JSON.parse(txt));if(/\.csv$/i.test(f.name))foodMap.listName=f.name.replace(/\.csv$/i,'')||'여행계획';const z=fmMerge(arr,foodMap.listName);if(!quiet)fmImportDone(z);return z;}
 fmImport=function(inp){const f=inp.files&&inp.files[0];inp.value='';if(!f)return;fm2ImportFile(f,false).then(()=>renderFoodMap()).catch(e=>alert('가져오기 실패\n\nzip 을 푼 뒤 Takeout ▸ 저장됨 안의 <목록 이름>.csv 를 골라 주세요.\nzip 파일 자체나 폴더는 넣을 수 없습니다.\n\n'+(e.message||e)));};
 async function fmLinkCsv(){if(!window.showOpenFilePicker){alert('이 브라우저는 파일 연결을 지원하지 않습니다. CSV 불러오기로 최신 파일을 다시 선택해 주세요.');return;}try{const a=await showOpenFilePicker({multiple:false,types:[{description:'Google Maps 여행 계획 CSV',accept:{'text/csv':['.csv']}}]}),h=a[0];await fmSyncSet('travelCsv',h);foodMap.linkedCsvName=h.name;foodMap.linkedCsvModified=0;foodMap.linkedCsvAt='확인 중';save('foodmap_v1',foodMap);await fmCheckLinkedCsv(false);}catch(e){if(e&&e.name!=='AbortError')alert('CSV 연결 실패: '+(e.message||e));}}
 async function fmCheckLinkedCsv(auto){if(fmSyncChecking)return;fmSyncChecking=true;try{const h=await fmSyncGet('travelCsv');if(!h){if(!auto)alert('연결된 CSV가 없습니다. 먼저 ‘CSV 파일 연결’을 눌러 주세요.');return;}let perm=await h.queryPermission({mode:'read'});if(perm!=='granted'&&!auto)perm=await h.requestPermission({mode:'read'});if(perm!=='granted'){if(!auto)alert('연결 파일 읽기 권한이 필요합니다.');return;}const f=await h.getFile();if(!auto||f.lastModified>(+foodMap.linkedCsvModified||0)){const z=await fm2ImportFile(f,true);foodMap.linkedCsvName=f.name;foodMap.linkedCsvModified=f.lastModified;foodMap.linkedCsvAt=new Date().toLocaleString('ko-KR');save('foodmap_v1',foodMap);if(!auto)alert('연결 파일 확인 완료\n새 장소 '+z.added+'개 · 기존 장소 갱신 '+z.updated+'개');renderFoodMap();}else if(!auto)alert('연결 파일이 이미 최신입니다.');}catch(e){if(!auto)alert('연결 파일 확인 실패: '+(e.message||e));}finally{fmSyncChecking=false;}}
