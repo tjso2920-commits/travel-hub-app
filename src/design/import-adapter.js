@@ -30,6 +30,50 @@ function daSave(k, v) {
   try { localStorage.setItem(PFX + k, JSON.stringify(v)); return true; }
   catch (e) { return false; }
 }
+/* 2026-09-09 코드 검토 반영 — sale-mode 메타 태그를 바꾸는 것만으로는
+   cp1_ 데이터가 cs1_로 옮겨지지 않는다(그냥 다른 storage 칸을 보기
+   시작할 뿐이다). 이 화면이 실제 판매용 자리를 대체하는 순간 사용자
+   storage가 갈라지는 문제를 여기서 미리 해결해 둔다.
+   - cp1_로 시작하는 모든 키(foodmap_v1 뿐 아니라 이 앱이 쓰는 모든 개인용
+     키)를 대응하는 cs1_ 키로 복사한다. 이미 cs1_ 쪽에 값이 있는 키는
+     안 건드린다(사용자가 판매용에서 이미 쌓은 데이터를 안 덮는다).
+   - 원본 cp1_ 키는 절대 지우지 않는다 — 실패해도 원본이 남아 있어야
+     복구할 수 있다.
+   - 이전에 실패하면(예: 저장 공간 가득 참) 이번에 새로 쓴 cs1_ 키만
+     되돌리고 "다음에 다시 시도"할 수 있게 완료 표시를 안 남긴다.
+   - 한 번 끝나면 cs1_migrated_v1 표시를 남겨 매번 전체 키를 다시
+     스캔하지 않게 한다. */
+function daMigrateStorage() {
+  if (!SALE_MODE) return { migrated: false, reason: 'not-sale-mode' };
+  try {
+    if (localStorage.getItem('cs1_migrated_v1')) return { migrated: false, reason: 'already-done' };
+    const keysToMigrate = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.indexOf('cp1_') === 0 && localStorage.getItem('cs1_' + k.slice(4)) === null) keysToMigrate.push(k);
+    }
+    if (!keysToMigrate.length) {
+      try { localStorage.setItem('cs1_migrated_v1', '1'); } catch (e) { /* 표시 실패는 무시 — 다음에 다시 스캔만 하면 됨 */ }
+      return { migrated: false, reason: 'nothing-to-migrate' };
+    }
+    const written = [];
+    try {
+      keysToMigrate.forEach((k) => {
+        const newKey = 'cs1_' + k.slice(4);
+        localStorage.setItem(newKey, localStorage.getItem(k));
+        written.push(newKey);
+      });
+      localStorage.setItem('cs1_migrated_v1', '1');
+      return { migrated: true, keys: keysToMigrate };
+    } catch (e) {
+      written.forEach((k) => { try { localStorage.removeItem(k); } catch (e2) { /* 되돌리기 자체가 실패해도 cp1_ 원본은 그대로다 */ } });
+      return { migrated: false, reason: 'write-failed', error: String(e && e.message || e) };
+    }
+  } catch (e) {
+    return { migrated: false, reason: 'error', error: String(e && e.message || e) };
+  }
+}
+daMigrateStorage();
 
 /* private/personal.html: const esc= — 그대로 옮김. */
 const daEsc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -434,4 +478,5 @@ window.DesignAdapter = {
   knownCities: Object.keys(FM_CITY_ALT),
   esc: daEsc,
   hasCoords: daHasCoords,
+  migrateStorage: daMigrateStorage,
 };

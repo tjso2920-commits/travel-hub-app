@@ -4965,8 +4965,12 @@ function tripHasData(){
  /* renderFoodMap() 이 foodMap.hotel 을 지워도 곧바로 빈 껍데기 객체
     ({name:'',lat:null,...})로 다시 만든다 — 객체 자체는 항상 있어서
     !!foodMap.hotel 만으로는 "숙소를 잡아 뒀다"를 구분 못 한다.
-    이름이 실제로 있는지로 봐야 한다. */
- return !!(foodMap.hotel&&foodMap.hotel.name)||!!foodMap.d1;
+    이름이 실제로 있는지로 봐야 한다.
+    2026-09-09 코드 검토 반영: 숙소·시작일 말고 코스·경비만 있는 일정도
+    "일정이 있다"로 봐야 한다 — 안 그러면 코스만 짜 둔 사용자가 여행지를
+    바꿀 때 되돌릴 수 없이 조용히 지워질 뻔했다. */
+ return !!(foodMap.hotel&&foodMap.hotel.name)||!!foodMap.d1||!!foodMap.course||!!foodMap.plan||
+  (+foodMap.budget||0)>0||(Array.isArray(foodMap.spends)&&foodMap.spends.length>0);
 }
 /* 지금 일정(숙소·날짜·코스)과 예산을 전부 백업하고 비운다.
    백업이 안 되면 절대 안 비운다 — 되돌릴 방법이 없는 삭제를 확인 안 된
@@ -5024,6 +5028,31 @@ function fmStartNewTrip(){
   '비우기 전에 지금 일정을 백업 파일로 자동 내려받습니다.'))return;
  if(tripReset())renderFoodMap();
 }
+/* 2026-09-09 코드 검토 반영 — "백업 파일을 내려받는다"까지만 하고 실제로
+   그 파일을 다시 불러와 복원하는 경로가 없었다. 다운로드가 사용자 기기에
+   실제로 저장됐는지는 웹에서 확인할 수 없으니(브라우저가 그 신호를 안 준다),
+   여기서도 "복원 시도가 예외 없이 끝났다"까지만 보장한다. */
+function fmRestoreTrip(inp){
+ const f=inp.files&&inp.files[0];inp.value='';if(!f)return;
+ const r=new FileReader();
+ r.onload=()=>{
+  let data;
+  try{data=JSON.parse(String(r.result));}
+  catch(e){alert('백업 파일을 읽지 못했습니다. 내려받은 json 파일이 맞는지 확인해 주세요.');return;}
+  const fields=['dest','destCountry','hotel','d1','d2','course','plan','budget','spends','tripDays'];
+  if(!data||typeof data!=='object'||!fields.some(k=>Object.prototype.hasOwnProperty.call(data,k))){
+   alert('이 파일은 여행 일정 백업 형식이 아닌 것 같습니다.');return;
+  }
+  if(tripHasData()&&!confirm('지금 잡아 둔 숙소·날짜·코스·예산을 이 백업 파일 내용으로 덮어씁니다.\n계속할까요?'))return;
+  fields.forEach(k=>{if(Object.prototype.hasOwnProperty.call(data,k))foodMap[k]=data[k];else delete foodMap[k];});
+  delete foodMap.itineraryStale;
+  save('foodmap_v1',foodMap);
+  renderFoodMap();
+  alert('백업한 일정을 복원했습니다.');
+ };
+ r.onerror=()=>alert('파일을 읽는 중 오류가 났습니다. 다시 시도해 주세요.');
+ r.readAsText(f);
+}
 /* 이름만 있는 장소를 찾을 때 붙이는 꼬리말. 도시 이름이 가장 잘 듣는다. */
 function fmAreaHint(){return affDest();}
 function affIata(){return String(foodMap.destIata||'FUK').toLowerCase();}
@@ -5060,6 +5089,8 @@ function affHTML(){
   '<div class="xsmall" style="margin-top:8px">출발일과 일수는 여행 일정 배분 설정을 따릅니다.</div>'+
   '<div class="xactions">'+btns+'</div>'+
   (tripHasData()&&!foodMap.itineraryStale?'<button class="xaction sub" style="margin-top:8px" onclick="fmStartNewTrip()">🔄 새 여행 일정 시작하기</button>':'')+
+  '<input type="file" id="fmRestoreIn" accept="application/json,.json" style="display:none" onchange="fmRestoreTrip(this)">'+
+  '<button class="xaction sub" style="margin-top:8px" onclick="document.getElementById(\'fmRestoreIn\').click()">📂 백업 파일로 일정 복원하기</button>'+
   (affHasCustom()?'<div class="xsmall" style="margin-top:8px">일부 링크는 제휴 링크이며, 예약이 발생하면 수수료를 받을 수 있습니다.</div>':'')+
   '<details style="margin-top:10px"><summary class="xsmall">링크 템플릿 직접 지정</summary>'+
   '<div class="xsmall" style="margin-top:6px">제휴 링크를 발급받으면 여기에 붙여 넣습니다. '+

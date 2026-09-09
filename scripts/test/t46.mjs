@@ -118,9 +118,59 @@ t('백업 실패 시 안 비워짐', w.eval("(foodMap.hotel||{}).name") === '하
 t('백업 실패를 알려줌', /백업하지 못|다시 시도/.test(alerted));
 w.eval("fm2Download=function(n,o){window.__dl=n;window.__dlBody=JSON.stringify(o);};"); w.alert = () => {};
 
+/* ── 2c. tripHasData — 숙소·시작일 말고 코스·경비만 있어도 감지해야 함
+   (2026-09-09 코드 검토) ── */
+w.eval("foodMap.places=[];delete foodMap.hotel;delete foodMap.d1;delete foodMap.d2;delete foodMap.course;delete foodMap.plan;delete foodMap.budget;delete foodMap.spends;delete foodMap.tripDays;save('foodmap_v1',foodMap);");
+t('숙소·날짜·코스·경비 다 없으면 일정 없음', w.eval('tripHasData()') === false);
+w.eval("foodMap.course={made:'2026-01-01',stops:[]};save('foodmap_v1',foodMap);");
+t('코스만 있어도 일정 있음으로 감지', w.eval('tripHasData()') === true);
+w.eval("delete foodMap.course;foodMap.plan={made:'2026-01-01',plan:[]};save('foodmap_v1',foodMap);");
+t('plan만 있어도 일정 있음으로 감지', w.eval('tripHasData()') === true);
+w.eval("delete foodMap.plan;foodMap.budget=300000;save('foodmap_v1',foodMap);");
+t('예산만 있어도 일정 있음으로 감지', w.eval('tripHasData()') === true);
+w.eval("delete foodMap.budget;foodMap.spends=[{d:'2026-01-01',amt:5000,memo:'커피'}];save('foodmap_v1',foodMap);");
+t('지출 기록만 있어도 일정 있음으로 감지', w.eval('tripHasData()') === true);
+w.eval("delete foodMap.spends;save('foodmap_v1',foodMap);");
+t('전부 지운 뒤엔 다시 일정 없음', w.eval('tripHasData()') === false);
+
+/* ── 2d. 백업 파일 복원 — 다운로드만 하고 끝내지 않고, 실제로 다시
+   불러와 복원하는 경로까지 확인한다(2026-09-09 코드 검토) ── */
+trip();
+w.eval("fmSetCountry('FR');"); w.confirm = () => true;
+w.eval('fmStartNewTrip();');
+const backupBody = w.eval('window.__dlBody');
+t('백업 후 실제로 비워짐(복원 전 확인)', !w.eval("(foodMap.hotel||{}).name"));
+w.confirm = () => true;
+w.eval(`
+  window.FileReader = class { readAsText(){ setTimeout(()=>{ this.result = window.__restoreBody; this.onload && this.onload(); }, 0); } };
+  window.__restoreBody = ${JSON.stringify(backupBody)};
+  const inp = { files: [{}], value: '' };
+  fmRestoreTrip(inp);
+`);
+await new Promise((r) => setTimeout(r, 100));
+t('복원하면 숙소가 되돌아옴', w.eval("(foodMap.hotel||{}).name") === '하카타호텔');
+t('복원하면 날짜도 되돌아옴', w.eval('foodMap.d1') === '2026-10-25' && w.eval('foodMap.d2') === '2026-10-29');
+t('복원하면 예산·지출도 되돌아옴', w.eval('foodMap.budget') === 500000 && w.eval('(foodMap.spends||[]).length') === 1);
+t('복원해도 담아 둔 장소는 그대로(장소는 백업/복원 대상이 아님)', w.eval('foodMap.places.length') === 30);
+t('복원 후 stale 표시는 꺼짐', w.eval('!!foodMap.itineraryStale') === false);
+
+/* 백업 형식이 아닌 파일을 복원하려 하면 거부하고 아무것도 안 바꿈 */
+trip();
+let restoreAlert = '';
+w.alert = (m) => { restoreAlert = String(m); };
+w.eval(`
+  window.__restoreBody = '{"엉뚱한":"파일"}';
+  const inp = { files: [{}], value: '' };
+  fmRestoreTrip(inp);
+`);
+await new Promise((r) => setTimeout(r, 100));
+t('백업 형식이 아니면 거부함', /형식이 아닌/.test(restoreAlert));
+t('거부하면 지금 일정은 안 바뀜', w.eval("(foodMap.hotel||{}).name") === '하카타호텔');
+w.alert = () => {};
+
 /* 물어보면 안 되는 때(첫 설정 중 — 일정 자체가 없음) */
 asked = []; w.confirm = (m) => { asked.push(m); return true; };
-w.eval("foodMap.places=[];delete foodMap.hotel;delete foodMap.d1;foodMap.destCountry='JP';save('foodmap_v1',foodMap);fmSetCountry('TH');fmStartNewTrip();");
+w.eval("foodMap.places=[];delete foodMap.hotel;delete foodMap.d1;delete foodMap.d2;delete foodMap.course;delete foodMap.plan;delete foodMap.budget;delete foodMap.spends;delete foodMap.tripDays;foodMap.destCountry='JP';save('foodmap_v1',foodMap);fmSetCountry('TH');fmStartNewTrip();");
 t('일정 자체가 없으면 새 일정 시작도 안 물어봄', asked.length === 0);
 
 t('최종 런타임 오류 0', errs.length === 0);
