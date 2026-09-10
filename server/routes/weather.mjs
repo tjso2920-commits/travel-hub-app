@@ -38,15 +38,31 @@ function cacheGet(key) {
   if (!row) return null;
   return { data: JSON.parse(row.data), createdAt: row.created_at };
 }
-function cacheSet(key, data) {
+function cacheSet(key, data, createdAt) {
   const db = openDb();
   db.prepare(`
     INSERT INTO weather_cache (region_key, data, created_at) VALUES (?, ?, ?)
     ON CONFLICT(region_key) DO UPDATE SET data = excluded.data, created_at = excluded.created_at
-  `).run(key, JSON.stringify(data), nowIso());
+  `).run(key, JSON.stringify(data), createdAt);
 }
 
-export async function weatherRoute(lat, lng, tzHint) {
+// 2026-09-10 재검토(8차) 3절 — "캐시가 비어 있을 때 N개의 동시 요청이
+// N번의 외부 호출을 만들면 안 된다"는 지시. place-lookup.mjs의
+// inFlightLookups와 같은 원칙: 같은 지역에 이미 진행 중인 조회가 있으면
+// 새 외부 호출을 내지 않고 그 결과를 그대로 기다린다.
+const inFlightWeatherLookups = new Map();
+
+/* 목적지가 고른 여행 날짜(dateStr, YYYY-MM-DD)에 해당하는 예보를
+   찾는다 — 없으면(공급자가 실제로 보장하는 기간 밖) 억지로 아무 날짜나
+   그 날짜인 척 보여주지 않고 "그 날짜는 아직 예보 범위 밖"이라고
+   정직하게 표시할 수 있게 null을 돌려준다. */
+function pickSelectedDay(forecastDays, dateStr) {
+  if (!dateStr) return { day: forecastDays[0] || null, inCoverage: true };
+  const day = forecastDays.find((d) => d.dateISO === dateStr) || null;
+  return { day, inCoverage: !!day };
+}
+
+export async function weatherRoute(lat, lng, tzHint, dateStr) {
   if (lat == null || lng == null || lat === '' || lng === '') {
     return { ok: false, status: 400, reason: 'missing-coords' };
   }
@@ -54,12 +70,24 @@ export async function weatherRoute(lat, lng, tzHint) {
   if (!Number.isFinite(latN) || !Number.isFinite(lngN)) {
     return { ok: false, status: 400, reason: 'missing-coords' };
   }
+  // 2026-09-10 재검토(8차) 3절 — 위경도 범위 검증(course-generation.mjs의
+  // isValidCoord와 같은 기준). 범위를 벗어난 값을 그대로 공급자에 넘기면
+  // 엉뚱한 지역(또는 오류) 응답을 "이 목적지 날씨"인 것처럼 보여줄 위험이
+  // 있다.
+  if (latN < -90 || latN > 90 || lngN < -180 || lngN > 180) {
+    return { ok: false, status: 400, reason: 'coords-out-of-range' };
+  }
   const key = regionKeyFor(latN, lngN);
+
+  const withSelectedDay = (payload, extra) => {
+    const { day, inCoverage } = pickSelectedDay(payload.forecastDays || [], dateStr);
+    return { ok: true, status: 200, ...payload, ...extra, selectedDay: day, selectedDateISO: dateStr || (day && day.dateISO) || null, selectedDateInCoverage: inCoverage };
+  };
 
   const cached = cacheGet(key);
   const fresh = cached && (Date.now() - new Date(cached.createdAt).getTime() < config.weatherCacheTtlMs);
   if (fresh) {
-    return { ok: true, status: 200, ...cached.data, cachedAt: cached.createdAt, stale: false };
+    return withSelectedDay(cached.data, { cachedAt: cached.createdAt, stale: false });
   }
 
   // 서비스 전체 하루 호출 상한 — 지역 캐시로 대부분의 요청은 여기까지
@@ -69,18 +97,36 @@ export async function weatherRoute(lat, lng, tzHint) {
   if (!globalCheck.allowed) {
     // 한도에 걸려도 오래된 캐시가 있으면 그거라도 시각과 함께 보여준다
     // (완전히 못 보여주는 것보다 낫다 — 단, 오래된 값임을 분명히 표시).
-    if (cached) return { ok: true, status: 200, ...cached.data, cachedAt: cached.createdAt, stale: true };
+    if (cached) return withSelectedDay(cached.data, { cachedAt: cached.createdAt, stale: true });
     return { ok: false, status: 503, reason: 'weather-service-daily-cap-reached' };
   }
 
-  const result = await lookupWeather({ lat: latN, lng: lngN, tzId: tzHint });
+  // 같은 지역에 이미 진행 중인 외부 호출이 있으면 새로 만들지 않고
+  // 그 결과를 같이 기다린다(동시 요청 병합) — place-lookup.mjs의
+  // inFlightLookups와 같은 원칙.
+  let promise = inFlightWeatherLookups.get(key);
+  let startedHere = false;
+  if (!promise) {
+    startedHere = true;
+    promise = lookupWeather({ lat: latN, lng: lngN, tzId: tzHint }).finally(() => {
+      inFlightWeatherLookups.delete(key);
+    });
+    inFlightWeatherLookups.set(key, promise);
+  }
+  const result = await promise;
   if (!result.ok) {
     // 실제 호출이 실패했다 — 오래된 캐시라도 있으면 그 시각과 함께
     // 정직하게 보여주고, 없으면 "일시적으로 이용할 수 없다"고 답한다.
-    if (cached) return { ok: true, status: 200, ...cached.data, cachedAt: cached.createdAt, stale: true };
+    if (cached) return withSelectedDay(cached.data, { cachedAt: cached.createdAt, stale: true });
     return { ok: false, status: 503, reason: 'weather-unavailable', detail: result.reason };
   }
   const payload = { location: result.location, current: result.current, forecastDays: result.forecastDays, source: result.source };
-  cacheSet(key, payload);
-  return { ok: true, status: 200, ...payload, cachedAt: nowIso(), stale: false };
+  // cacheSet에 쓰는 시각과 응답에 실어 보내는 시각이 서로 다른
+  // new Date() 호출이면 밀리초 단위로 어긋날 수 있다 — 하나만 계산해
+  // 양쪽에 그대로 쓴다(캐시 공유 시 cachedAt이 항상 같아야 함).
+  const fetchedAt = nowIso();
+  // 이 호출을 실제로 시작한 쪽만 캐시에 쓴다 — 합류한 쪽까지 다시
+  // 쓰면 의미 없이 같은 내용을 두 번 쓰는 꼴이라 그냥 생략한다.
+  if (startedHere) cacheSet(key, payload, fetchedAt);
+  return withSelectedDay(payload, { cachedAt: fetchedAt, stale: false });
 }

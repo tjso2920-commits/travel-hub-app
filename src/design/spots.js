@@ -1280,7 +1280,7 @@ function showSavedCourse() {
     (noCoordsList.length ? `<div class="inline-note">좌표가 없어 이번 코스 계산에서 빠진 곳 ${noCoordsList.length}곳: ${noCoordsList.map((p) => A.esc(p.name)).join(', ')}. 위치를 확인하면 다음 코스에 포함할 수 있어요.</div>` : '') +
     (timeList.length ? `<div class="inline-note">가용 시간 안에 다 들르지 못해 빠진 곳 ${timeList.length}곳: ${timeList.map((p) => A.esc(p.name)).join(', ')}. 쓸 수 있는 시간을 늘리거나 곳 수를 줄이면 포함할 수 있어요.</div>` : '') +
     `<button class="text-button" data-course-new>새로 만들기</button><button class="primary" data-dismiss>확인</button></div>`);
-  window.WeatherCard.loadWeatherCard(A, city, spots);
+  window.WeatherCard.loadWeatherCard(A, city, spots, c.date);
 }
 /* 2026-09-10 재검토(6차) — "계정 화면에서 잔여 횟수를 확인할 수 있게
    하라"는 지시. API/SKU 같은 개발 용어 없이, 이번 이용권(무료체험 또는

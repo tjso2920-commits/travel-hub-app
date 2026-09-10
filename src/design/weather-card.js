@@ -90,6 +90,21 @@ function fmtClock(iso, tz, opts) {
   try { return new Intl.DateTimeFormat('ko-KR', Object.assign({ hour: 'numeric', hour12: true, timeZone: tz || undefined }, opts)).format(new Date(iso)); }
   catch (e) { return new Date(iso).toLocaleTimeString('ko-KR'); }
 }
+// 2026-09-10 재검토(8차) 3절 — "오래된 캐시 데이터는 자신의 날짜와
+// 시간을 함께 보여줘야 한다"(시간만 보여주면 "오늘 그 시각"인 것처럼
+// 오해할 수 있다 — 실제로는 어제·그제 값일 수 있다).
+function fmtDateAndClock(iso, tz) {
+  try { return new Intl.DateTimeFormat('ko-KR', { month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: tz || undefined }).format(new Date(iso)); }
+  catch (e) { return new Date(iso).toLocaleString('ko-KR'); }
+}
+// "YYYY-MM-DD"를 Date()로 파싱하면 시간대에 따라 하루 밀릴 수 있어(음수
+// UTC 오프셋 등) 문자열을 직접 쪼갠다 — 이미 순수 달력 날짜라 시간대
+// 변환이 필요 없다.
+function fmtDateLabel(dateISO) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateISO || '');
+  if (!m) return dateISO || '';
+  return `${Number(m[2])}월 ${Number(m[3])}일`;
+}
 
 function skeletonHTML(cityName) {
   return `<div class="weather-card" id="weatherCard" data-state="loading"><div class="weather-top"><b>${esc(cityName)} 날씨</b><span class="weather-sub">불러오는 중…</span></div></div>`;
@@ -102,22 +117,36 @@ function unavailableHTML(cityName, reason) {
 }
 function cardHTML(cityName, w) {
   const cur = w.current || {};
-  const day = (w.forecastDays || [])[0] || {};
   const tz = w.location && w.location.tzId;
+  // 2026-09-10 재검토(8차) 3절 — "실제 날씨의 현재값"과 "사용자가 고른
+  // 여행 날짜의 예보"는 서로 다른 대상일 수 있다(여행 날짜가 오늘이
+  // 아니면 "현재 날씨"는 그 날짜와 무관한, 그냥 지금 이 순간 값일
+  // 뿐이다) — 섞어서 하나처럼 보여주지 않는다. selectedDay는 서버가
+  // 이미 골라 준 "그 여행 날짜에 해당하는 예보"이고, 공급자가 실제로
+  // 보장하는 기간(오늘 포함 3일) 밖이면 selectedDay가 null로 온다.
+  const day = w.selectedDay || {};
+  const isTodaySelected = !w.selectedDateISO || (w.forecastDays && w.forecastDays[0] && w.forecastDays[0].dateISO === w.selectedDateISO);
   // 2026-09-10 재검토(7차) 4절 — "실시간"이라는 단어를 쓰지 않고 "현재
   // 날씨 · 몇 시 기준"으로만 표기한다(현재값과 예보를 분명히 구분).
   const nowLabel = fmtClock(cur.observedAtIso, tz, { minute: '2-digit' });
   const note = outfitNote({ feelsLikeC: cur.feelsLikeC, maxC: day.maxC, minC: day.minC, hourly: day.hourly });
   const hourlyHTML = (day.hourly || []).map((h) => `<div class="weather-hour"><span>${fmtClock(h.hourIso, tz)}</span><b>☔${h.popPercent}%</b><i>💨${Math.round(h.windKph)}</i></div>`).join('');
   const staleNote = w.stale
-    ? `<p class="weather-note weather-stale">방금은 새로 못 받아와서 이전 값을 보여드려요(${fmtClock(w.cachedAt, tz, { minute: '2-digit' })} 기준).</p>`
+    ? `<p class="weather-note weather-stale">방금은 새로 못 받아와서 이전 값을 보여드려요(${fmtDateAndClock(w.cachedAt, tz)} 기준).</p>`
     : '';
+  const forecastLabel = isTodaySelected ? '오늘 예보' : `${fmtDateLabel(w.selectedDateISO)} 예보`;
+  const forecastHTML = w.selectedDateInCoverage
+    ? `<p class="weather-range">${forecastLabel} · 최고 ${Math.round(day.maxC)}° · 최저 ${Math.round(day.minC)}° · 저녁 ${Math.round(day.eveningC)}°</p>
+    ${hourlyHTML ? `<div class="weather-hourly">${hourlyHTML}</div>` : ''}`
+    // 공급자가 실제로 예보를 제공하는 기간(오늘 포함 3일) 밖의 여행
+    // 날짜다 — 오늘 값을 그 날짜인 것처럼 보여주지 않고 정직하게
+    // "아직 예보가 없다"고만 알린다(지어내지 않음).
+    : `<p class="weather-note">${fmtDateLabel(w.selectedDateISO)}은 아직 예보 범위 밖이에요(공급자가 최대 3일 앞까지만 제공해요). 날짜가 가까워지면 다시 확인해 주세요.</p>`;
   const sourceLabel = w.source === 'weatherapi' ? 'WeatherAPI.com 제공' : '테스트 데이터(예시) · 실제 공급자 연결 전';
   return `<div class="weather-card" id="weatherCard" data-state="ready">
-    <div class="weather-top"><b>${esc(cityName)} 현재 날씨 · ${nowLabel} 기준</b></div>
+    <div class="weather-top"><b>${esc(cityName)} 지금(오늘) 현재 날씨 · ${nowLabel} 기준</b></div>
     <div class="weather-main"><span class="weather-temp">${Math.round(cur.tempC)}°</span><span class="weather-feels">체감 ${Math.round(cur.feelsLikeC)}°</span></div>
-    <p class="weather-range">오늘 예보 · 최고 ${Math.round(day.maxC)}° · 최저 ${Math.round(day.minC)}° · 저녁 ${Math.round(day.eveningC)}°</p>
-    ${hourlyHTML ? `<div class="weather-hourly">${hourlyHTML}</div>` : ''}
+    ${forecastHTML}
     ${note ? `<p class="weather-note">${esc(note)}</p>` : ''}
     ${staleNote}
     <small class="weather-source">${sourceLabel}</small>
@@ -133,7 +162,7 @@ let weatherLoadSeq = 0;
    뒤라, 이 함수가 늦게 끝나도 코스·동선 기능 사용에는 전혀 영향이
    없다. A는 window.DesignAdapter, spots는 현재 좌표를 아는 저장 장소
    배열이다. */
-async function loadWeatherCard(A, cityName, spots) {
+async function loadWeatherCard(A, cityName, spots, dateStr) {
   const mySeq = ++weatherLoadSeq;
   const coords = resolveDestCoords(cityName, spots);
   if (!coords) {
@@ -142,7 +171,11 @@ async function loadWeatherCard(A, cityName, spots) {
     return;
   }
   const tzParam = coords.tz ? '&tz=' + encodeURIComponent(coords.tz) : '';
-  const r = await A.api(`/api/weather?lat=${coords.lat}&lng=${coords.lng}${tzParam}`);
+  // 2026-09-10 재검토(8차) 3절 — 사용자가 고른 여행 날짜(dateStr)가
+  // 있으면 그 날짜의 예보를 요청한다("오늘"이 아니라 그 날짜 기준으로
+  // 구분해서 보여주기 위해).
+  const dateParam = dateStr ? '&date=' + encodeURIComponent(dateStr) : '';
+  const r = await A.api(`/api/weather?lat=${coords.lat}&lng=${coords.lng}${tzParam}${dateParam}`);
   if (mySeq !== weatherLoadSeq) return; // 더 최근 로드가 이미 시작됨 — 이 결과는 버린다.
   const el = document.getElementById('weatherCard');
   if (!el) return; // 화면이 이미 닫혔으면 조용히 무시.

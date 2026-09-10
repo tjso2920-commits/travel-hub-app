@@ -276,7 +276,7 @@ async function handle(req, res) {
     // 사용자도 볼 수 있어야 하고, 위치확인·코스생성 이용권/비용과 전혀
     // 무관하다 — requireAccount를 일부러 안 부른다).
     if (req.method === 'GET' && pathname === '/api/weather') {
-      const result = await weatherRoute(url.searchParams.get('lat'), url.searchParams.get('lng'), url.searchParams.get('tz'));
+      const result = await weatherRoute(url.searchParams.get('lat'), url.searchParams.get('lng'), url.searchParams.get('tz'), url.searchParams.get('date'));
       return sendJson(res, result.status, result);
     }
 
