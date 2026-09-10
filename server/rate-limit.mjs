@@ -21,15 +21,19 @@ export function dayWindow(date) {
   return (date || new Date()).toISOString().slice(0, 10); // 'YYYY-MM-DD'
 }
 
-/* scope 하나·window 하나의 카운트를 1 올리고, limit을 넘었는지 함께
-   돌려준다. limit이 없거나 0 이하면 "무제한"으로 취급한다(설정 안 하면
-   막지 않는다 — 값이 없을 때 조용히 0회로 막아버리는 사고를 방지). */
-export function checkAndIncrement(scope, windowKey, limit) {
+/* scope 하나·window 하나의 카운트를 by만큼 올리고(기본 1), limit을
+   넘었는지 함께 돌려준다. limit이 없거나 0 이하면 "무제한"으로 취급한다
+   (설정 안 하면 막지 않는다 — 값이 없을 때 조용히 0회로 막아버리는
+   사고를 방지). by > 1은 "이번 한 번의 호출이 실제로는 N개 항목을
+   처리한다"는 배치 상황에 쓴다(예: 장소 일괄 조회 — 호출 횟수가 아니라
+   실제 처리 개수로 한도를 세야 한다). */
+export function checkAndIncrement(scope, windowKey, limit, by) {
+  const inc = Math.max(1, Number(by) || 1);
   const db = openDb();
   db.prepare(`
-    INSERT INTO rate_counters (scope, window_key, count) VALUES (?, ?, 1)
-    ON CONFLICT(scope, window_key) DO UPDATE SET count = count + 1
-  `).run(scope, windowKey);
+    INSERT INTO rate_counters (scope, window_key, count) VALUES (?, ?, ?)
+    ON CONFLICT(scope, window_key) DO UPDATE SET count = count + excluded.count
+  `).run(scope, windowKey, inc);
   const row = db.prepare('SELECT count FROM rate_counters WHERE scope = ? AND window_key = ?').get(scope, windowKey);
   const allowed = !limit || limit <= 0 || row.count <= limit;
   return { count: row.count, allowed, limit: limit || null };

@@ -102,6 +102,71 @@ export function buildConfig(env) {
     placeLookupImportDailyLimit: Number(env.PLACE_LOOKUP_IMPORT_DAILY_LIMIT || 400),
     placeLookupRequeryDailyLimit: Number(env.PLACE_LOOKUP_REQUERY_DAILY_LIMIT || 60),
     placeLookupGlobalDailyCap: Number(env.PLACE_LOOKUP_GLOBAL_DAILY_CAP || 5000),
+    // 2026-09-10 재검토(4차): 클라이언트가 보내는 phase=import 문자열
+    // 하나만으로 더 큰 한도를 주면(서버가 실제로 "이건 정말 가져오기
+    // 직후 일괄 확인이다"를 확인하지 않으면) 아무 요청이나 phase=import를
+    // 붙여 큰 한도를 받아갈 수 있다. 그래서 "일괄 확인"은 별도
+    // 엔드포인트(/api/places/lookup-batch)로만 가능하게 하고, 그
+    // 엔드포인트 자체가 한 번 호출에 담을 수 있는 개수 상한을 강제한다
+    // (서버쪽 배치 크기 = 실제 요청 개수이지 클라이언트 자기 신고가
+    // 아니다). 개별 재조회(GET .../lookup)는 phase 값과 무관하게 항상
+    // requery 한도만 받는다(더 큰 한도로 가는 유일한 문은 배치
+    // 엔드포인트뿐).
+    placeLookupBatchMaxItemsPerCall: Number(env.PLACE_LOOKUP_BATCH_MAX_ITEMS || 40),
+    placeLookupBatchDailyLimit: Number(env.PLACE_LOOKUP_BATCH_DAILY_LIMIT || 400),
+
+    // 외부 API 호출 전체에 공통 적용하는 타임아웃(2026-09-10 재검토(4차):
+    // "모든 외부 요청에 제한 시간을 적용하라"). 타임아웃 자체가 "과금
+    // 안 됐다"는 뜻은 아니다(net.mjs 참고) — 그래도 요청이 무한정
+    // 걸리는 사고는 막아야 한다.
+    externalRequestTimeoutMs: Number(env.EXTERNAL_REQUEST_TIMEOUT_MS || 8000),
+
+    // 코스 생성 잠금 만료(2026-09-10 재검토(4차): "generation_locks 만료
+    // 및 안전한 복구"). 이 시간이 지난 잠금은 죽은 프로세스가 남긴
+    // 것으로 보고 회수한다 — 그렇지 않으면 서버가 생성 도중 죽었을 때
+    // 그 계정은 영원히 코스를 다시 못 만든다.
+    generationLockTimeoutSeconds: Number(env.GENERATION_LOCK_TIMEOUT_SECONDS || 120),
+    // 결제 승인·취소 잠금도 같은 이유로 만료 회수가 필요하다(별도
+    // 환경변수로 분리 — 결제 API는 코스 생성보다 느릴 수 있어 여유를
+    // 더 둘 수 있게).
+    paymentLockTimeoutSeconds: Number(env.PAYMENT_LOCK_TIMEOUT_SECONDS || 60),
+
+    // 코스 생성 입력 상한 — 서버가 좌표 범위·개수·시간 예산을 검증한다
+    // (2026-09-10 재검토(4차) 지시). Google Routes의 중간 경유지 상한
+    // (아래 routes 절)과는 별개로, 애초에 "여행 하루 코스"라는 상식적
+    // 범위를 벗어난 입력(장소 수천 개, 억 단위 시간 예산 등)을 걸러
+    // 비용·성능 사고를 막는다.
+    maxPlacesPerGeneration: Number(env.MAX_PLACES_PER_GENERATION || 60),
+    maxBudgetMinutes: Number(env.MAX_BUDGET_MINUTES || 24 * 60),
+
+    // Google Routes computeRoutes 중간 경유지 상한. ChatGPT가 확인한
+    // 값(최대 25개, 11개 이상이면 더 비싼 요금 구간)을 그대로 반영한다 —
+    // 이 세션은 developers.google.com 접속이 막혀 있어 공식 문서로 직접
+    // 재대조하지 못했다(RELEASE_STATUS.md 참고).
+    routesMaxIntermediatesPerCall: Number(env.ROUTES_MAX_INTERMEDIATES_PER_CALL || 25),
+    routesHighVolumeThreshold: Number(env.ROUTES_HIGH_VOLUME_THRESHOLD || 11),
+
+    // API 비용 통제(2026-09-10 재검토(4차) 6절) — SKU별 "예상" 비용을
+    // 마이크로원(KRW의 100만분의 1) 정수로 둔다(부동소수점 오차 방지).
+    // **이 값들은 학습 기억 기준의 자릿수 추정치이지 확정 단가가
+    // 아니다** — 이 세션은 mapsplatform.google.com 접속이 막혀 공식
+    // 가격표를 재확인하지 못했다(docs/BUSINESS_DECISIONS.md 3절 참고).
+    // 실제 계약 후 이 값을 반드시 재확인하고 필요하면 환경변수로
+    // 갱신해야 한다 — 코드 변경 없이 값만 바꿀 수 있게 전부 env로 뺐다.
+    costEstimate: {
+      placesTextSearchMicros: Number(env.COST_PLACES_TEXT_SEARCH_KRW_MICROS || 15_000_000), // 약 15원/건 추정
+      routesComputeMicros: Number(env.COST_ROUTES_COMPUTE_KRW_MICROS || 8_000_000), // 약 8원/건 추정(경유지 10개 이하)
+      routesComputeHighVolumeMicros: Number(env.COST_ROUTES_COMPUTE_HIGHVOLUME_KRW_MICROS || 24_000_000), // 약 24원/건 추정(경유지 11개 이상 — 고요금 구간, 배수는 미확인 가정)
+    },
+    // 서버가 직접 집행하는 예산 한도(마이크로원 정수, 0 이하 = 무제한).
+    // 초기 제안값은 BUSINESS_DECISIONS.md 3절의 월 5만원 목표에서
+    // 고정비를 뺀 나머지를 계정 수 가정으로 나눈 것 — 확정 아님, 전부
+    // env로 조정 가능.
+    costBudget: {
+      perAccountDailyMicros: Number(env.COST_PER_ACCOUNT_DAILY_KRW_MICROS || 500_000_000), // 계정당 하루 약 500원
+      globalDailyMicros: Number(env.COST_GLOBAL_DAILY_KRW_MICROS || 3_000_000_000), // 전체 하루 약 3,000원
+      globalMonthlyMicros: Number(env.COST_GLOBAL_MONTHLY_KRW_MICROS || 30_000_000_000), // 전체 한 달 약 30,000원(고정비 제외 Google 예산 제안치)
+    },
 
     adapters: {
       placeLookup: env.PLACE_LOOKUP_ADAPTER || 'test',
@@ -133,9 +198,15 @@ export function buildConfig(env) {
     },
     google: {
       placesKey: env.GOOGLE_PLACES_API_KEY || '',
+      // 2026-09-10 재검토(4차): Legacy Find Place(findplacefromtext)에서
+      // Places API(New) Text Search로 전환한다(지시 그대로 — "실제
+      // 필드마스크·SKU·응답 형식을 명시하라"). 학습 기억 기준 엔드포인트라
+      // 재확인 필요(RELEASE_STATUS.md 참고).
+      placesApiBase: env.GOOGLE_PLACES_API_BASE || 'https://places.googleapis.com',
       routesKey: env.GOOGLE_ROUTES_API_KEY || '',
       routesApiBase: env.GOOGLE_ROUTES_API_BASE || 'https://routes.googleapis.com',
     },
+    expectedCurrency: env.PAYMENT_EXPECTED_CURRENCY || 'KRW',
   };
 }
 

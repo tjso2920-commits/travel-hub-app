@@ -22,13 +22,16 @@ export function createOrderRoute(accountId) {
 }
 
 export async function confirmOrderRoute(accountId, body) {
-  const { orderId, paymentKey, amount } = body || {};
+  const { orderId, paymentKey, amount, currency } = body || {};
   if (!orderId || !paymentKey || amount === undefined) return { ok: false, status: 400, reason: 'missing-fields' };
-  return confirmPayment({ accountId, orderId, paymentKey, amount });
+  return confirmPayment({ accountId, orderId, paymentKey, amount, currency });
 }
 
-export async function cancelOrderRoute(body) {
+// 2026-09-10 재검토(4차): accountId를 반드시 세션에서 받아 넘긴다 — 예전엔
+// 로그인 여부만 확인하고 이 값을 안 넘겨서 다른 계정의 주문도 취소할 수
+// 있었다(cancelPayment가 이제 이 값으로 주문 소유자를 대조한다).
+export async function cancelOrderRoute(accountId, body) {
   const { paymentKey, cancelReason, cancelAmount } = body || {};
   if (!paymentKey) return { ok: false, status: 400, reason: 'missing-payment-key' };
-  return cancelPayment({ paymentKey, cancelReason, cancelAmount });
+  return cancelPayment({ accountId, paymentKey, cancelReason, cancelAmount });
 }

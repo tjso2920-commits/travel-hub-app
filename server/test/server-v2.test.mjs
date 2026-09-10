@@ -12,6 +12,8 @@ process.env.LOGIN_LOCKOUT_SECONDS = '1';
 process.env.GENERATION_RATE_LIMIT_PER_HOUR = '3';
 process.env.PLACE_LOOKUP_IMPORT_DAILY_LIMIT = '5';
 process.env.PLACE_LOOKUP_REQUERY_DAILY_LIMIT = '2';
+process.env.PLACE_LOOKUP_BATCH_MAX_ITEMS = '4';
+process.env.PLACE_LOOKUP_BATCH_DAILY_LIMIT = '4';
 
 const { createServer } = await import('../index.mjs');
 const { sentEmailsForTest } = await import('../adapters/email.mjs');
@@ -83,30 +85,50 @@ async function loginNewAccount(email) {
 }
 
 // ============================================================
-// 3. 장소 조회 — 인증 필수 + 초기가져오기/재조회 분리 한도
+// 3. 장소 조회 — 인증 필수 + 단일 조회는 항상 requery 한도(2026-09-10
+//    재검토 4차: phase 쿼리 파라미터는 더 이상 더 큰 한도를 안 준다 —
+//    클라이언트 자기 신고였다는 지적 반영. 큰 한도는 배치 엔드포인트로만.)
 // ============================================================
 {
   const acc = await loginNewAccount('lookup-limit@example.com');
   const noAuth = await api('GET', '/api/places/lookup?q=test');
   t('인증 없이는 장소 조회 401', noAuth.status === 401);
 
-  let importOk = 0;
-  for (let i = 0; i < 5; i++) {
-    const r = await api('GET', `/api/places/lookup?q=import-place-${i}&phase=import`, { token: acc.token });
-    if (r.status === 200) importOk++;
-  }
-  t('초기 가져오기 한도(5) 안에서는 전부 성공', importOk === 5);
-  const overImport = await api('GET', '/api/places/lookup?q=import-place-overflow&phase=import', { token: acc.token });
-  t('초기 가져오기 한도를 넘으면 429', overImport.status === 429 && overImport.json.reason === 'account-daily-limit-reached');
-
+  // phase=import를 붙여도 더 이상 큰 한도를 안 준다 — 단일 조회는
+  // 항상 requery 한도(2)만 적용된다.
   let requeryOk = 0;
   for (let i = 0; i < 2; i++) {
-    const r = await api('GET', `/api/places/lookup?q=requery-place-${i}&phase=requery`, { token: acc.token });
+    const r = await api('GET', `/api/places/lookup?q=requery-place-${i}&phase=import`, { token: acc.token });
     if (r.status === 200) requeryOk++;
   }
-  t('재조회 한도(2)는 초기 가져오기 한도와 별개로 소진됨', requeryOk === 2);
-  const overRequery = await api('GET', '/api/places/lookup?q=requery-place-overflow&phase=requery', { token: acc.token });
-  t('재조회 한도를 넘으면 429(초기 가져오기 한도 소진과 무관)', overRequery.status === 429);
+  t('단일 조회는 phase=import를 붙여도 항상 requery 한도만 적용됨(자기 신고로 큰 한도를 못 받음)', requeryOk === 2);
+  const overRequery = await api('GET', '/api/places/lookup?q=requery-place-overflow&phase=import', { token: acc.token });
+  t('단일 조회 한도를 넘으면 429', overRequery.status === 429 && overRequery.json.reason === 'account-daily-limit-reached');
+}
+
+// ============================================================
+// 3-2. 일괄 조회(/api/places/lookup-batch) — 서버가 실제로 한 번에
+//      처리하는 개수로 배치 크기가 정해진다(클라이언트가 뭐라고
+//      부르는지가 아니라). 배치 크기 상한(4)을 넘는 항목은 잘라내고
+//      정직하게 truncated로 알린다.
+// ============================================================
+{
+  const acc = await loginNewAccount('lookup-batch@example.com');
+  const items = [1, 2, 3, 4, 5, 6].map((i) => ({ id: 'b' + i, query: 'batch-place-' + i }));
+  const r = await api('POST', '/api/places/lookup-batch', { token: acc.token, body: { items } });
+  t('일괄 조회 성공', r.status === 200);
+  t('배치 크기 상한(4)을 넘는 항목은 잘라내고 truncated로 알림', r.json.truncated === true && r.json.results.length === 4);
+  t('처리 안 된 나머지는 skipped 목록으로 정직하게 남음', JSON.stringify(r.json.skipped) === JSON.stringify(['b5', 'b6']));
+
+  const noAuthBatch = await api('POST', '/api/places/lookup-batch', { body: { items: [{ id: 'x', query: 'x' }] } });
+  t('인증 없이는 일괄 조회도 401', noAuthBatch.status === 401);
+
+  // 배치 일일 한도(4)는 단일 조회 한도(requery)와 별개로 소진된다.
+  const acc2 = await loginNewAccount('lookup-batch-2@example.com');
+  const firstBatch = await api('POST', '/api/places/lookup-batch', { token: acc2.token, body: { items: [{ id: 'c1', query: 'c1' }, { id: 'c2', query: 'c2' }] } });
+  t('배치 한도 안에서는 성공', firstBatch.status === 200);
+  const secondBatch = await api('POST', '/api/places/lookup-batch', { token: acc2.token, body: { items: [{ id: 'c3', query: 'c3' }, { id: 'c4', query: 'c4' }, { id: 'c5', query: 'c5' }] } });
+  t('배치 일일 한도를 넘으면 429(단일 조회 한도와 별개)', secondBatch.status === 429);
 }
 
 // ============================================================
@@ -152,10 +174,10 @@ async function loginNewAccount(email) {
   const accountId = 'lock-test-account';
   db.exec('BEGIN'); db.prepare('INSERT OR IGNORE INTO accounts (id, email, created_at, plan) VALUES (?, ?, ?, ?)').run(accountId, 'lock-test@example.com', new Date().toISOString(), 'free'); db.exec('COMMIT');
   db.prepare('DELETE FROM generation_locks WHERE account_id = ?').run(accountId);
-  db.prepare('INSERT INTO generation_locks (account_id, started_at) VALUES (?, ?)').run(accountId, new Date().toISOString());
+  db.prepare('INSERT INTO generation_locks (account_id, job_id, started_at) VALUES (?, ?, ?)').run(accountId, 'job-1', new Date().toISOString());
   let secondInsertFailed = false;
   try {
-    db.prepare('INSERT INTO generation_locks (account_id, started_at) VALUES (?, ?)').run(accountId, new Date().toISOString());
+    db.prepare('INSERT INTO generation_locks (account_id, job_id, started_at) VALUES (?, ?, ?)').run(accountId, 'job-2', new Date().toISOString());
   } catch (e) {
     secondInsertFailed = true;
   }
@@ -168,7 +190,7 @@ async function loginNewAccount(email) {
   const acc = await loginNewAccount('gen-concurrency@example.com');
   const { accountForToken } = await import('../auth.mjs');
   const realAccountId = accountForToken(acc.token);
-  db.prepare('INSERT INTO generation_locks (account_id, started_at) VALUES (?, ?)').run(realAccountId, new Date().toISOString());
+  db.prepare('INSERT INTO generation_locks (account_id, job_id, started_at) VALUES (?, ?, ?)').run(realAccountId, 'job-blocking', new Date().toISOString());
   const origin = { lat: 33.590, lng: 130.400 };
   const places = [{ id: 'p1', name: 'A', lat: 33.591, lng: 130.401 }];
   const blocked = await api('POST', '/api/course/generate', { token: acc.token, body: { idempotencyKey: 'lock-blocked', city: '테스트', date: '2026-01-01', origin, places } });

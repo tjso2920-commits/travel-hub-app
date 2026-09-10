@@ -21,15 +21,49 @@ export function checkEntitlement(accountId) {
   };
 }
 
-export function grantEntitlement(accountId, days) {
+/* orderId를 넘기면(실제 토스 결제 승인 경로) 이 주문을 "지금 이용권을
+   실제로 부여한 주문"으로 accounts.active_order_id에 기록해 둔다 —
+   나중에 이 주문보다 옛날 주문이 취소돼도 지금의 이용권을 안 건드리게
+   하기 위해서다(revokeEntitlementIfCurrentOrder 참고). orderId 없이
+   부르는 기존 경로(개발용 웹훅 시뮬레이션)는 그대로 두어 기존 동작을
+   안 건드린다. */
+export function grantEntitlement(accountId, days, orderId) {
   const db = openDb();
   const expiresAt = new Date(Date.now() + (days || config.price.periodDays) * 86400000).toISOString();
-  db.prepare('UPDATE accounts SET plan = ?, plan_expires_at = ? WHERE id = ?').run('paid', expiresAt, accountId);
+  if (orderId) {
+    db.prepare('UPDATE accounts SET plan = ?, plan_expires_at = ?, active_order_id = ? WHERE id = ?').run('paid', expiresAt, orderId, accountId);
+  } else {
+    db.prepare('UPDATE accounts SET plan = ?, plan_expires_at = ? WHERE id = ?').run('paid', expiresAt, accountId);
+  }
   return { ok: true, expiresAt };
 }
 
+/* 무조건 회수 — 개발용 웹훅 시뮬레이션(webhook.mjs)이 쓰는 기존 경로.
+   그 경로는 orders 테이블 개념이 없는 단일 계정 단위 시뮬레이션이라
+   "여러 주문 중 어느 게 지금 유효한지" 구분이 필요 없다(하나의
+   계정에는 항상 최대 하나의 활성 결제만 시뮬레이션한다는 전제). */
 export function revokeEntitlement(accountId) {
   const db = openDb();
-  db.prepare('UPDATE accounts SET plan = ?, plan_expires_at = NULL WHERE id = ?').run('free', accountId);
+  db.prepare('UPDATE accounts SET plan = ?, plan_expires_at = NULL, active_order_id = NULL WHERE id = ?').run('free', accountId);
   return { ok: true };
+}
+
+/* 2026-09-10 재검토(4차) — "과거 주문 취소가 다른 유효 주문의 이용권을
+   없애지 않도록"을 실제로 지키는 함수. 실제 토스 결제(payment-toss.mjs)
+   의 취소·웹훅 경로는 반드시 이 함수를 써야 한다(revokeEntitlement를
+   직접 부르면 안 됨) — 지금 이 계정의 이용권을 실제로 부여한 주문
+   (accounts.active_order_id)이 지금 취소되는 그 주문과 같을 때만
+   실제로 회수한다. 계정이 그 사이 재구매해 이미 새 주문으로 넘어갔다면
+   (active_order_id가 다르면) 옛 주문을 취소해도 지금의 이용권은 그대로
+   둔다 — skipped:true로 그 사실을 알린다(호출부가 이벤트로 남길 수
+   있게). */
+export function revokeEntitlementIfCurrentOrder(accountId, orderId) {
+  const db = openDb();
+  const row = db.prepare('SELECT active_order_id FROM accounts WHERE id = ?').get(accountId);
+  if (!row) return { ok: false, reason: 'account-not-found' };
+  if (row.active_order_id !== orderId) {
+    return { ok: true, skipped: true, reason: 'superseded-by-newer-order' };
+  }
+  db.prepare('UPDATE accounts SET plan = ?, plan_expires_at = NULL, active_order_id = NULL WHERE id = ?').run('free', accountId);
+  return { ok: true, skipped: false };
 }

@@ -252,14 +252,21 @@ async function daLookupCandidateSheet(id) {
   if (!token) { showLoginSheet(() => daLookupCandidateSheet(id)); return; }
   open('위치 확인', '<div class="detail"><h2>서버에서 후보를 찾는 중…</h2><p>잠시만요.</p></div>');
   const q = [p.name, p.area].filter(Boolean).join(' ').trim() || p.name;
-  const r = await A.api('/api/places/lookup?q=' + encodeURIComponent(q) + '&phase=requery', { token });
+  // area는 동명 장소 판별 힌트로만 쓰인다(2026-09-10 재검토 4차 — 서버가
+  // Places API(New)로 여러 후보 중 이 지역과 실제로 맞는 걸 우선한다).
+  const areaParam = p.area ? '&area=' + encodeURIComponent(p.area) : '';
+  const r = await A.api('/api/places/lookup?q=' + encodeURIComponent(q) + areaParam, { token });
   if (!r.ok || !r.json || r.json.ok === false || typeof r.json.lat !== 'number') {
     open('위치 확인', `<div class="detail"><h2>후보를 찾지 못했어요.</h2><p><b>${A.esc(p.name)}</b>에 대한 위치 후보를 서버에서 찾지 못했습니다. 구글 지도에서 직접 열어 확인해 주세요.</p><button class="primary" data-dismiss>돌아가기</button></div>`);
     return;
   }
   const cand = r.json;
-  open('위치 확인', `<div class="detail"><h2>이 위치가 맞나요?</h2><p><b>${A.esc(cand.name || p.name)}</b><br>위도 ${cand.lat.toFixed(5)}, 경도 ${cand.lng.toFixed(5)}</p>` +
-    `<p class="inline-note">이름으로 찾은 후보일 뿐 확정된 위치가 아닙니다 — 실제로 저장하신 곳이 맞는지 꼭 확인한 뒤에만 저장해 주세요.</p>` +
+  // ambiguous: 서버가 여러 후보 중 지역 힌트로 확실히 좁히지 못했다는
+  // 뜻 — 자동 반영은 원래부터 안 하지만("맞아요"를 눌러야만 저장), 이
+  // 문구로 한 번 더 분명히 확인을 요청한다.
+  const ambiguousNote = cand.ambiguous ? ' 이 이름의 장소가 여러 곳 있을 수 있어요 —' : '';
+  open('위치 확인', `<div class="detail"><h2>이 위치가 맞나요?</h2><p><b>${A.esc(cand.name || p.name)}</b>${cand.address ? `<br>${A.esc(cand.address)}` : ''}<br>위도 ${cand.lat.toFixed(5)}, 경도 ${cand.lng.toFixed(5)}</p>` +
+    `<p class="inline-note">이름으로 찾은 후보일 뿐 확정된 위치가 아닙니다 —${ambiguousNote} 실제로 저장하신 곳이 맞는지 꼭 확인한 뒤에만 저장해 주세요.</p>` +
     `<button class="primary" data-lookup-confirm="${A.esc(id)}|${cand.lat}|${cand.lng}|${A.esc(cand.placeId || '')}">맞아요 · 이 위치로 저장</button>` +
     `<button class="text-button" data-dismiss>아니에요 · 취소</button></div>`);
 }

@@ -44,7 +44,13 @@ function migrate(d) {
       email TEXT UNIQUE NOT NULL,
       created_at TEXT NOT NULL,
       plan TEXT NOT NULL DEFAULT 'free',
-      plan_expires_at TEXT
+      plan_expires_at TEXT,
+      -- 2026-09-10 재검토(4차): "과거 주문 취소가 다른 유효 주문의
+      -- 이용권을 없애지 않도록" — 지금 이 계정의 plan을 실제로 부여한
+      -- 주문이 어느 것인지 기억해 둔다. 실제 토스 취소/웹훅이 이 값과
+      -- 다른(이미 지나간) 주문을 취소하려 하면 지금의 이용권은 건드리지
+      -- 않는다(payment-toss.mjs의 revokeEntitlementIfCurrentOrder 참고).
+      active_order_id TEXT
     );
     CREATE TABLE IF NOT EXISTS sessions (
       token TEXT PRIMARY KEY,
@@ -117,13 +123,24 @@ function migrate(d) {
        있다(PRIMARY KEY account_id — trial_usage와 같은 원자성 확보
        방식). generation_results: idempotencyKey로 같은 요청이 재시도돼도
        실제 작업을 다시 안 하고 저장된 결과를 그대로 돌려준다(멱등성). */
+    -- 2026-09-10 재검토(4차): job_id로 "누가 이 잠금을 걸었는지" 검증한다
+    -- (잠금 소유권 검증 — 오래된 잠금을 회수한 새 요청의 잠금을 원래
+    -- 요청이 뒤늦게 지워버리는 사고 방지). started_at은 그대로 두어
+    -- "얼마나 오래됐는지"로 죽은 프로세스의 잠금을 회수하는 기준으로 쓴다
+    -- (config.generationLockTimeoutSeconds).
     CREATE TABLE IF NOT EXISTS generation_locks (
       account_id TEXT PRIMARY KEY REFERENCES accounts(id),
+      job_id TEXT NOT NULL,
       started_at TEXT NOT NULL
     );
+    -- request_hash: 같은 idempotencyKey로 실제로 다른 요청 본문(장소·
+    -- 날짜 등)이 들어오면 저장된 옛 결과를 그대로 돌려주지 않고 충돌로
+    -- 처리한다(2026-09-10 재검토 4차 — "같은 멱등키와 다른 요청 본문은
+    -- 충돌 처리").
     CREATE TABLE IF NOT EXISTS generation_results (
       idempotency_key TEXT PRIMARY KEY,
       account_id TEXT NOT NULL REFERENCES accounts(id),
+      request_hash TEXT,
       status TEXT NOT NULL,
       result TEXT NOT NULL,
       created_at TEXT NOT NULL
@@ -161,15 +178,53 @@ function migrate(d) {
     /* orders: 결제 위젯에 넘길 주문을 서버가 먼저 만들어 둔다(금액·
        orderId를 서버가 authoritative하게 쥐고 있어야 나중에 confirm
        단계에서 "클라이언트가 부른 금액"이 아니라 "서버가 원래 정한
-       금액"과 실제 승인 금액을 대조할 수 있다). */
+       금액"과 실제 승인 금액을 대조할 수 있다).
+
+       2026-09-10 재검토(4차) 추가 컬럼:
+       - entitlement_days: 이 주문이 실제로 승인됐을 때 며칠짜리
+         이용권을 주는지 그 순간의 가격 정책을 그대로 못박아 둔다(나중에
+         config.price.periodDays가 바뀌어도 이미 승인된 과거 주문의
+         만료일 계산이 흔들리지 않게).
+       - paid_at: 이용권 만료일 계산의 기준 시각(entitlement_days와
+         함께 checkEntitlement가 주문에서 직접 계산한다).
+       - cancelled_amount: 부분 취소 금액(전액 취소와 구분 — status가
+         'cancelled'면 전액, 'partially_cancelled'면 이 값만큼만). */
     CREATE TABLE IF NOT EXISTS orders (
       order_id TEXT PRIMARY KEY,
       account_id TEXT NOT NULL REFERENCES accounts(id),
       amount INTEGER NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending',
       payment_key TEXT,
+      entitlement_days INTEGER,
+      paid_at TEXT,
+      cancelled_amount INTEGER,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    );
+    /* payment_locks: 같은 주문에 대한 승인(confirm)·취소(cancel) 요청이
+       동시에 들어와도 실제 PG 호출은 한 번만 진행되게 한다(2026-09-10
+       재검토 4차 — "공급자가 지원하는 멱등 처리 적용" 앞단 방어. 토스
+       API 자체의 멱등키 지원 여부는 이 세션에서 문서를 재확인하지
+       못했으므로, 우리 서버가 스스로 동시 중복 호출을 막는 이 잠금이
+       1차 방어선이다). generation_locks와 같은 PRIMARY KEY 원자성 패턴. */
+    CREATE TABLE IF NOT EXISTS payment_locks (
+      order_id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL,
+      started_at TEXT NOT NULL
+    );
+    /* cost_ledger: 실제 비용이 드는 외부 호출을 "하기로 결정한 시점"에
+       그 예상 비용을 기록하는 원장(append-only). cost-ledger.mjs 참고 —
+       성공/실패/타임아웃과 무관하게 한 번 기록되면 지우지 않는다(비용을
+       0으로 되돌리는 취소 개념이 없다 — 실제로 얼마가 청구됐는지는
+       공급자만 알고, 우리는 "쓰기로 결정한 예상액"만 관리한다). */
+    CREATE TABLE IF NOT EXISTS cost_ledger (
+      id TEXT PRIMARY KEY,
+      account_id TEXT,
+      service TEXT NOT NULL,
+      sku TEXT NOT NULL,
+      count INTEGER NOT NULL DEFAULT 1,
+      estimated_cost_micros INTEGER NOT NULL,
+      created_at TEXT NOT NULL
     );
   `);
 }

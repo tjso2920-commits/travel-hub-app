@@ -2,20 +2,35 @@
 /**
  * 장소 조회 어댑터 — 소비자에게 API 키를 요구하지 않는다는 원칙(코드
  * 검토 ④) 때문에, 이 조회는 반드시 서버에서 실행돼야 한다. 클라이언트는
- * 이 서버의 /api/places/lookup만 호출한다.
+ * 이 서버의 /api/places/lookup 또는 /api/places/lookup-batch만 호출한다.
  *
- * 2026-09-09 코드 검토: "실 계정·크리덴셜이 없다는 이유로 구현을 멈추지
- * 말 것." 테스트 어댑터는 실제 코드 경로(요청 파싱 → 어댑터 호출 → 응답
- * 정규화)를 전부 그대로 타지만, 외부 네트워크 대신 미리 정해 둔 값을
- * 돌려준다 — 실제 서비스 전환은 googleAdapter의 fetch URL을 실 API로
- * 바꾸는 것만 남는다(요청/응답 정규화 로직은 이미 완성돼 있다).
- *
- * 2026-09-10: real/test 판정은 오직 `config.services.placeLookup`만
- * 본다 — 결제·이메일 키가 있는지 없는지와 완전히 무관하다(config.mjs
- * 상단 설명 참고 — "서비스별로 독립적으로 관리").
+ * 2026-09-10 재검토(4차) — "Legacy Find Place의 첫 후보를 바로 확정하지
+ * 말고 Places API(New) 기준으로 정리하라"는 지시로 어댑터를 교체했다:
+ * - 엔드포인트: `POST {placesApiBase}/v1/places:searchText`(Text Search,
+ *   New) — 예전 `findplacefromtext`(Legacy)를 대체한다.
+ * - 필드마스크: `places.id,places.displayName,places.location,
+ *   places.formattedAddress`만 요청한다 — Places API(New)는 필드마스크에
+ *   따라 과금 등급(Essentials IDs Only < Essentials < Pro < Enterprise)이
+ *   갈린다고 알려져 있다(학습 기억 기준, 재확인 필요). 우리가 실제로
+ *   쓰는 필드(좌표·이름·주소·placeId)는 가장 싼 등급에 속하는 것으로
+ *   추정하지만, 이 세션은 mapsplatform.google.com 접속이 막혀
+ *   재확인하지 못했다(RELEASE_STATUS.md 참고).
+ * - **동명 장소 오확정 방지**: Text Search(New)는 여러 후보를 순서대로
+ *   돌려준다. 첫 번째 후보를 무조건 쓰지 않고, 기대 지역(동/구/도시
+ *   등, 클라이언트가 이미 갖고 있는 주소 힌트)과 실제로 맞는 후보를
+ *   우선한다 — 그런 후보가 없으면 1순위를 쓰되 `ambiguous:true`로
+ *   표시해 화면이 "이게 맞나요?" 확인을 더 분명히 하게 한다(다만 이
+ *   앱은 애초에 서버 조회 결과를 자동 반영하지 않고 항상 사람이
+ *   "맞아요"를 눌러야 반영한다 — daLookupCandidateSheet — 그래서
+ *   ambiguous 표시는 "이번엔 특히 더 잘 확인하라"는 신호일 뿐, 자동
+ *   반영 여부 자체를 바꾸지는 않는다).
+ * - **기존 유효한 좌표·식별자 우선**: 이미 placeId나 좌표가 있는
+ *   장소는애초에 이 어댑터까지 오지 않게 호출부(places.mjs)가
+ *   걸러야 한다(중복 유료 호출 방지 — 6-② 지시).
  */
 import { config } from '../config.mjs';
 import { markVerified } from '../status.mjs';
+import { fetchWithTimeout } from '../net.mjs';
 
 /* 테스트 어댑터 — 이름에 "역"·"타워"가 들어가면 그럴듯한 좌표를 만들어
    돌려주고, 그 외엔 "찾지 못함"으로 정직하게 답한다. 실제 조회 성공/
@@ -30,31 +45,71 @@ function testAdapter({ query }) {
   if (Math.abs(hash) % 5 === 0) return { ok: false, reason: 'not-found' };
   const lat = 33.5 + (Math.abs(hash) % 1000) / 10000;
   const lng = 130.3 + (Math.abs(hash >> 8) % 1000) / 10000;
-  return { ok: true, lat, lng, name: q, source: 'test-adapter', placeId: 'test-' + Math.abs(hash) };
+  return { ok: true, lat, lng, name: q, address: q, source: 'test-adapter', placeId: 'test-' + Math.abs(hash), ambiguous: false, candidates: [] };
 }
 
-/* 실제 Google Places 어댑터 — GOOGLE_PLACES_API_KEY가 설정된 실제
-   운영 환경에서만 쓰인다. 이 함수 자체는 구현돼 있지만, 실제 키가
-   없는 이 개발 환경에서는 절대 호출되지 않는다(config.testMode가
-   항상 우선한다 — placeLookup()이 그 분기를 담당). */
-async function googleAdapter({ query }) {
+/* candidates 중 expectedArea(도시·동네 등 힌트 문자열)와 formattedAddress
+   가 실제로 겹치는 후보를 우선한다 — "모호한 동명 장소를 첫 검색 결과
+   라는 이유만으로 확정하지 말라"는 지시의 핵심 구현. 겹치는 후보가
+   없으면 null을 돌려주고(호출부가 1순위를 쓰되 ambiguous로 표시한다). */
+function pickByArea(candidates, expectedArea) {
+  const hint = String(expectedArea || '').trim();
+  if (!hint) return null;
+  const norm = (s) => String(s || '').replace(/\s+/g, '').toLowerCase();
+  const hintNorm = norm(hint);
+  if (!hintNorm) return null;
+  return candidates.find((c) => norm(c.formattedAddress).includes(hintNorm)) || null;
+}
+
+function toCandidate(place) {
+  const loc = place.location || {};
+  return {
+    placeId: place.id,
+    name: place.displayName && place.displayName.text,
+    address: place.formattedAddress,
+    lat: loc.latitude,
+    lng: loc.longitude,
+  };
+}
+
+/* 실제 Google Places API(New) 어댑터 — GOOGLE_PLACES_API_KEY가 설정된
+   실제 운영 환경에서만 쓰인다. 이 함수 자체는 구현돼 있지만, 실제
+   키가 없는 개발 환경에서는 절대 호출되지 않는다(config.testMode가
+   항상 우선한다 — lookupPlace()가 그 분기를 담당). */
+async function googleAdapter({ query, expectedArea }) {
   const key = config.google.placesKey;
   if (!key) return { ok: false, reason: 'no-api-key-configured' };
-  const url = `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(query)}&inputtype=textquery&fields=geometry,name,place_id&key=${key}`;
   try {
-    const res = await fetch(url);
-    if (!res.ok) return { ok: false, reason: 'http-error' };
+    const res = await fetchWithTimeout(`${config.google.placesApiBase}/v1/places:searchText`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': key,
+        'X-Goog-FieldMask': 'places.id,places.displayName,places.location,places.formattedAddress',
+      },
+      body: JSON.stringify({ textQuery: query, languageCode: 'ko' }),
+    }, config.externalRequestTimeoutMs);
+    if (!res.ok) return { ok: false, reason: 'http-error', status: res.status };
     const data = await res.json();
-    const cand = data.candidates && data.candidates[0];
-    if (!cand) return { ok: false, reason: 'not-found' };
+    const places = Array.isArray(data.places) ? data.places : [];
+    if (!places.length) return { ok: false, reason: 'not-found' };
+
+    const candidates = places.slice(0, 5).map(toCandidate);
+    const areaMatch = pickByArea(places, expectedArea);
+    const picked = areaMatch ? toCandidate(areaMatch) : candidates[0];
+    const ambiguous = candidates.length > 1 && !areaMatch;
+
     markVerified('placeLookup');
     return {
       ok: true,
-      lat: cand.geometry.location.lat,
-      lng: cand.geometry.location.lng,
-      name: cand.name,
-      source: 'google-places',
-      placeId: cand.place_id,
+      lat: picked.lat,
+      lng: picked.lng,
+      name: picked.name,
+      address: picked.address,
+      source: 'google-places-new',
+      placeId: picked.placeId,
+      ambiguous,
+      candidates,
     };
   } catch (e) {
     return { ok: false, reason: 'network-error' };

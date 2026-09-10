@@ -16,6 +16,7 @@
 process.env.DB_PATH = ':memory:';
 process.env.APP_ENV = 'development';
 process.env.GOOGLE_ROUTES_API_KEY = 'fake-routes-key';
+process.env.GOOGLE_PLACES_API_KEY = 'fake-places-key';
 process.env.PAYMENT_PG_SECRET = 'fake-secret-key';
 process.env.TOSS_CLIENT_KEY = 'fake-client-key';
 process.env.EMAIL_API_KEY = 'fake-resend-key';
@@ -27,6 +28,7 @@ let fail = 0; const t = (n, c) => { console.log((c ? 'PASS ' : 'FAIL ') + n); if
 t('사전 조건 — 이 테스트는 실제 real 모드에서 어댑터 코드를 태운다(payment)', config.services.payment === 'real');
 t('사전 조건 — routing도 real', config.services.routing === 'real');
 t('사전 조건 — email도 real', config.services.email === 'real');
+t('사전 조건 — placeLookup도 real', config.services.placeLookup === 'real');
 
 function mockFetchOnce(handler) {
   const calls = [];
@@ -155,6 +157,63 @@ async function ensureAccount(id) {
   const r = await computeWalkingRoute(origin, places);
   mock.restore();
   t('API 호출 실패 시 성공한 척 안 하고 추정으로 대체', r.routedReal === false);
+}
+
+// ============================================================
+// Google Places API(New) — POST /v1/places:searchText, 필드마스크,
+// 동명 장소는 지역 힌트로 판별(2026-09-10 재검토 4차 — Legacy Find
+// Place에서 전환).
+// ============================================================
+{
+  const { lookupPlace } = await import('../adapters/place-lookup.mjs');
+  const mock = mockFetchOnce((url, init) => jsonResponse(200, {
+    places: [{ id: 'place_1', displayName: { text: '스타벅스 강남점' }, formattedAddress: '서울 강남구 테헤란로', location: { latitude: 37.5, longitude: 127.0 } }],
+  }));
+  const r = await lookupPlace({ query: '스타벅스' });
+  mock.restore();
+  t('Places(New) — 엔드포인트가 문서 기준 경로(v1/places:searchText)', mock.calls[0].url.endsWith('/v1/places:searchText'));
+  t('Places(New) — Legacy(findplacefromtext)를 더 이상 쓰지 않음', !mock.calls[0].url.includes('findplacefromtext'));
+  t('Places(New) — X-Goog-Api-Key 헤더로 키를 보냄', mock.calls[0].init.headers['X-Goog-Api-Key'] === 'fake-places-key');
+  t('Places(New) — X-Goog-FieldMask 헤더로 필요한 필드만 요청함(과금 등급 최소화)', mock.calls[0].init.headers['X-Goog-FieldMask'] === 'places.id,places.displayName,places.location,places.formattedAddress');
+  const sentBody = JSON.parse(mock.calls[0].init.body);
+  t('Places(New) — 본문에 textQuery로 질의를 보냄', sentBody.textQuery === '스타벅스');
+  t('실제 후보를 찾으면 좌표·이름·placeId를 반환', r.ok === true && r.lat === 37.5 && r.lng === 127.0 && r.placeId === 'place_1');
+}
+{
+  // 동명 장소 여러 개 — 지역 힌트(expectedArea)와 실제로 주소가 겹치는
+  // 후보를 우선한다(첫 번째 결과라는 이유만으로 확정하지 않는다).
+  const { lookupPlace } = await import('../adapters/place-lookup.mjs');
+  const mock = mockFetchOnce(() => jsonResponse(200, {
+    places: [
+      { id: 'place_busan', displayName: { text: '스타벅스' }, formattedAddress: '부산 해운대구', location: { latitude: 35.1, longitude: 129.0 } },
+      { id: 'place_seoul', displayName: { text: '스타벅스' }, formattedAddress: '서울 강남구', location: { latitude: 37.5, longitude: 127.0 } },
+    ],
+  }));
+  const r = await lookupPlace({ query: '스타벅스', expectedArea: '강남구' });
+  mock.restore();
+  t('동명 장소가 여러 개면 지역 힌트와 실제로 맞는 후보를 고름(첫 결과를 무조건 쓰지 않음)', r.placeId === 'place_seoul');
+  t('지역 힌트로 확실히 좁혔으면 ambiguous가 아님', r.ambiguous === false);
+  t('나머지 후보도 candidates로 함께 내려줌(향후 화면에서 직접 고를 수 있게)', Array.isArray(r.candidates) && r.candidates.length === 2);
+}
+{
+  // 지역 힌트와 맞는 후보가 하나도 없으면 1순위를 쓰되 ambiguous로 표시한다.
+  const { lookupPlace } = await import('../adapters/place-lookup.mjs');
+  const mock = mockFetchOnce(() => jsonResponse(200, {
+    places: [
+      { id: 'place_a', displayName: { text: '스타벅스' }, formattedAddress: '부산 해운대구', location: { latitude: 35.1, longitude: 129.0 } },
+      { id: 'place_b', displayName: { text: '스타벅스' }, formattedAddress: '대구 중구', location: { latitude: 35.8, longitude: 128.6 } },
+    ],
+  }));
+  const r = await lookupPlace({ query: '스타벅스', expectedArea: '강남구' });
+  mock.restore();
+  t('힌트와 맞는 후보가 없으면 1순위를 쓰되 ambiguous로 표시함(자동 확정 아님)', r.placeId === 'place_a' && r.ambiguous === true);
+}
+{
+  const { lookupPlace } = await import('../adapters/place-lookup.mjs');
+  const mock = mockFetchOnce(() => jsonResponse(200, { places: [] }));
+  const r = await lookupPlace({ query: '존재하지않는곳' });
+  mock.restore();
+  t('후보가 없으면 지어내지 않고 not-found로 정직하게 답함', r.ok === false && r.reason === 'not-found');
 }
 
 console.log(fail ? `\n실패 ${fail}건` : '\n전체 통과');

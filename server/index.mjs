@@ -26,7 +26,7 @@ import { trialStatus, consumeTrial } from './routes/trial.mjs';
 import { checkEntitlement } from './routes/entitlement.mjs';
 import { handleWebhook } from './routes/webhook.mjs';
 import { handleTossWebhook } from './routes/webhook-toss.mjs';
-import { lookupPlaceRoute } from './routes/places.mjs';
+import { lookupPlaceRoute, lookupPlacesBatchRoute } from './routes/places.mjs';
 import { recordEvent } from './routes/events.mjs';
 import { joinWaitlist } from './routes/waitlist.mjs';
 import { generateCourseRoute } from './routes/course-generation.mjs';
@@ -157,11 +157,20 @@ async function handle(req, res) {
       return sendJson(res, result.ok ? 200 : 404, result);
     }
 
-    // 장소 조회 — 이제 인증 필수 + 계정별/서비스 전체 한도(2026-09-10).
+    // 장소 조회 — 인증 필수 + 계정별/서비스 전체 한도(2026-09-10).
+    // 2026-09-10 재검토(4차): phase 쿼리 파라미터는 더 이상 한도 등급을
+    // 정하지 않는다(클라이언트 자기 신고였다는 지적 반영) — area 힌트만
+    // 동명 장소 판별에 쓴다. 더 큰 한도는 아래 배치 엔드포인트로만.
     if (req.method === 'GET' && pathname === '/api/places/lookup') {
       const accountId = requireAccount(req, res); if (!accountId) return;
-      const result = await lookupPlaceRoute(accountId, url.searchParams.get('q'), url.searchParams.get('phase'));
+      const result = await lookupPlaceRoute(accountId, url.searchParams.get('q'), url.searchParams.get('area'));
       return sendJson(res, result.status, result.ok ? result.result : result);
+    }
+    if (req.method === 'POST' && pathname === '/api/places/lookup-batch') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const result = await lookupPlacesBatchRoute(accountId, body.items);
+      return sendJson(res, result.status, result);
     }
 
     if (req.method === 'POST' && pathname === '/api/waitlist') {
@@ -195,7 +204,7 @@ async function handle(req, res) {
     if (req.method === 'POST' && pathname === '/api/payment/cancel') {
       const accountId = requireAccount(req, res); if (!accountId) return;
       const body = JSON.parse((await readBody(req)) || '{}');
-      const result = await cancelOrderRoute(body);
+      const result = await cancelOrderRoute(accountId, body);
       return sendJson(res, result.status, result);
     }
     if (req.method === 'POST' && pathname === '/api/webhook/toss') {

@@ -3,31 +3,47 @@
  * 실제 도보 경로 계산 — Google Routes API(WALK 모드)로 서버에서 계산한다.
  *
  * **중요한 한계 고지**: 이 세션은 `developers.google.com` 접속이 막혀
- * (EGRESS_BLOCKED) 공식 문서를 다시 대조하지 못했다. 아래 엔드포인트·
- * 필드명은 학습된 지식 기준이며, 실제 키를 넣기 전 반드시 최신 공식
- * 문서와 대조해야 한다.
+ * (EGRESS_BLOCKED) 공식 문서를 다시 대조하지 못했다(2026-09-10 재검토
+ * 4차에서도 재시도했지만 여전히 막힘). 아래 엔드포인트·필드명은 학습된
+ * 지식 기준이며, 실제 키를 넣기 전 반드시 최신 공식 문서와 대조해야
+ * 한다.
  *
  * 2026-09-10 재검토(3차) 지시 그대로 반영한 설계 결정:
  * 1. **"API 한 번으로 모든 최적화가 된다고 가정하지 않는다."** 방문
- *    순서 최적화(`optimizeWaypointOrder`)가 도보(WALK) 모드에서도
- *    문서대로 동작하는지, 어떤 요금제(Basics/Advanced 등)에 속하는지
- *    이 세션에서 확인하지 못했다 — 그래서 아예 그 옵션을 쓰지 않는다.
- *    방문 순서는 **우리가 직접** 좌표 기반 최근접 이웃(nearest-neighbor)
+ *    순서는 우리가 직접 좌표 기반 최근접 이웃(nearest-neighbor)
  *    휴리스틱으로 정한다(API 호출 0회, 순수 로컬 계산). **이건 전역
  *    최단 경로를 보장하지 않는다** — 화면에도 "가장 짧은 순서"라고
  *    말하지 않고 "방문 순서" 정도로만 표현해야 한다(과장 금지).
- * 2. **"실제 호출 수·행렬 요소 수를 비용에 반영한다."** 순서가 이미
- *    정해져 있으므로, 그 순서 그대로 `computeRoutes`를 **딱 한 번만**
- *    호출해 전체 구간(origin→p1→p2→…→pN)의 실제 도보 거리·시간을
- *    한�위에 받는다. 정거장 수가 N개면 이동 구간은 N개이고, 필요한
- *    API 호출은 항상 1회다(행렬 API처럼 N×M칸을 다 계산해서 비싸지는
- *    구조를 피했다).
- * 3. 실패(네트워크 오류, 4xx/5xx, 응답에 legs 없음)하면 예전과 동일하게
- *    직선거리 추정으로 정직하게 대체한다(routedReal=false) — 성공한
- *    척 하지 않는다.
+ * 2. 실패(네트워크 오류, 4xx/5xx, 응답에 legs 없음)하면 직선거리
+ *    추정으로 정직하게 대체한다(routedReal=false) — 성공한 척 하지
+ *    않는다.
+ *
+ * **2026-09-10 재검토(4차) — 실제로 재현된 치명적 버그를 고침**: 예전
+ * 버전은 `config.services.routing !== 'real'`이면 무조건 `simulateTestRoute`
+ * (가짜 성공을 만들 수 있는 테스트 시뮬레이터)로 빠졌다. 이 조건은
+ * `services.routing`이 `'test'`일 때뿐 아니라 **운영(production)에서
+ * 키가 없어 `'unavailable'`일 때도 참이 된다** — 즉 운영에서 경로 API
+ * 키를 안 넣으면 시뮬레이터가 `routedReal:true`인 가짜 실제 경로를
+ * 만들어낼 수 있었다(ChatGPT가 `APP_ENV=production` + 키 없음 상태에서
+ * 실제로 재현: origin/synthetic 좌표로 routedReal=true를 받아냄). 이제는
+ * `services.routing`의 세 값(`'real'`/`'test'`/`'unavailable'`)을 전부
+ * 명시적으로 분기한다 — `'test'`가 아니면 시뮬레이터 함수 자체를 절대
+ * 호출하지 않는다.
+ *
+ * **4차 추가 — 경유지 상한과 비용 통제**: Google Routes는 중간 경유지가
+ * 최대 `routesMaxIntermediatesPerCall`개(ChatGPT 확인 기준 25개)이고,
+ * `routesHighVolumeThreshold`개(11개) 이상이면 더 비싼 요금 구간이라고
+ * 한다. 임의 개수를 한 요청에 다 넣지 않고, 넘치면 여러 번의 연결된
+ * 호출로 나눈다(구간 경계를 공유해 실제 이동 구간이 끊기지 않게 한다).
+ * 실제 호출을 보내기로 결정하는 매 순간 cost-ledger에 예상 비용을
+ * 확정 기록한다(예산을 넘으면 아예 호출하지 않고 정직한 추정으로
+ * 대체한다 — 무료체험을 쓰지 않는다는 course-generation.mjs의 판단
+ * 근거가 되는 routedReal=false가 자연히 적용된다).
  */
 import { config } from '../config.mjs';
 import { markVerified } from '../status.mjs';
+import { fetchWithTimeout } from '../net.mjs';
+import { chargeCost } from '../cost-ledger.mjs';
 
 const WALK_MIN_PLAUSIBLE_MPS = 0.3;
 const WALK_MAX_PLAUSIBLE_MPS = 2.2;
@@ -74,9 +90,9 @@ function estimateLegs(origin, ordered) {
    "실제 경로 성공"과 "실패→추정 대체" 두 코드 경로를 서버 테스트에서
    결정론적으로 재현하기 위한 것이다(장소조회 테스트 어댑터와 같은
    목적). `config.routingTestForce`로 명시적으로 고르거나, 안 정하면
-   좌표 해시로 결정론적으로 나눈다. **production에서는 services.routing
-   이 'real' 아니면 'unavailable'뿐이라 이 함수 자체가 절대 호출되지
-   않는다** — computeWalkingRoute의 분기 참고. */
+   좌표 해시로 결정론적으로 나눈다. 아래 computeWalkingRoute는
+   `services.routing === 'test'`일 때만 이 함수를 부른다 — 그 외
+   ('real'/'unavailable')에서는 절대 호출되지 않는다. */
 function simulateTestRoute(origin, ordered) {
   const legs = estimateLegs(origin, ordered);
   let simulateSuccess;
@@ -88,27 +104,34 @@ function simulateTestRoute(origin, ordered) {
     simulateSuccess = Math.abs(hash) % 5 !== 0;
   }
   if (!simulateSuccess) return { routedReal: false, legs, fallbackReason: 'test-adapter-simulated-failure' };
-  // "성공"을 흉내 낼 때도 실제 좌표 기반 거리(haversine)를 쓰되, 도보
-  // 타당 속도로만 시간을 재계산한다 — 이 값 자체가 실제 상용 라우팅
-  // API 응답은 아니다(테스트/개발 전용 시뮬레이션이라는 걸 respondsWith
-  // 쪽 fallbackReason 대신 routedReal=true로 그대로 반영하는 이유는,
-  // 이게 "실제 성공"과 똑같은 형태의 값으로 뒤 단계 로직을 검증해야
-  // 하기 때문이다 — 실 서비스 판정은 항상 config.services.routing이
-  // 하지 이 값이 하지 않는다).
   const walkLegs = legs.map((l) => ({ distanceMeters: l.distanceMeters, seconds: l.distanceMeters / 1.2 }));
   return { routedReal: true, legs: walkLegs };
 }
 
-/* 실제 Google Routes 호출 — 이미 정해진 순서(ordered) 그대로 origin→
-   p1→…→pN 전체 구간을 한 번에 요청한다. WALK 모드 응답이 말이 안 되게
-   빠르면(자동차 프로필 오응답 의심 등) 실제 경로로 인정하지 않는다 —
-   이 방어는 공개 OSRM 시절부터 있던 것과 같은 이유지만, 이제 검증
-   대상은 상용 API 응답이라 발생 가능성은 낮다. 그래도 "도보 API URL을
-   불렀다"는 사실 자체를 도보 검증으로 삼지 말라는 지시에 따라 속도
-   타당성 검사는 유지한다(다만 이건 보조 방어일 뿐, 실제 성공 여부의
-   핵심 근거는 이제 Google 자체가 WALK 모드로 계산했다는 것이다). */
-async function callGoogleRoutes(origin, ordered) {
-  const waypoints = [origin, ...ordered].map((p) => ({ location: { latLng: { latitude: p.lat, longitude: p.lng } } }));
+/* points를 "한 번의 computeRoutes 호출로 처리 가능한 조각"들로 나눈다.
+   각 조각의 마지막 지점을 다음 조각의 첫 지점으로 그대로 이어 붙여
+   실제 이동 구간이 끊기지 않게 한다(2026-09-10 재검토 4차 — "분할 시
+   연결 구간과 실제 호출 수를 보존하라"). 조각 하나의 중간 경유지 수는
+   routesMaxIntermediatesPerCall을 넘지 않는다(경계 지점 2개 제외). */
+function splitIntoSegments(points) {
+  const maxIntermediates = config.routesMaxIntermediatesPerCall;
+  const maxPointsPerSegment = maxIntermediates + 2; // 시작점 + 경유지들 + 도착점
+  const segments = [];
+  let i = 0;
+  while (i < points.length - 1) {
+    const end = Math.min(i + maxPointsPerSegment - 1, points.length - 1);
+    segments.push(points.slice(i, end + 1));
+    i = end;
+  }
+  return segments;
+}
+
+/* 실제 Google Routes 호출 — 세그먼트(이미 정해진 순서의 연속 구간)
+   하나를 한 번의 computeRoutes 요청으로 처리한다. WALK 모드 응답이
+   말이 안 되게 빠르면(자동차 프로필 오응답 의심 등) 이 세그먼트 전체를
+   실제 경로로 인정하지 않는다. */
+async function callGoogleRoutesSegment(segmentPoints) {
+  const waypoints = segmentPoints.map((p) => ({ location: { latLng: { latitude: p.lat, longitude: p.lng } } }));
   const body = {
     origin: waypoints[0],
     destination: waypoints[waypoints.length - 1],
@@ -116,7 +139,7 @@ async function callGoogleRoutes(origin, ordered) {
     travelMode: 'WALK',
     optimizeWaypointOrder: false,
   };
-  const res = await fetch(`${config.google.routesApiBase}/directions/v2:computeRoutes`, {
+  const res = await fetchWithTimeout(`${config.google.routesApiBase}/directions/v2:computeRoutes`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -124,14 +147,12 @@ async function callGoogleRoutes(origin, ordered) {
       'X-Goog-FieldMask': 'routes.legs.distanceMeters,routes.legs.duration',
     },
     body: JSON.stringify(body),
-  });
+  }, config.externalRequestTimeoutMs);
   if (!res.ok) return { ok: false, reason: 'http-error', status: res.status };
   const json = await res.json();
   const route = json.routes && json.routes[0];
   const legs = route && route.legs;
-  // 지점이 origin+ordered(N개)면 구간(leg)은 항상 N개(origin→p1,
-  // p1→p2, …, p(N-1)→pN)다 — 응답 모양이 이거랑 다르면 신뢰하지 않는다.
-  const expectedLegCount = ordered.length;
+  const expectedLegCount = segmentPoints.length - 1;
   if (!legs || legs.length !== expectedLegCount) return { ok: false, reason: 'unexpected-legs-shape' };
   return { ok: true, legs };
 }
@@ -151,27 +172,65 @@ function legsAreWalkPlausible(legs) {
   });
 }
 
+function estimateFallback(origin, ordered, fallbackReason) {
+  return { ok: true, routedReal: false, ordered, legs: estimateLegs(origin, ordered).map((l) => ({ distanceMeters: l.distanceMeters, seconds: l.seconds })), fallbackReason };
+}
+
+/* 실제 호출 전체(세그먼트별로 나뉜 여러 번의 computeRoutes)를 순서대로
+   실행한다. 실행하기 전에 "이 코스에 필요한 실제 호출 수·SKU"를 전부
+   미리 계산해 예산을 확인한다 — 중간에 예산이 바닥나 일부 구간은 실제
+   경로, 일부는 추정으로 섞이면 routedReal 하나로 "체험을 차감해도
+   되는가"를 판단하는 이 시스템 전체의 전제가 깨진다(2026-09-10 재검토
+   4차: "동시 요청 시 예상 비용을 먼저 예약해 한도 초과를 방지"). 그래서
+   전부 아니면 전무(all-or-nothing)로 처리한다 — 예산이 하나라도
+   모자라면 전체를 정직한 추정으로 대체하고 실제 호출은 한 번도 하지
+   않는다. */
+async function callGoogleRoutesAll(origin, ordered, accountId) {
+  const points = [origin, ...ordered];
+  const segments = splitIntoSegments(points);
+
+  for (const seg of segments) {
+    const intermediateCount = seg.length - 2;
+    const sku = intermediateCount >= config.routesHighVolumeThreshold ? 'routes-compute-highvolume' : 'routes-compute';
+    const charge = chargeCost({ accountId, service: 'routes', sku });
+    if (!charge.ok) return { ok: false, reason: 'cost-budget-exceeded', detail: charge.reason };
+  }
+  // 예산 확인을 전부 통과했으니 이제 실제로 순서대로 호출한다. 이 시점
+  // 이후의 실패(네트워크 오류·타임아웃 등)는 "돈은 이미 쓰기로 확정
+  // 기록됐지만 결과를 못 받은" 상황이다 — cost-ledger.mjs 설계 참고.
+  const allLegs = [];
+  for (const seg of segments) {
+    let result;
+    try {
+      result = await callGoogleRoutesSegment(seg);
+    } catch (e) {
+      return { ok: false, reason: 'network-error' };
+    }
+    if (!result.ok) return { ok: false, reason: result.reason };
+    if (!legsAreWalkPlausible(result.legs)) return { ok: false, reason: 'implausible-speed' };
+    allLegs.push(...result.legs.map((l) => ({ distanceMeters: l.distanceMeters, seconds: parseDurationSeconds(l.duration) })));
+  }
+  return { ok: true, legs: allLegs };
+}
+
 /* 공개 진입점 — origin + 순서 미정 장소 목록을 받아 (1) 순서를 정하고
-   (2) 실제 경로 또는 추정을 반환한다. 반환 형식은 예전 클라이언트
-   course.js의 결과와 최대한 비슷하게 맞춰 호출부 변경을 최소화했다. */
-export async function computeWalkingRoute(origin, places) {
+   (2) 실제 경로 또는 추정을 반환한다. accountId는 비용 원장 기록용
+   (로그인 없이는 이 함수까지 도달할 수 없으므로 항상 있어야 정상). */
+export async function computeWalkingRoute(origin, places, accountId) {
   const ordered = orderByNearestNeighbor(origin, places);
-  if (config.services.routing !== 'real') {
+
+  if (config.services.routing === 'test') {
     const sim = simulateTestRoute(origin, ordered);
     return { ok: true, routedReal: sim.routedReal, ordered, legs: sim.legs, fallbackReason: sim.fallbackReason };
   }
-  try {
-    const result = await callGoogleRoutes(origin, ordered);
-    if (!result.ok) {
-      return { ok: true, routedReal: false, ordered, legs: estimateLegs(origin, ordered).map((l) => ({ distanceMeters: l.distanceMeters, seconds: l.seconds })), fallbackReason: result.reason };
-    }
-    const legsSeconds = result.legs.map((l) => ({ distanceMeters: l.distanceMeters, seconds: parseDurationSeconds(l.duration) }));
-    if (!legsAreWalkPlausible(result.legs)) {
-      return { ok: true, routedReal: false, ordered, legs: estimateLegs(origin, ordered).map((l) => ({ distanceMeters: l.distanceMeters, seconds: l.seconds })), fallbackReason: 'implausible-speed' };
-    }
-    markVerified('routing');
-    return { ok: true, routedReal: true, ordered, legs: legsSeconds };
-  } catch (e) {
-    return { ok: true, routedReal: false, ordered, legs: estimateLegs(origin, ordered).map((l) => ({ distanceMeters: l.distanceMeters, seconds: l.seconds })), fallbackReason: 'network-error' };
+  if (config.services.routing !== 'real') {
+    // 'unavailable' — 운영인데 키가 없다. 절대 시뮬레이터로 안 빠지고
+    // 정직한 추정으로만 대체한다(이번에 고친 핵심 버그).
+    return estimateFallback(origin, ordered, 'routing-service-unavailable');
   }
+
+  const result = await callGoogleRoutesAll(origin, ordered, accountId);
+  if (!result.ok) return estimateFallback(origin, ordered, result.reason);
+  markVerified('routing');
+  return { ok: true, routedReal: true, ordered, legs: result.legs };
 }

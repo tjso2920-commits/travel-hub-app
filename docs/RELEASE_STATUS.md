@@ -2,39 +2,39 @@
 
 작성: 2026-09-10(1차) · 갱신: 2026-09-10(2차 — 확정 상품 반영) ·
 갱신: 2026-09-10(3차 — 결제/이메일/경로 공급자 확정, 서버 집행 구조
-재설계 반영) · 브랜치 `design-integration`
+재설계) · 갱신: 2026-09-10(4차 — ChatGPT가 실제로 재현한 문제 수정,
+API 비용 통제 실제 구현, 경유지 상한 반영) · 브랜치 `design-integration`
 
-**3차 갱신 배경**: 사용자가 2차 갱신 결과물을 직접 테스트한 뒤
-"무료체험이 클라이언트에서 계산되고 서버는 뒤늦게 통보만 받는 구조라
-동시 요청으로 우회 가능하다"·"운영에서 테스트 기능이 안 막힌다"·
-"장소 조회가 로그인·한도 없이 열려 있다" 등 구체적 문제를 지적하며
-반려했다. 이 문서는 그 지적에 대한 실제 코드 수정 결과를 정리한다.
-**사용자의 완료 기준을 그대로 따른다: 계획·미구현 함수·자체 모의
-결제만으로 "구현 완료"라고 적지 않는다.** 아래 분류 중 "④ 사용자
-설정 필요"로 표시된 항목은 이 세션이 실제 키로 검증하지 못했다는
-뜻이지, 코드가 없다는 뜻이 아니다 — 코드 유무와 실제 검증 여부를
-분리해서 적는다.
+**4차 갱신 배경**: ChatGPT가 3차 결과물을 직접 코드로 재현·검토한 뒤
+구체적인 문제를 지적했다 — (1) 운영에서 경로 API 키가 없으면
+`computeWalkingRoute`가 테스트 시뮬레이터로 빠져 `routedReal:true`인
+가짜 실제 경로를 만들 수 있음(실제로 `APP_ENV=production`+키 없음
+상태에서 재현됨), (2) `/api/payment/cancel`이 계정 소유자를 대조하지
+않아 다른 계정의 주문을 취소할 수 있음, (3) 코스 생성의 체험 차감·
+결과 저장이 트랜잭션으로 묶여 있지 않음, (4) 장소 조회가 Legacy Find
+Place의 첫 후보를 그대로 확정함, (5) API 호출 비용을 서버가 전혀
+통제하지 않아 9,900원 상품에서 수천 원 이상의 비용이 발생할 수 있는
+구조, (6) Google Routes 경유지 개수 상한을 안 지킴. 이 문서는 그
+지적 하나하나에 대한 실제 코드 수정 결과를 정리한다.
 
 - **①코드 완료** — 동작에 필요한 코드가 전부 작성됐고, 외부 서비스가
-  없거나(이 앱 자체가 서버·DB를 직접 가짐) 실제 HTTP 요청으로 검증까지
-  끝난 기능.
-- **②모의 검증** — 실제 코드 경로(요청 생성 → 처리 → 응답 반영)는
-  전부 진짜고, 응답을 주는 쪽만 가짜(테스트 어댑터, 자체 서명 웹훅,
-  `page.route()` 모의, `fetch` 모의 등)로 검증.
+  없거나 실제 HTTP 요청으로 검증까지 끝난 기능.
+- **②모의 검증** — 실제 코드 경로는 전부 진짜고, 응답을 주는 쪽만
+  가짜(테스트 어댑터, `fetch` 모의 등)로 검증.
 - **③실제 연결 검증** — 실제 키·실제 네트워크로 외부 서비스에 요청을
   보내 성공 응답을 실제로 받아봄.
-- **④사용자 설정 필요** — 코드는 있지만 실제 키가 없거나(이 세션은
-  발급받은 적 없음), 이 세션의 네트워크 제약(EGRESS_BLOCKED)으로
-  공식 문서·실제 응답을 확인하지 못해 사용자가 직접 키를 넣고
-  처음 검증해야 하는 항목.
+- **④사용자 설정 필요** — 코드는 있지만 실제 키가 없거나
+  (EGRESS_BLOCKED로 이 세션이 발급받지 못함), 사용자가 직접 키를
+  넣고 처음 검증해야 하는 항목.
 
-이번 3차 갱신에서 가장 중요한 사실: **① 코드 완료는 늘었지만, ③ 실제
-연결 검증은 이번에도 하나도 늘지 않았다** — 이 세션 내내
-`docs.tosspayments.com`, `resend.com`, `developers.google.com`,
-`mapsplatform.google.com` 전부 접속이 막혀 있었다(EGRESS_BLOCKED,
-아래 3절에서 매번 명시). 세 공급자 모두 학습 시점 기억으로 코드를
-작성했으므로 **실제 스펙과 다를 가능성을 열어 두고, 실제 키를 넣는
-순간 다시 검증해야 한다.**
+**이번에도 ③(실제 연결 검증)은 늘지 않았다** — 네트워크 제약은
+3차와 동일하게 남아 있다(`docs.tosspayments.com`, `resend.com`,
+`developers.google.com`, `mapsplatform.google.com` 전부 이번 세션에도
+다시 시도했지만 여전히 접속 불가). 4차의 진짜 변화는 **① 코드
+완료·실제 재현 테스트 통과 항목이 늘어난 것**이다 — 특히 "설정
+함수만 통과하고 실제 엔드포인트는 검증 안 됨" 같은 반쪽짜리 검증이
+없도록, 지적된 각 문제를 실제 HTTP 요청·실제 DB 상태로 재현하는
+전용 테스트를 새로 만들었다(5절).
 
 ---
 
@@ -45,130 +45,132 @@
 | Google Takeout ZIP/CSV/JSON 가져오기 | **①** | `scripts/test-zip-import.mjs` 18개 |
 | 재가져오기 중복 방지, 사용자 수정(유형·도시) 보존 | **①** | `scripts/design-integration-check.mjs`, `scripts/test/t49.mjs` |
 | 도시별 컬렉션·검색·수동 정리 | **①** | `scripts/design-integration-check.mjs` |
-| **장소 조회 — 인증 필수 + 초기가져오기/재조회 분리 한도** | **①**(인증·한도 분리 코드, 실제 HTTP로 401/429 재현) + **②**(테스트 어댑터로 조회 흐름 검증) | `server/test/server-v2.test.mjs`, `scripts/test-place-lookup.mjs` 11개(로그인 게이트 추가) |
-| 불확실한 후보 확인(사람이 "맞아요"를 눌러야 반영) | **①** | 위와 동일 |
-| **장소 조회 — 실제 Google Places 연결** | **④** | `server/adapters/place-lookup.mjs`의 `googleAdapter`는 실제 호출 코드가 있으나 `mapsplatform.google.com` 접속이 막혀 문서 재확인도, 실 키 호출도 못 했다 |
-| **개인화 코스 생성 — 서버 집행(인증·멱등성·동시성 잠금·레이트리밋·실패시 미차감)** | **①** | `server/test/server-v2.test.mjs`(멱등성·잠금·레이트리밋), `server/test/generation-trial-charging-success.test.mjs`/`-failure.test.mjs`(성공만 차감), 전부 실제 HTTP 요청·실제 DB 행 조작으로 재현 |
-| **도보 경로 계산 — Google Routes(WALK) 어댑터** | **①**(코드, 최근접 이웃 로컬 정렬 + 단일 API 호출 설계) + **②**(계약 테스트로 요청 형태 검증) | `server/test/provider-contracts.test.mjs`, `scripts/test-course-generation.mjs` 21개. **구 OSRM 방식은 완전히 폐기했다**(`/foot/` URL·평균속도 검사만으로는 실제 도보 경로를 보장하지 못한다는 지적 반영) |
-| **도보 경로 — 실제 Google Routes 연결** | **④** | `developers.google.com` 접속이 막혀 공식 스펙 재확인도, 실 키로 성공 응답을 받아보지도 못했다 — 요청 형태(필드마스크·WALK 모드·`optimizeWaypointOrder:false`)는 계약 테스트로만 검증 |
+| **가져오기 자체는 유료 조회를 전혀 안 함**(6-① 지시) | **①** | `server/test/reliability-and-cost.test.mjs` — 300곳을 저장(PUT /api/places)만 했을 때 `cost_ledger`에 행이 0개 늘어남을 실제로 확인 |
+| **장소 조회 — 인증 필수 + 초기가져오기/재조회/일괄 3단 한도 분리** | **①** | `server/test/server-v2.test.mjs`, `server/test/reliability-and-cost.test.mjs` — 단일 조회는 `phase` 값과 무관하게 항상 requery 한도만 적용(4차 수정: 예전엔 클라이언트가 phase=import를 자기 신고해 큰 한도를 받을 수 있었다), 더 큰 배치 한도는 `/api/places/lookup-batch`로만(서버가 실제 처리 개수로 판단) |
+| **장소 조회 — Places API(New) 전환, 동명 장소 지역 힌트 판별** | **①**(코드) + **②**(계약 테스트) | `server/test/provider-contracts.test.mjs` — Legacy Find Place 폐기, `v1/places:searchText` 사용, 지역 힌트와 실제로 맞는 후보를 첫 결과보다 우선(4차 신규) |
+| **장소 조회 — 중복 호출 방지(캐시) + 비용 원장 기록** | **①** | `server/test/reliability-and-cost.test.mjs` — 완전히 같은 질의 반복 시 실제 유료 호출이 1건만 기록됨을 확인 |
+| **장소 조회 — 계정별/전체 비용 한도(일일·월간)** | **①** | `server/cost-ledger.mjs`, `server/test/reliability-and-cost.test.mjs` — 한도 초과 시 외부 호출 자체를 안 함(503), 계정 한도가 먼저 걸리면 전체 한도를 안 건드림(순서 수정) |
+| 불확실한 후보 확인(사람이 "맞아요"를 눌러야 반영) | **①** | `scripts/test-place-lookup.mjs` 11개 |
+| **장소 조회 — 실제 Google Places 연결** | **④** | `mapsplatform.google.com` 접속 불가로 문서 재확인·실 키 호출 모두 못 함 |
+| **개인화 코스 생성 — 서버 집행 + 저장/체험차감 원자성 + 잠금 만료·소유권 검증** | **①** | `server/test/server-v2.test.mjs`, `server/test/reliability-and-cost.test.mjs` — 체험 차감·코스 저장·결과 기록을 하나의 DB 트랜잭션으로 묶음(4차 신규), 죽은 프로세스가 남긴 오래된 잠금을 회수해 계정이 영구히 안 막힘(4차 신규, 실제 재현), 같은 멱등키에 다른 요청 본문이 오면 충돌(409) 처리(4차 신규) |
+| **코스 생성 — 입력 검증(좌표 범위·장소 개수·시간 예산)** | **①** | `server/test/reliability-and-cost.test.mjs` — 위도 999, 장소 61개, 시간예산 999999분 각각 실제로 400 거부 확인(4차 신규) |
+| **운영에서 경로 키 누락 시 가짜 실제경로 방지(ChatGPT 재현 버그 수정)** | **①** | `server/test/reliability-and-cost.test.mjs` — `APP_ENV=production`+키없음+ChatGPT가 쓴 것과 동일한 synthetic 좌표로 실제 `/api/course/generate`를 호출해 `routedReal:false`·체험 미차감을 확인(4차 신규, 최우선 수정) |
+| **도보 경로 계산 — Google Routes(WALK), 경유지 상한(25개)·고요금 구간(11개+) 반영** | **①**(코드) + **②**(계약·재현 테스트) | `server/test/provider-contracts.test.mjs`, `server/test/routes-waypoint-limits.test.mjs`(4차 신규, 12개) — 25개 초과 시 연결된 여러 호출로 분할(경계 보존 확인), 11개 이상 구간은 고요금 SKU로 비용 기록. `server/test/cost-budget-allornothing.test.mjs`(4차 신규) — 예산이 일부만 감당 가능하면 전부 추정으로 대체(실제·추정 뒤섞임 방지) |
+| **도보 경로 — 실제 Google Routes 연결** | **④** | `developers.google.com` 접속 불가 |
 | 가용 시간·출발 시각 반영, 시간 초과 시 안내 | **①** | `scripts/test-course-generation.mjs` |
-| 도시별 코스 분리, 여러 날짜 일정 | **①** | `scripts/test-multi-day.mjs` 26개 |
+| 도시별 코스 분리, 여러 날짜 일정 | **①** | `scripts/test-multi-day.mjs` 28개 |
 | 새 코스 생성·저장 실패 시 기존 코스 보존 | **①** | `scripts/test-course-generation.mjs`, `scripts/test-purchase-flow.mjs` |
+| 저장된 코스 재열람은 새 유료 생성으로 처리 안 함 | **①** | `scripts/test-multi-day.mjs` — 날짜 탭 전환은 서버 호출 자체가 없어 `course_generated` 이벤트가 새로 안 늘어남 |
 | **이메일 로그인 — 쿨다운·IP 레이트리밋·연속실패 잠금** | **①** | `server/test/server-v2.test.mjs` |
-| **이메일 로그인 — 실제 Resend 발송** | **①**(코드) + **②**(계약 테스트로 요청 형태 검증) + **④**(실제 발송 미검증) | `server/test/provider-contracts.test.mjs` — `server/adapters/email.mjs`가 이제 스텁이 아니라 실제로 `POST api.resend.com/emails`를 호출하는 코드다. 단 `resend.com` 접속이 막혀 실제 키로 진짜 메일이 도착하는지는 확인 못 함 |
-| 로그인 후 기존 장소·진행 중 코스 유지, 로그인 필수 여부 변경(첫 코스도 로그인 필요) | **①** | `scripts/test-purchase-flow.mjs` |
-| **계정별 서버 저장 — 장소 보관함·날짜별 일정 동기화·병합·로그아웃 격리** | **①** | `scripts/test-account-sync.mjs`(신규) — 손님 데이터 보존, 다른 기기 데이터 병합, 로그아웃 시 로컬 삭제, 계정 전환 시 데이터 미노출, 재로그인 시 복원까지 실제 브라우저로 종단 검증 |
-| **결제 승인 흐름 — 서버 주문 생성 → 서버가 금액/소유자 재확인 → 승인** | **①**(코드, 클라이언트가 준 금액을 믿지 않는 구조 검증) + **②**(계약 테스트로 요청 형태·위조 방지 검증) | `server/test/provider-contracts.test.mjs`(토스 승인 요청 형태, 금액 불일치·계정 불일치 거부) |
-| **결제 — 실제 토스페이먼츠 연결(결제창·승인 API)** | **④** | `docs.tosspayments.com` 접속이 막혀 실제 스펙(인증 방식·필드명)을 재확인 못 했다. 클라이언트의 결제위젯 SDK 로드·`requestPayment` 호출 코드는 작성했으나 이 샌드박스는 실제 결제창을 띄워볼 수 없다(`js.tosspayments.com` 등 외부 스크립트 도메인도 막혀 있을 가능성이 높음) |
-| 결제 취소·환불·만료에 따른 권한 회수 | **①**(코드) + **②**(시뮬레이션으로 검증) | `scripts/test-purchase-flow.mjs`. 실제 PG 연동 전까지는 ③ 불가 |
-| 결제 실패 후 작업 화면 복귀, 중복 클릭 방지(로딩 상태) | **①** | `scripts/test-purchase-flow.mjs`, `src/design/spots.js`의 `disableStartButtons`/결제 버튼 로딩 처리 |
-| **운영(production) 환경 — 테스트 기능 완전 차단** | **①** | `server/test/production-boot.test.mjs` 8개 — 결제·이메일 필수 시크릿 없으면 실제 자식 프로세스가 종료코드 1로 부팅 거부(재현 확인), 장소조회·경로는 부팅은 막지 않되 정직하게 unavailable, 개발용 결제 시뮬레이션 라우트는 production에서 아예 등록 안 됨(코드 자체 확인) |
-| "키 있음"과 "실제 연결 확인됨" 구분 표시 | **①** | `server/status.mjs`(`markVerified`/`getVerifiedStatus`), `/api/health`의 `services` vs `verified` 필드 분리 |
-| 서비스별 독립 연결 상태(장소조회/결제/이메일/경로 개별 판정) | **①** | `server/test/config.test.mjs` 18개(결제는 시크릿+클라이언트 키 둘 다 있어야 real — 반쪽 설정 방지 포함) |
+| **이메일 로그인 — 실제 Resend 발송** | **①**(코드) + **②**(계약 테스트) + **④**(실제 발송) | `server/test/provider-contracts.test.mjs` |
+| 로그인 후 기존 장소·진행 중 코스 유지, 첫 코스도 로그인 필요 | **①** | `scripts/test-purchase-flow.mjs` |
+| **계정별 서버 저장 — 장소·코스 동기화·병합·로그아웃 격리** | **①** | `scripts/test-account-sync.mjs` 12개 |
+| **결제 — 활성 이용권 있으면 중복 구매 서버가 직접 거부** | **①** | `server/test/reliability-and-cost.test.mjs`(4차 신규) |
+| **결제 — 취소 시 계정 소유자 대조(ChatGPT 재현 버그 수정)** | **①** | `server/test/reliability-and-cost.test.mjs` — 다른 계정의 주문 취소 시도가 403으로 거부되고 실제 토스 API 호출 자체가 안 나감을 확인(4차 신규, 최우선 수정) |
+| **결제 — 승인 응답 유실/타임아웃 시 조회 API로 재확인(무조건 실패 확정 금지)** | **①** | `server/test/reliability-and-cost.test.mjs`(4차 신규) — 네트워크 오류로 confirm이 실패해도 조회로 실제 DONE 상태를 확인해 성공 처리, 정말 실패면 주문을 `failed`로 낙인찍지 않고 재시도 가능하게 `pending` 유지 |
+| **결제 — 동시 승인/취소 요청을 주문 단위 잠금으로 방지 + 만료 회수** | **①** | `server/test/reliability-and-cost.test.mjs`(4차 신규) |
+| **결제 — 과거 주문 취소·지연 웹훅이 최신 유효 이용권을 안 건드림** | **①** | `server/test/reliability-and-cost.test.mjs`(4차 신규) — `accounts.active_order_id`로 "지금 이용권을 실제로 부여한 주문"을 추적, 그 주문이 아니면 취소·웹훅이 와도 회수 안 함 |
+| **결제 — 중복/지연 웹훅 멱등 처리** | **①** | `server/test/reliability-and-cost.test.mjs`(4차 신규) — 같은 성공 웹훅이 두 번 와도 부작용 없음 |
+| **결제 — 부분 취소 ≠ 전액 취소(자동 이용권 회수 안 함, 정책 미확정 별도 보고)** | **①**(코드) + 정책 미확정(`docs/BUSINESS_DECISIONS.md` 5-0절) | `server/test/reliability-and-cost.test.mjs`(4차 신규) — 소비자 화면에는 부분 취소 UI 자체가 없음(완성 안 된 기능을 노출하지 않음) |
+| **결제 — 서비스 전체 월간 비용 예산 소진 시 신규 결제 자체를 차단** | **①** | `server/adapters/payment-toss.mjs`의 `isServiceCostBudgetExhausted`(4차 신규 — 유료 고객이 결제만 하고 코스를 못 만드는 상황 예방) |
+| 결제 실패 후 작업 화면 복귀, 중복 클릭 방지 | **①** | `scripts/test-purchase-flow.mjs` |
+| **운영(production) 환경 — 테스트 기능 완전 차단** | **①** | `server/test/production-boot.test.mjs` 8개 |
+| "키 있음"과 "실제 연결 확인됨" 구분 표시 | **①** | `/api/health`의 `services` vs `verified` |
+| 서비스별 독립 연결 상태 | **①** | `server/test/config.test.mjs` 18개 |
 | 측정 이벤트(유입~구매 퍼널) | **①** | `server/test/server.test.mjs` |
 | 한글/가나 완성형 폰트, 전송량 최적화 | **①** | `scripts/test-font-coverage.mjs` |
 | cp1_→cs1_ 저장소 마이그레이션 | **①** | `scripts/test-storage-migration.mjs` |
 | 소개 페이지 + 사전 신청 | **①** | `scripts/test-landing-page.mjs` 11개 |
 
-**요약**: 이 앱 자체의 로직(가져오기·정리·코스 생성 서버 집행·계정별
-서버 동기화·결제 권한 회수·측정·운영환경 테스트기능 차단)은 전부
-**① 수준까지 실제로 구현·검증됐다.** 3차 갱신에서 새로 생긴 진짜
-차이는 "④였던 항목 중 무엇이 ①/②로 올라왔는가"다 — 장소 조회·경로·
-이메일·결제 **전부 실제로 그 API를 호출하는 코드가 새로 작성됐고
-계약 테스트까지 통과했다**(이전에는 이메일은 스텁, 결제는 체크아웃
-코드 자체가 없었다). 다만 **네 공급자 모두 실제 키로 검증된 적은
-아직 한 번도 없다** — 이 세션의 네트워크 제약 때문이며, 다음
-누군가가 실제 키를 넣는 순간이 첫 번째 실제 검증이 된다(2절 참고).
+**요약**: ChatGPT가 지적한 6가지 문제(가짜 실제경로, 결제 취소 권한
+미대조, 트랜잭션 미보장, Legacy Places API, 비용 통제 부재, 경유지
+상한 미반영) **전부 실제 코드 수정 + 재현 테스트 통과까지 이번
+세션에서 끝냈다.** 남은 것은 3차와 동일하게 네 공급자(Toss/Resend/
+Google Places/Google Routes)의 ③(실제 키 연결) — 이 세션의 네트워크
+제약 때문이며, 코드가 없어서가 아니다(2절 참고).
 
 ---
 
 ## 2. 이번 세션에서 못 하는 검증 — 사용자가 직접 확인할 최소 절차
 
-### 2-1. 실제 키로 첫 연결 확인(신규 — 가장 중요)
+### 2-1. 실제 키로 첫 연결 확인(가장 중요 — 3차와 동일하게 여전히 미검증)
 
 - **상태**: Resend/토스페이먼츠/Google Places+Routes 네 서비스
-  모두 실제 키로 검증된 적이 없다. 이 세션은 네 공식 문서 사이트
-  전부(`resend.com`, `docs.tosspayments.com`, `mapsplatform.google.com`,
-  `developers.google.com`) 접속이 막혀 있었다(EGRESS_BLOCKED) —
-  코드는 학습 시점 기억으로 작성했다.
-- **확인 절차**: `docs/BUSINESS_DECISIONS.md` 6절의 표대로 키를
-  하나씩 넣어 가며 `/api/health`의 `services`/`verified` 필드와
-  실제 화면 동작(로그인 메일 도착, 결제창 노출, 실제 경로 표시,
-  실제 위치 후보 표시)을 확인한다.
-- **기대 결과와 실패 시 대응**: 넷 중 하나라도 실제 스펙이 이번에
-  작성한 코드와 다르면(예: 토스 웹훅 필드명, Resend 응답 형식,
-  Google Routes 응답 구조) 해당 어댑터 파일(`server/adapters/*.mjs`)
-  만 고치면 되도록 미리 그 경계에서 분리해 뒀다 — 코스 생성·결제
-  권한·레이트리밋 같은 핵심 로직은 안 건드려도 된다.
+  모두 실제 키로 검증된 적이 없다. 이번 세션도 네 공식 문서 사이트
+  전부 접속이 막혀 있었다(EGRESS_BLOCKED).
+- **확인 절차**: `docs/BUSINESS_DECISIONS.md` 6절 표대로 키를 하나씩
+  넣어 가며 `/api/health`의 `services`/`verified`와 실제 화면 동작을
+  확인한다.
+- **특히 4차에서 새로 생긴 확인 포인트**: 토스 승인 응답에
+  `totalAmount`/`currency` 필드가 실제로 우리가 가정한 이름·형식으로
+  오는지(`paymentMatchesOrder` 함수가 이 이름을 그대로 씀 —
+  다르면 정상 승인도 위조 의심으로 거부될 수 있다), Places API(New)의
+  `v1/places:searchText` 응답이 `places[].location.latitude/longitude`
+  형식이 맞는지, Routes 경유지 25개 상한이 실제로 그 숫자가 맞는지
+  (ChatGPT 확인 기준이지 이 세션이 재확인한 게 아니다).
 
 ### 2-2. 실제 Google Takeout 데이터
 
-- **상태**: 179건 실사용 데이터셋이 이 샌드박스에 없어 재실행하지
-  못했다.
-- **확인 절차**: 본인 구글 계정의 Takeout에서 저장 목록을 다시
-  내보내 가져오기에서 그대로 선택 → 결과 화면의 숫자가 실제와 대체로
-  맞는지, 다른 서비스 파일이 섞여도 걸러지는지 확인.
+- **상태**: 179건 실사용 데이터셋이 이 샌드박스에 없어 재실행 못 함.
 
 ### 2-3. 모바일 Safari(iOS)
 
-- **상태**: 실제 iPhone·Safari 미검증(자동화 테스트는 전부 데스크톱
-  Chromium 기준).
-- **확인 절차**: 파일 선택·가져오기, GPS 출발지 권한, 로그인 코드
-  숫자 키패드, 시트 열림 시 배경 스크롤 방지, 그리고 **이번에 새로
-  생긴 토스 결제위젯이 iOS Safari에서 실제로 뜨는지**를 실기기로
-  확인.
+- **상태**: 실제 iPhone·Safari 미검증. 4차에서 새로 추가된 배치
+  조회·비용 한도 초과 메시지가 실기기 화면에서 자연스럽게 보이는지도
+  함께 확인 필요.
 
 ### 2-4. 느린 네트워크
 
-- **상태**: 폰트 로딩만 느린 네트워크로 검증했다
-  (`scripts/test-font-coverage.mjs`). 로그인·결제·코스 생성 전체
-  흐름은 느린 네트워크 조건에서 검증하지 않았다.
-- **확인 절차**: "Slow 3G"에서 로그인 코드 요청 → 결제 → 코스 생성을
-  눌러 보며 중복 요청 여부·진행 안내 여부 확인(이번에 로딩 상태·
-  버튼 비활성화 처리를 추가했다 — `disableStartButtons`, 결제 버튼
-  `disabled` 처리).
+- **상태**: 폰트 로딩만 검증됨. 4차에서 추가된 외부 요청 타임아웃
+  (`EXTERNAL_REQUEST_TIMEOUT_MS`, 기본 8초)이 실제로 느린 네트워크에서
+  사용자 경험에 어떤 영향을 주는지(너무 짧아 정상 요청도 끊기는 건
+  아닌지)는 실기기·실네트워크 확인이 필요하다.
 
 ---
 
-## 3. 출시 차단 항목이었던 것 중 이번에 해소된 것 / 남은 것
+## 3. 이번 4차 갱신에서 고친 문제 목록(ChatGPT 재현 기준)
 
-**해소됨(2차 갱신 시점에는 1순위 차단 항목이었던 것)**:
-1. ~~이메일 발송 어댑터가 스텁~~ → Resend 실제 호출 코드 작성 완료(④만 남음).
-2. ~~결제 체크아웃 시작 코드 자체가 없음~~ → 토스페이먼츠 주문 생성·승인·웹훅 재조회 코드 작성 완료(④만 남음).
-3. ~~도보 경로가 실 서비스에 못 쓰는 공개 OSRM 데모~~ → Google Routes(WALK) 어댑터로 전환 완료(④만 남음).
-4. ~~장소 조회가 로그인·한도 없이 열려 있음~~ → 인증 필수 + 초기가져오기/재조회 분리 한도로 해결(①).
-5. ~~무료체험이 클라이언트에서 판정돼 동시요청으로 우회 가능~~ → 서버가 인증→잠금→레이트리밋→비용발생 전 게이트→실행→저장까지 전부 집행(①).
-6. ~~운영에서도 테스트 기능이 안 막힘~~ → `assertBootReady` + 개발용 라우트 미등록으로 해결(①).
-
-**남은 것(전부 "④ 사용자 설정 필요" — 코드는 있고, 실제 키만 있으면
-됨)**:
-1. Resend 실제 키로 첫 이메일 발송 확인.
-2. 토스페이먼츠 실제 클라이언트 키·시크릿으로 결제창·승인 확인,
-   실제 웹훅 스펙과 코드가 맞는지 재확인.
-3. Google Places 실제 키로 첫 위치 조회 확인.
-4. Google Routes 실제 키로 첫 실제 도보 경로 확인.
-5. 179건 실사용 데이터셋 재검증(파일 필요).
-6. iOS Safari 실기기 검증.
-
-1~4번은 전부 `docs/BUSINESS_DECISIONS.md` 6절의 환경변수를 넣는
-것으로 시작하지만, **"환경변수만 넣으면 끝"이라고 보고하지 않는다**
-— 넣은 뒤 실제로 동작을 확인하는 절차가 반드시 있어야 ③으로
-올라간다.
+| # | 지적된 문제 | 고친 내용 | 재현 테스트 |
+|---|---|---|---|
+| 1 | 운영+경로키없음에서 `routedReal:true` 가짜 성공 생성 가능 | `services.routing==='test'`일 때만 시뮬레이터 호출, `'unavailable'`이면 절대 안 부름 | `server/test/reliability-and-cost.test.mjs` §1 |
+| 2 | `/api/payment/cancel`이 계정 대조 없이 취소 | accountId로 주문 소유자 필수 대조 | 〃 §2 |
+| 3 | 승인 응답 유실 시 무조건 실패 처리 | 조회 API로 재확인 후 판단, 미확정이면 `pending` 유지 | 〃 §1-2 |
+| 4 | 부분 취소=전액 취소로 혼동 가능 | 상태·이용권 처리 분리, UI엔 미노출 | 〃 §2 |
+| 5 | 과거 주문 취소가 최신 이용권 훼손 가능 | `active_order_id`로 주문별 권리 관리 | 〃 §2 |
+| 6 | 중복/지연 웹훅으로 이중 지급·오취소 가능 | 상태 전이 멱등화 + 주문 단위 잠금 | 〃 §2 |
+| 7 | 결제 승인 동시 요청 시 중복 호출 가능 | order 단위 잠금(만료 회수 포함) | 〃 §3 |
+| 8 | 체험 차감·코스 저장이 트랜잭션으로 안 묶임 | 하나의 BEGIN/COMMIT/ROLLBACK으로 통합 | 〃 §4 |
+| 9 | generation_locks에 만료·소유권 검증 없음 | job_id 소유권 + 시간 기반 회수 | 〃 §4 |
+| 10 | 같은 멱등키·다른 요청 본문 미검출 | request_hash 비교 후 충돌(409) | 〃 §4 |
+| 11 | 좌표·장소개수·시간예산 서버 미검증 | 범위·상한 검증 추가 | 〃 §4 |
+| 12 | Legacy Find Place 첫 후보 그대로 확정 | Places API(New) + 지역 힌트 판별 | `server/test/provider-contracts.test.mjs` |
+| 13 | phase 파라미터가 클라이언트 자기 신고 | 단일 조회는 항상 requery 한도, 큰 한도는 배치 엔드포인트 전용 | `server/test/server-v2.test.mjs` |
+| 14 | 장소 조회 계정별 호출 한도 자체가 무의미(재확인) | 캐시 dedup + 계정별/전체 순서 수정 | 〃, `reliability-and-cost.test.mjs` §6 |
+| 15 | API 비용을 서버가 전혀 통제 안 함 | SKU별 비용 원장 + 일일/월간 한도(chargeCost) | 〃 §7 |
+| 16 | Routes 경유지 25개 상한 미반영 | 세그먼트 분할(경계 보존) + 11개 이상 고요금 SKU | `server/test/routes-waypoint-limits.test.mjs` |
+| 17 | 예산 부족 시 일부만 실제·일부만 추정으로 뒤섞일 위험 | all-or-nothing(예산 부족하면 전부 추정) | `server/test/cost-budget-allornothing.test.mjs` |
+| 18 | 활성 이용권 있어도 중복 결제 가능 | createOrder가 서버에서 직접 거부 | `reliability-and-cost.test.mjs` §2 |
+| 19 | 서비스 전체 예산 소진 상태에서도 결제만 받을 수 있음 | 월간 예산 소진 시 신규 주문 자체를 차단 | `payment-toss.mjs`의 `isServiceCostBudgetExhausted` |
 
 ---
 
 ## 4. 알려진 개선 여지(출시를 막지는 않지만 남겨 둔 것)
 
-- 사용 한도(코스 생성 시간당 10회, 장소조회 일일 한도)는 엔지니어링
-  안전장치로 코드에는 들어갔지만, 실제 사업적으로 적절한 값인지는
-  아직 관찰 데이터가 없다(`docs/BUSINESS_DECISIONS.md` 3-4절 제안
-  참고 — 확정 아님).
-- Google Maps Platform의 현재 무료 사용량 정책(과거 월 정액 크레딧
-  방식이었는지, SKU별 무료 사용량 방식으로 바뀌었는지)을 이 세션에서
-  확인하지 못해 실제 원가 추정의 불확실성이 가장 크다
-  (`docs/BUSINESS_DECISIONS.md` 3-3절).
-- 재조회 사용 패턴(한 달에 저장 장소의 몇 %를 다시 확인하는지) 가정이
-  임의값이다 — 체험단 운영 중 실제로 관찰해 갱신 필요.
+- **부분 환불 정책이 아직 없다** — `docs/BUSINESS_DECISIONS.md` 5-0절에
+  별도로 보고했다. 정책이 정해지기 전까지 소비자 화면에 부분 취소
+  기능을 노출하지 않는다.
+- 비용 SKU 단가(`COST_*_KRW_MICROS`)와 예산 한도는 전부 **학습 기억
+  기준 추정치**다 — 실제 계약 단가로 반드시 갱신해야 한다
+  (`docs/BUSINESS_DECISIONS.md` 3절).
+- Routes 경유지 상한(25개)·고요금 임계값(11개)은 ChatGPT가 확인한
+  값을 그대로 코드에 반영한 것으로, 이 세션이 공식 문서로 재확인한
+  게 아니다 — 실제 값과 다르면 `ROUTES_MAX_INTERMEDIATES_PER_CALL`/
+  `ROUTES_HIGH_VOLUME_THRESHOLD` 환경변수만 바꾸면 된다.
+- 장소 조회의 "동명 장소 판별"은 지역 힌트(주소 문자열 포함 여부)
+  기준의 단순 매칭이다 — 실제 서비스에서 오판별이 잦으면 더 정교한
+  판별(도시 좌표 반경 등)이 필요할 수 있다.
+- 재조회 사용 패턴(월 몇 %) 가정은 여전히 임의값이다 — 체험단 운영
+  중 관찰 필요.
 
 ---
 
@@ -176,41 +178,37 @@
 
 ```
 node server/test/server.test.mjs                          # 전체 통과
-node server/test/config.test.mjs                           # 18개 — 전체 통과(payment는 시크릿+클라이언트 키 둘 다 필요하도록 갱신)
-node server/test/server-v2.test.mjs                         # 20개 — 전체 통과(신규: 로그인 쿨다운/잠금, 로그아웃, 장소조회 한도 분리, 코스생성 인증/멱등/잠금/레이트리밋)
-node server/test/generation-trial-charging-success.test.mjs # 전체 통과(신규: 실제 경로 성공만 체험 차감)
-node server/test/generation-trial-charging-failure.test.mjs # 전체 통과(신규: 추정 결과는 미차감, 반복 재시도 가능)
-node server/test/production-boot.test.mjs                   # 8개 — 전체 통과(신규: 운영 부팅 거부 실제 재현)
-node server/test/provider-contracts.test.mjs                # 27개 — 전체 통과(신규: Resend/토스/Google Routes 요청 형태 계약 테스트)
+node server/test/config.test.mjs                           # 18개 — 전체 통과
+node server/test/server-v2.test.mjs                         # 24개 — 전체 통과(4차: phase 무력화, 배치 엔드포인트 한도 검증 추가)
+node server/test/generation-trial-charging-success.test.mjs # 전체 통과
+node server/test/generation-trial-charging-failure.test.mjs # 전체 통과
+node server/test/production-boot.test.mjs                   # 8개 — 전체 통과
+node server/test/provider-contracts.test.mjs                # 39개 — 전체 통과(4차: Places API(New) 계약 검증 12개 추가)
+node server/test/reliability-and-cost.test.mjs              # 43개 — 전체 통과(4차 신규 — ChatGPT 재현 문제 전용 테스트)
+node server/test/routes-waypoint-limits.test.mjs            # 12개 — 전체 통과(4차 신규 — 경유지 분할·고요금 SKU)
+node server/test/cost-budget-allornothing.test.mjs          # 5개 — 전체 통과(4차 신규 — 예산 부족 시 all-or-nothing)
 node scripts/test/run-all.mjs               # t1~t49, 개인용+판매용 양쪽 — 전체 통과
 node scripts/design-integration-check.mjs   # 전체 통과
 node scripts/test-storage-migration.mjs     # 전체 통과
 node scripts/test-zip-import.mjs            # 전체 통과
-node scripts/test-course-generation.mjs     # 3가지 시나리오(success/failure/budget) 합계 24개 — 전체 통과(서버 집행 구조로 재작성, 좌표 필터링 버그 발견·수정)
-node scripts/test-purchase-flow.mjs         # 27개 — 전체 통과(첫 코스도 로그인 필요, 반응형 이용권 게이트로 재작성)
-node scripts/test-multi-day.mjs             # 28개 — 전체 통과(같은 이유로 재작성)
-node scripts/test-place-lookup.mjs          # 11개 — 전체 통과(로그인 게이트 추가에 맞춰 재작성)
-node scripts/test-account-sync.mjs          # 12개 — 전체 통과(신규: 병합·로그아웃 격리·계정전환)
+node scripts/test-course-generation.mjs     # 3가지 시나리오 합계 24개 — 전체 통과
+node scripts/test-purchase-flow.mjs         # 27개 — 전체 통과
+node scripts/test-multi-day.mjs             # 28개 — 전체 통과
+node scripts/test-place-lookup.mjs          # 11개 — 전체 통과(Places API(New) 응답 형식 반영 확인)
+node scripts/test-account-sync.mjs          # 12개 — 전체 통과
 node scripts/test-landing-page.mjs          # 전체 통과
 node scripts/audit.mjs                      # 개인정보·하드코딩 키 잔존 검사 — 전체 통과
 node scripts/verify.mjs                     # 보호 블록·저장 키 무결성 — 전체 통과
 ```
 
-모든 테스트는 실제 Chromium(Playwright) 또는 실제 HTTP 서버(임시
-포트, 인메모리 SQLite)로 수행됐다. ②로 표시한 항목은 응답을 흉내 낸
-것이지 테스트 자체가 가짜인 게 아니다 — 요청 생성부터 화면 반영까지
-실제 코드 경로를 그대로 탄다. `server/test/provider-contracts.test.mjs`
-는 `globalThis.fetch`만 가로채 응답을 대신해 줄 뿐, 우리 쪽 요청
-생성 코드(URL·헤더·바디 형태, 금액/계정 위조 방지 검사)는 실제로
-실행된다.
-
 **우선순위 지시("전체 회귀 재실행보다 재현된 문제·실제 사용자 흐름
-검증을 우선하라")에 따라**, 이번 세션은 기존 3가지 문제 재현
-시나리오(무료체험 우회, 실패 시 차감, 운영 테스트기능 노출)를
-실제로 코드로 재현한 뒤 고쳤고, 좌표 없는 장소가 코스 결과에
-잘못 섞여드는 새로운 실제 버그도 재작성된 테스트 과정에서 발견해
-고쳤다(1절의 `course-generation.mjs` 항목 참고). 그 다음에 전체
-회귀(위 목록)를 한 번 더 통째로 돌려 다른 회귀가 없는지 확인했다.
+검증을 우선하라")에 따라**, 이번 세션은 ChatGPT가 지적한 19가지
+문제(3절 표) 각각을 실제 코드로 재현하는 전용 테스트부터 작성해
+통과시켰고, 그 다음 전체 회귀(위 목록)를 통째로 돌려 다른 회귀가
+없는지 확인했다. `server/test/provider-contracts.test.mjs`처럼
+`globalThis.fetch`만 가로채는 테스트도 요청 생성 코드(URL·헤더·바디
+형태, 위조 방지 검사)는 실제로 실행된다 — ②로 표시한 항목이 가짜
+테스트라는 뜻이 아니다.
 
 ## 6. 화면 캡처(합성 데이터)
 
@@ -219,6 +217,4 @@ node scripts/verify.mjs                     # 보호 블록·저장 키 무결�
 저장소에 이미 있던 샘플/디자인 예시 자산이다(실제 개인정보 없음).
 `2-course.png`는 실제 키 연결이 막혀 있어(2절 참고) 성공 응답을
 흉내 낸 장면이라는 점을 `src/design/landing.html`에 그대로 캡션으로
-밝혀 뒀다 — 3차 갱신에서도 이 캡션 원칙은 그대로 유지한다(경로
-계산 방식이 OSRM에서 Google Routes로 바뀌었어도 "예시 데이터"라는
-사실 자체는 달라지지 않았다).
+밝혀 뒀다 — 4차 갱신에서도 이 캡션 원칙은 그대로 유지한다.
