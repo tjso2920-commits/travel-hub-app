@@ -600,9 +600,38 @@ function daBuildSpots(foodMap) {
   return { spots, cities };
 }
 
+/* 2026-09-09 코드 검토 — 로드맵 ⑧⑨ 구매 흐름·백엔드 연동.
+   서버(server/) API를 부르는 공통 헬퍼. window.API_BASE가 없으면
+   같은 출처(같은 서버가 이 정적 파일도 같이 서빙하는 배포 형태)로
+   본다 — 테스트에서는 임시로 띄운 서버 주소를 명시적으로 넣어 준다.
+   세션 토큰은 foodMap.session에 저장한다(다른 저장 데이터와 같은
+   localStorage 키를 그대로 쓴다 — 새 저장 키를 안 만든다). */
+function daApiBase() { return (typeof window !== 'undefined' && window.API_BASE) || ''; }
+function daSessionToken(foodMap) { return (foodMap && foodMap.session && foodMap.session.token) || null; }
+async function daApi(path, opts) {
+  opts = opts || {};
+  const headers = { 'Content-Type': 'application/json' };
+  if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
+  try {
+    const res = await fetch(daApiBase() + path, {
+      method: opts.method || 'GET',
+      headers,
+      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+    });
+    let json = null;
+    try { json = await res.json(); } catch (e) { /* 본문 없음 */ }
+    return { ok: res.ok, status: res.status, json };
+  } catch (e) {
+    return { ok: false, status: 0, reason: 'network', json: null };
+  }
+}
+
 window.DesignAdapter = {
   UNKNOWN_CITY,
   SALE_MODE,
+  api: daApi,
+  apiBase: daApiBase,
+  sessionToken: daSessionToken,
   loadFoodMap: () => daLoad('foodmap_v1', { places: [], dest: '', destCountry: '' }),
   saveFoodMap: (fm) => daSave('foodmap_v1', fm),
   parseCsv: daCsv,

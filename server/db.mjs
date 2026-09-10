@@ -75,6 +75,13 @@ function migrate(d) {
       raw TEXT NOT NULL,
       received_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS events (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      props TEXT NOT NULL,
+      account_id TEXT,
+      occurred_at TEXT NOT NULL
+    );
   `);
 }
 

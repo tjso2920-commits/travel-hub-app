@@ -30,6 +30,17 @@ if (usingSample) { spots = SAMPLE_SPOTS; cities = SAMPLE_CITIES; }
 let city = cities[0] ? cities[0].name : '';
 let filter = '전체', selected = new Set(), route = new Set(), selecting = false;
 
+/* 2026-09-09 코드 검토 — 로드맵 ⑨(구매 흐름)·⑩(측정). 측정은 절대
+   화면 동작을 막으면 안 된다(analytics.js가 아직 안 붙었거나 서버가
+   없어도 앱은 그대로 써야 한다) — 그래서 존재 여부를 매번 확인하고
+   실패를 삼킨다. window.daSessionToken은 analytics.js가 결제 결과
+   이벤트에 계정을 같이 실어 보낼 때 쓴다(개인정보 아닌 내부 식별자).
+   foodMap.session은 다른 저장 데이터와 같은 localStorage 키
+   (foodmap_v1)에 얹는다 — 새 저장 키를 안 만든다. */
+function daTrackSafe(name, props) { if (window.Analytics) window.Analytics.track(name, props).catch(() => {}); }
+window.daSessionToken = () => (foodMap.session && foodMap.session.token) || null;
+daTrackSafe('channel_inflow', { channel: window.Analytics ? window.Analytics.classifyChannel() : 'unknown' });
+
 function refreshFromStorage() {
   foodMap = A.loadFoodMap();
   built = A.buildSpots(foodMap);
@@ -213,6 +224,102 @@ function showRoute() {
   const list = spots.filter((p) => p.city === city && route.has(p.id));
   open(city + ' · 오늘 동선', `<div class="detail"><h2>오늘은 이곳으로.</h2><p>${list.length ? '담아 둔 ' + list.length + '곳을 확인하세요.' : '마음에 드는 장소를 먼저 골라보세요.'}</p>${list.map((p, i) => `<div class="route-row"><span>${i + 1}</span>${photoHTML(p, '')}<div><b>${A.esc(p.name)}</b><p>${A.esc(p.area)}</p></div><button data-remove="${p.id}" aria-label="${A.esc(p.name)} 동선에서 빼기">×</button></div>`).join('')}${list.length ? '<button class="primary" data-build-course>코스 만들기 ↗</button>' : ''}<button class="text-button" data-dismiss>스팟 더 고르기</button></div>`);
 }
+/* ── 짧은 구매 흐름(로드맵 ⑨) ────────────────────────────────────────
+   샘플 체험 → 가져오기 → (필요할 때만) 로그인 → 내 코스 결과 →
+   (더 필요할 때만) 이용권 제시 → 결제 → 원래 코스로 복귀.
+   "무료 결과의 실제 가치를 먼저 보여주고, 그다음에 유료 기능을
+   제시한다. 데이터를 불편하게 잠가서 결제를 강요하지 않는다"는
+   원칙대로, 이미 만들어 둔 첫 코스는 로그인 없이 그대로 다시 볼 수
+   있다 — 게이트는 "코스를 새로 만들려는" 시점에만 걸린다. */
+
+/* 이미 코스를 한 번 만들어 봤는지가 곧 "무료체험을 이미 썼는지"의
+   1차 신호다(정확한 판정은 로그인 뒤 서버가 한다 — 이건 로그인을
+   물어볼지 말지 결정하는 데만 쓰는 로컬 신호). */
+function daHasBuiltCourseBefore() {
+  return !!(foodMap.course && Array.isArray(foodMap.course.stops) && foodMap.course.stops.length);
+}
+
+/* "코스 만들기"를 실제로 누르기 전에 통과해야 하는 문. 처음 만드는
+   코스는 무엇도 안 묻고 바로 통과시킨다(무료 체험 자체에 로그인을
+   요구하지 않는다). 이미 한 번 만들어 봤다면 로그인 → 서버가 판정한
+   무료체험/이용권 상태를 확인한 뒤에만 통과시킨다. */
+async function daGateThenBuildCourseSheet() {
+  if (!daHasBuiltCourseBefore()) { buildCourseSheet(); return; }
+  const token = A.sessionToken(foodMap);
+  if (!token) { showLoginSheet(daGateThenBuildCourseSheet); return; }
+  const trial = await A.api('/api/trial', { token });
+  if (trial.ok && trial.json && trial.json.used === false) { buildCourseSheet(); return; }
+  const ent = await A.api('/api/entitlement', { token });
+  if (ent.ok && ent.json && ent.json.plan === 'paid') { buildCourseSheet(); return; }
+  daTrackSafe('paywall_viewed', { trigger: 'second_course' });
+  showPaywallSheet(ent.ok ? ent.json.price : null);
+}
+
+/* 로그인 — 이메일 + 매직 코드(비밀번호 없음). 성공하면 onSuccess를
+   이어서 부른다(원래 하려던 동작을 로그인 때문에 처음부터 다시
+   누르게 하지 않는다). */
+function showLoginSheet(onSuccess) {
+  open('로그인', `<div class="detail"><h2>이메일로 계속하기</h2><p>비밀번호 없이, 이메일로 받은 코드로 로그인해요.</p>` +
+    `<input class="xinput" id="loginEmail" type="email" placeholder="이메일 주소" style="width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit">` +
+    `<button class="primary" id="loginSendBtn" style="margin-top:10px">코드 받기</button>` +
+    `<p class="inline-note" id="loginMsg" hidden></p></div>`);
+  const msg = (t2) => { const el = $('#loginMsg'); el.textContent = t2; el.hidden = false; };
+  $('#loginSendBtn').onclick = async () => {
+    const email = $('#loginEmail').value.trim();
+    if (!email) { msg('이메일을 입력해 주세요.'); return; }
+    const r = await A.api('/api/auth/request-code', { method: 'POST', body: { email } });
+    if (!r.ok) { msg('코드를 보내지 못했어요. 이메일 주소를 확인해 주세요.'); return; }
+    showLoginCodeSheet(email, onSuccess);
+  };
+}
+function showLoginCodeSheet(email, onSuccess) {
+  open('코드 확인', `<div class="detail"><h2>이메일로 받은 코드를 입력하세요</h2><p>${A.esc(email)}로 6자리 코드를 보냈어요.</p>` +
+    `<input class="xinput" id="loginCode" inputmode="numeric" placeholder="6자리 코드" style="width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit">` +
+    `<button class="primary" id="loginVerifyBtn" style="margin-top:10px">확인</button>` +
+    `<p class="inline-note" id="loginMsg" hidden></p></div>`);
+  const msg = (t2) => { const el = $('#loginMsg'); el.textContent = t2; el.hidden = false; };
+  $('#loginVerifyBtn').onclick = async () => {
+    const code = $('#loginCode').value.trim();
+    const r = await A.api('/api/auth/verify-code', { method: 'POST', body: { email, code } });
+    if (!r.ok || !r.json || !r.json.token) { msg('코드가 맞지 않거나 만료됐어요. 다시 시도해 주세요.'); return; }
+    foodMap.session = { token: r.json.token, email };
+    A.saveFoodMap(foodMap);
+    /* 2026-09-09 코드 검토(2차) 재현된 버그: 로그인 전에 이미 코스를
+       한 번 만들어 봤다면 그 무료체험은 서버가 전혀 모른다(계정 자체가
+       로그인 전엔 없었으니 서버에 반영할 대상이 없었다). 로그인하자마자
+       그 사실을 서버에 알리지 않으면, 로그인 뒤 서버가 "아직 무료체험
+       안 씀"으로 잘못 판단해 이용권 화면 없이 두 번째 코스를 그냥
+       통과시켜 버린다 — 무료체험이 사실상 무제한이 되는 구멍이었다.
+       consumeTrial은 멱등이라(이미 반영됐으면 조용히 무시) 여러 번
+       불러도 안전하다. */
+    if (daHasBuiltCourseBefore()) await A.api('/api/trial/consume', { method: 'POST', token: r.json.token });
+    onSuccess();
+  };
+}
+/* 이용권 제시 — 금액·기간·자동결제 여부를 분명히 보여준다(로드맵 ⑨
+   요구사항: "금액/기간/자동결제 여부를 분명히 표시"). 결제 자체는
+   실제 PG 연동 전까지 서버의 개발용 시뮬레이션을 부른다 — 클라이언트가
+   "결제했다"고 스스로 선언하는 게 아니라, 서버가 자체 서명한 가짜
+   웹훅을 실제 웹훅 처리 코드에 흘려보내는 방식이라 서명 검증·이용권
+   반영 코드 경로 자체는 실제와 동일하다(server/routes/dev.mjs 참고). */
+function showPaywallSheet(price) {
+  const p = price || { amountKrw: 9900, periodDays: 30, autoRenew: false };
+  open('이용권', `<div class="detail"><h2>더 만들려면 이용권이 필요해요</h2>` +
+    `<p>무료 체험(코스 1회)은 이미 쓰셨어요. 계속 이용하시려면 아래 이용권을 확인해 주세요.</p>` +
+    `<div class="inline-note"><b>${p.amountKrw.toLocaleString()}원</b> / ${p.periodDays}일<br>자동결제: ${p.autoRenew ? '켜짐(직접 해지 전까지 자동으로 갱신)' : '꺼짐(자동으로 다시 결제되지 않음)'}</div>` +
+    `<button class="primary" id="payBtn" style="margin-top:10px">결제하기</button>` +
+    `<button class="text-button" data-dismiss>다음에 할게요</button></div>`);
+  $('#payBtn').onclick = async () => {
+    daTrackSafe('payment_started', { amount_krw: p.amountKrw, period_days: p.periodDays });
+    const token = A.sessionToken(foodMap);
+    const r = await A.api('/api/dev/simulate-payment', { method: 'POST', token, body: { outcome: 'success' } });
+    if (!r.ok) { daTrackSafe('payment_result', { result: 'failure' }); alert('결제를 처리하지 못했어요. 잠시 후 다시 시도해 주세요.'); return; }
+    daTrackSafe('payment_result', { result: 'success' });
+    // 결제 성공 뒤에는 원래 하려던 동작(코스 새로 만들기)으로 그대로 이어간다.
+    buildCourseSheet();
+  };
+}
+
 /* 출발지·가용 시간을 물어보는 시트. 출발지는 API 키 없이 되는 두 가지만
    준다 — 현재 위치(브라우저 GPS) 또는 담아 둔 곳 중 하나.
    2026-09-09 코드 검토(2차): route(오늘 동선)에는 다른 도시에서 담아 둔
@@ -297,6 +404,25 @@ async function runCourseGeneration(origin, startPlaceId) {
     showRoute();
     return;
   }
+  daTrackSafe('course_generated', { routed_real: !!newCourse.routedReal, stop_count: newCourse.stops.length });
+  /* 로그인한 상태에서 무료체험을 아직 안 썼다면, 방금 만든 이 코스가
+     그 1회를 쓴 것으로 서버에 반영한다(로그인 전 첫 코스는 서버에
+     전혀 알리지 않는다 — 05_IMPORT_ONBOARDING_SPEC.md: "무료 결과의
+     실제 가치를 먼저 보여주고, 그 다음에 유료 기능을 제시한다"는
+     방향대로, 로그인을 요구하기 전까지는 서버 판정 자체가 끼어들지
+     않는다). 유료 이용권이 있으면 애초에 체험 소진이 필요 없다 —
+     daGateThenBuildCourseSheet가 그 경우엔 서버를 아예 안 부르고
+     바로 통과시키므로 여기서도 다시 확인할 필요는 없지만, 상태가
+     그 사이 바뀌었을 수 있어 안전하게 한 번 더 확인한다. */
+  const token = A.sessionToken(foodMap);
+  if (token) {
+    const trial = await A.api('/api/trial', { token });
+    const ent = await A.api('/api/entitlement', { token });
+    const isPaid = ent.ok && ent.json && ent.json.plan === 'paid';
+    if (!isPaid && trial.ok && trial.json && trial.json.used === false) {
+      await A.api('/api/trial/consume', { method: 'POST', token });
+    }
+  }
   showSavedCourse();
 }
 /* 저장된 코스를 보여준다 — 새로고침해도 foodMap.course에 남아 있어
@@ -378,17 +504,19 @@ async function handleRealFile(e) {
 
   if (window.ZipImport && window.ZipImport.isZipFile(f)) { await handleZipFile(f); return; }
 
+  const isCsv = /\.csv$/i.test(f.name);
+  daTrackSafe('import_start', { source_kind: isCsv ? 'csv' : 'json' });
   let parsed = [];
   try {
     const txt = await f.text();
-    if (/\.csv$/i.test(f.name)) parsed = A.parseCsv(txt);
+    if (isCsv) parsed = A.parseCsv(txt);
     else if (/\.json$/i.test(f.name)) parsed = A.parseJson(JSON.parse(txt));
-    else { importMsg = '이 형식은 아직 읽지 못해요. ZIP·CSV·JSON 파일을 선택해 주세요.'; add(); return; }
+    else { importMsg = '이 형식은 아직 읽지 못해요. ZIP·CSV·JSON 파일을 선택해 주세요.'; daTrackSafe('import_result', { result: 'failure' }); add(); return; }
   } catch (err) {
     importMsg = '파일을 읽지 못했어요. 구글에서 받은 저장 목록 CSV/JSON이 맞는지 확인해 주세요.';
-    add(); return;
+    daTrackSafe('import_result', { result: 'failure' }); add(); return;
   }
-  if (!parsed.length) { importMsg = '이 파일에서 저장된 장소를 찾지 못했어요.'; add(); return; }
+  if (!parsed.length) { importMsg = '이 파일에서 저장된 장소를 찾지 못했어요.'; daTrackSafe('import_result', { result: 'failure' }); add(); return; }
   const label = f.name.replace(/\.(csv|json)$/i, '');
   finishImport([{ label, z: A.merge(parsed, label, foodMap.places) }], []);
 }
@@ -398,6 +526,7 @@ async function handleRealFile(e) {
    파일은 반영한다 — 하나가 깨졌다고 전체를 버리지 않는다. */
 async function handleZipFile(f) {
   importMsg = '';
+  daTrackSafe('import_start', { source_kind: 'zip' });
   open('내 장소 가져오기', '<div class="detail import-flow"><h2>ZIP을 열어 보는 중…</h2><p>파일 안에서 저장 목록을 찾고 있어요. 파일이 크면 시간이 걸릴 수 있어요.</p></div>');
   const result = await window.ZipImport.parseZip(f);
   if (!result.ok) {
@@ -411,6 +540,7 @@ async function handleZipFile(f) {
       'read-failed': '파일을 읽지 못했어요.',
     };
     importMsg = msgs[result.reason] || '이 ZIP 파일을 처리하지 못했어요.';
+    daTrackSafe('import_result', { result: 'failure' });
     add();
     return;
   }
@@ -429,6 +559,7 @@ async function handleZipFile(f) {
   });
   if (!perFile.some((x) => x.z)) {
     importMsg = 'ZIP 안의 파일들에서 저장된 장소를 찾지 못했어요. ' + (result.skipped.length ? '일부 파일은 제외됐습니다 — 아래에서 이유를 확인하세요.' : '');
+    daTrackSafe('import_result', { result: 'failure' });
     add();
     return;
   }
@@ -441,6 +572,7 @@ function finishImport(perFile, skipped) {
        맞춘다 — 반쯤 반영된 채로 남기지 않는다. */
     foodMap = A.loadFoodMap();
     importMsg = '저장에 실패해서 방금 가져온 내용이 반영되지 않았습니다. 이 브라우저의 저장 공간이 가득 찼거나 시크릿 모드일 수 있어요. 저장 공간을 확인한 뒤 다시 시도해 주세요.';
+    daTrackSafe('import_result', { result: 'failure' });
     add();
     return;
   }
@@ -453,6 +585,8 @@ function finishImport(perFile, skipped) {
   if (!cities.some((c) => c.name === city) || (city === A.UNKNOWN_CITY && known)) city = (known || cities[0]).name;
   filter = '전체';
   updateCity(); // 배경 화면(grid·count·filters·album)도 같이 갱신 — 안 부르면 결과 시트를 닫아도 화면이 그대로 샘플로 남는다
+  const importedCount = perFile.reduce((s, f) => s + (f.z ? f.z.added + f.z.updated : 0), 0);
+  daTrackSafe('import_result', { result: 'success', imported_count: importedCount });
   importDone(perFile, skipped);
 }
 /* 파일별 결과·제외 이유를 구분해서 보여준다(로드맵 ② 요청사항) — ZIP 하나에
@@ -508,13 +642,18 @@ $('#sheetContent').onclick = (e) => {
   if (b.dataset.catEdit) return catAssignSheet(b.dataset.catEdit);
   if (b.dataset.dupMerge) { const [x, y] = b.dataset.dupMerge.split('|'); return resolveDup(x, y, 'merge'); }
   if (b.dataset.dupDismiss) { const [x, y] = b.dataset.dupDismiss.split('|'); return resolveDup(x, y, 'dismiss'); }
-  if (b.hasAttribute('data-build-course')) return buildCourseSheet();
-  /* 2026-09-09 코드 검토(2차): 예전엔 여기서 기존 코스를 먼저 지우고
-     저장했다 — 그 상태에서 출발지 화면을 취소하거나 코스 생성이
-     실패하면 이전 코스가 사라진 채로 남았다. 이제 기존 코스는 그대로
-     두고 출발지 화면으로만 넘어간다 — 실제로 새 코스가 완성돼 저장에
-     성공했을 때만(runCourseGeneration) 교체된다. */
-  if (b.hasAttribute('data-course-new')) buildCourseSheet();
+  /* 2026-09-09 코드 검토(2차, 로드맵 ⑨): 처음 만드는 코스는 무료
+     체험이라 곧바로 buildCourseSheet로 간다. 두 번째부터는
+     daGateThenBuildCourseSheet가 로그인·무료체험/이용권 상태를
+     먼저 확인한다(둘 다 이 게이트를 거친다 — daHasBuiltCourseBefore가
+     "처음인지"를 판정한다). */
+  if (b.hasAttribute('data-build-course')) return daGateThenBuildCourseSheet();
+  /* 예전엔 여기서 기존 코스를 먼저 지우고 저장했다 — 그 상태에서
+     출발지 화면을 취소하거나 코스 생성이 실패하면 이전 코스가 사라진
+     채로 남았다. 이제 기존 코스는 그대로 두고 게이트를 거쳐 출발지
+     화면으로만 넘어간다 — 실제로 새 코스가 완성돼 저장에 성공했을
+     때만(runCourseGeneration) 교체된다. */
+  if (b.hasAttribute('data-course-new')) daGateThenBuildCourseSheet();
 };
 function resolveDup(aId, bId, action) {
   const result = A.resolveDup(foodMap.places, aId, bId, action);

@@ -185,6 +185,59 @@ let tokenB;
   t('같은 질의는 같은 결과(테스트 어댑터 결정론적 — 재현 가능한 테스트)', JSON.stringify(r.json) === JSON.stringify(r2.json));
 }
 
+// --- 개발용 결제 시뮬레이션 — 클라이언트가 "결제했다"고 스스로 신고하는
+// 게 아니라, 서버가 자체 서명한 가짜 웹훅을 실제 handleWebhook()에
+// 흘려보내는 방식임을 확인한다(실제 서명 검증·멱등성 코드 경로를 그대로
+// 탄다 — 페이로드 출처만 다름). ---
+{
+  const before = await api('GET', '/api/entitlement', { token: tokenB });
+  t('시뮬레이션 전 B 계정은 free', before.json.plan === 'free');
+
+  const noAuth = await fetch(base + '/api/dev/simulate-payment', { method: 'POST' });
+  t('세션 없이는 결제 시뮬레이션도 401', noAuth.status === 401);
+
+  const sim = await api('POST', '/api/dev/simulate-payment', { token: tokenB, body: { outcome: 'success' } });
+  t('테스트 모드에서는 결제 시뮬레이션 성공', sim.status === 200 && sim.json.ok === true);
+  const afterSim = await api('GET', '/api/entitlement', { token: tokenB });
+  t('시뮬레이션 뒤 B 계정이 실제로 paid로 바뀜(진짜 웹훅 코드 경로를 탐)', afterSim.json.plan === 'paid');
+
+  const simCancel = await api('POST', '/api/dev/simulate-payment', { token: tokenB, body: { outcome: 'cancel' } });
+  t('취소 시뮬레이션도 지원됨', simCancel.status === 200);
+  const afterCancelSim = await api('GET', '/api/entitlement', { token: tokenB });
+  t('취소 시뮬레이션 뒤 다시 free로 전환됨', afterCancelSim.json.plan === 'free');
+}
+
+// --- 측정 이벤트 — 화이트리스트에 없는 이벤트·속성·값은 거부되고,
+// 개인정보(장소명·GPS 등)를 넣을 자유 텍스트 필드 자체가 없다. ---
+{
+  const inflow = await api('POST', '/api/events', { body: { name: 'channel_inflow', props: { channel: 'threads' } } });
+  t('허용된 이벤트+허용된 값은 기록됨', inflow.status === 200 && inflow.json.ok === true);
+
+  const badChannel = await api('POST', '/api/events', { body: { name: 'channel_inflow', props: { channel: '아무 문자열이나' } } });
+  t('허용 목록에 없는 값은 거부됨(자유 텍스트로 흘려보낼 수 없음)', badChannel.status === 400);
+
+  const unknownEvent = await api('POST', '/api/events', { body: { name: 'user_typed_a_place_name', props: {} } });
+  t('허용 목록에 없는 이벤트 이름 자체가 거부됨', unknownEvent.status === 400);
+
+  const leakAttempt = await api('POST', '/api/events', { body: { name: 'import_result', props: { result: 'success', imported_count: 3, place_name: '내가 저장한 맛집' } } });
+  t('스키마에 없는 속성(예: place_name)을 끼워 넣으려 하면 거부됨(개인정보 유입 경로 원천 차단)', leakAttempt.status === 400);
+
+  const courseEvt = await api('POST', '/api/events', { body: { name: 'course_generated', props: { routed_real: true, stop_count: 4 } } });
+  t('코스 생성 이벤트는 성공 여부·개수만 담고 장소명은 아예 필드가 없음', courseEvt.status === 200);
+
+  const paywallEvt = await api('POST', '/api/events', { body: { name: 'paywall_viewed', props: { trigger: 'second_course' } } });
+  t('이용권 화면 노출 이벤트 기록됨', paywallEvt.status === 200);
+
+  const payStart = await api('POST', '/api/events', { body: { name: 'payment_started', props: { amount_krw: 9900, period_days: 30 } } });
+  t('결제 시작 이벤트 기록됨', payStart.status === 200);
+
+  const payResult = await api('POST', '/api/events', { body: { name: 'payment_result', props: { result: 'success' } }, token: tokenA });
+  t('결제 결과 이벤트는 로그인 상태면 계정과 함께 기록됨(개인정보 아닌 내부 식별자)', payResult.status === 200);
+
+  const noAuthEvt = await api('POST', '/api/events', { body: { name: 'import_start', props: { source_kind: 'zip' } } });
+  t('로그인 전(가져오기 시작 등)에도 이벤트 기록 가능(계정 인증 필수 아님)', noAuthEvt.status === 200);
+}
+
 server.close();
 console.log(fail ? `\n실패 ${fail}건` : '\n전체 통과');
 process.exit(fail ? 1 : 0);

@@ -25,6 +25,8 @@ import { trialStatus, consumeTrial } from './routes/trial.mjs';
 import { checkEntitlement } from './routes/entitlement.mjs';
 import { handleWebhook } from './routes/webhook.mjs';
 import { lookupPlaceRoute } from './routes/places.mjs';
+import { recordEvent } from './routes/events.mjs';
+import { simulatePayment } from './routes/dev.mjs';
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -38,8 +40,22 @@ function readBody(req) {
   });
 }
 
+/* CORS — 클라이언트(정적 페이지)와 이 서버가 다른 출처에 있을 수
+   있다(예: GitHub Pages + 별도 API 서버, 또는 이번 서버 테스트처럼
+   file:// 페이지가 http://localhost API를 부르는 경우). 모든 응답에
+   허용 헤더를 싣고, 브라우저가 상태 변경 요청 전에 보내는 preflight
+   (OPTIONS)에 204로 답한다. 이 API는 공개 엔드포인트라 자격증명
+   쿠키를 안 쓴다(세션은 Authorization 헤더의 베어러 토큰) — 그래서
+   출처를 '*'로 열어도 안전하다. */
+function withCors(res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Webhook-Signature');
+}
+
 function sendJson(res, status, obj) {
   const body = JSON.stringify(obj);
+  withCors(res);
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(body) });
   res.end(body);
 }
@@ -63,6 +79,7 @@ function requireAccount(req, res) {
 async function handle(req, res) {
   const url = new URL(req.url, 'http://localhost');
   const { pathname } = url;
+  if (req.method === 'OPTIONS') { withCors(res); res.writeHead(204); res.end(); return; }
   try {
     if (req.method === 'POST' && pathname === '/api/auth/request-code') {
       const body = JSON.parse((await readBody(req)) || '{}');
@@ -100,6 +117,21 @@ async function handle(req, res) {
     if (req.method === 'GET' && pathname === '/api/places/lookup') {
       const result = await lookupPlaceRoute(url.searchParams.get('q'));
       return sendJson(res, result.status, result.ok ? result.result : result);
+    }
+    if (req.method === 'POST' && pathname === '/api/events') {
+      const body = JSON.parse((await readBody(req)) || '{}');
+      // 로그인 전(예: channel_inflow)에도 이벤트가 발생하므로 계정 인증은
+      // 선택이다 — 있으면 참고용으로만 같이 기록한다(개인정보 아님, 그냥
+      // 어느 계정 흐름인지 뒤에 파악할 때 쓰는 내부 식별자일 뿐).
+      const accountId = accountForToken(bearerToken(req));
+      const result = recordEvent({ name: body.name, props: body.props, accountId });
+      return sendJson(res, result.status, result);
+    }
+    if (req.method === 'POST' && pathname === '/api/dev/simulate-payment') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const result = simulatePayment(accountId, body.outcome);
+      return sendJson(res, result.status, result);
     }
     if (req.method === 'POST' && pathname === '/api/webhook/payment') {
       const raw = await readBody(req);
