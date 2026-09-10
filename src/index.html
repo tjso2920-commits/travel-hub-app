@@ -3953,7 +3953,9 @@ function csToggle(k){
 }
 function csMax(){return Math.max(2,Math.min(6,+foodMap.courseMax||4));}
 function csSetMax(v){foodMap.courseMax=Math.max(2,Math.min(6,+v||4));save('foodmap_v1',foodMap);renderFoodMap();}
-function csStartHour(){const h=foodMap.courseStart;return h===undefined||h===null||h===''?new Date().getHours():Math.max(0,Math.min(23,+h));}
+/* 2026-09-09 코드 검토: 비워 두면(=지금부터) 기기 시각대가 아니라
+   여행지 현지 시각대의 지금 시각을 쓴다(fmDestNow) — t21 재현 확인. */
+function csStartHour(){const h=foodMap.courseStart;return h===undefined||h===null||h===''?fmDestNow().hour:Math.max(0,Math.min(23,+h));}
 function csSetStart(v){foodMap.courseStart=(v===''?null:Math.max(0,Math.min(23,+v||0)));save('foodmap_v1',foodMap);renderFoodMap();}
 /* 현장에서 계획이 밀렸을 때 지금 시각부터 남은 하루를 다시 짠다.
    csStartHour() 가 값이 비면 현재 시각을 쓰므로 시작 시각을 비우고 다시 짜면 된다.
@@ -4960,6 +4962,29 @@ function fmCatLabel(x){
 }
 function fmRegionCode(){return fmCountryRow()[0];}
 function fmPlaceLang(){return fmCountryRow()[2];}
+/* 2026-09-09 코드 검토: 코스 생성이 "지금 시각"을 기기(브라우저) 시각대로
+   읽고 있었다 — 한국에서 켠 폰으로 후쿠오카 코스를 밤에 다시 짜면,
+   기기가 UTC/한국 시각이어도 실제로는 후쿠오카(JST) 영업시간과 맞춰야
+   한다. 나라 단위 대표 시간대로 근사한다(미국·호주처럼 나라 안에 시간대가
+   여럿이면 완벽하지 않다 — 도시별 정밀 매핑은 다음 단계). */
+const FM_COUNTRY_TZ={JP:'Asia/Tokyo',KR:'Asia/Seoul',TW:'Asia/Taipei',HK:'Asia/Hong_Kong',
+ TH:'Asia/Bangkok',VN:'Asia/Ho_Chi_Minh',SG:'Asia/Singapore',MY:'Asia/Kuala_Lumpur',
+ PH:'Asia/Manila',ID:'Asia/Jakarta',CN:'Asia/Shanghai',US:'America/New_York',
+ FR:'Europe/Paris',IT:'Europe/Rome',ES:'Europe/Madrid',DE:'Europe/Berlin',
+ GB:'Europe/London',AU:'Australia/Sydney',TR:'Europe/Istanbul',AE:'Asia/Dubai'};
+function fmDestNow(){
+ const tz=FM_COUNTRY_TZ[fmCountry()]||'Asia/Tokyo';
+ try{
+  const parts=new Intl.DateTimeFormat('en-US',{timeZone:tz,hour12:false,
+   year:'numeric',month:'2-digit',day:'2-digit',hour:'numeric',minute:'numeric'}).formatToParts(new Date());
+  const get=t=>+((parts.find(x=>x.type===t)||{}).value);
+  let h=get('hour');if(h===24)h=0;
+  return {hour:h,minute:get('minute'),
+   ymd:get('year')+'-'+String(get('month')).padStart(2,'0')+'-'+String(get('day')).padStart(2,'0')};
+ }catch(e){
+  const d=new Date();return {hour:d.getHours(),minute:d.getMinutes(),ymd:ymd(d)};
+ }
+}
 /* 2026-09-09 부로 제품 방향 확정: 장소 보관함과 여행 일정은 다른 것이다.
    담아 둔 장소(foodMap.places)는 여러 도시를 걸쳐 계속 남아 있어야 하고,
    "여행지 선택"은 그중 무엇을 보여줄지 고르는 필터일 뿐이어야 한다.
@@ -5810,8 +5835,15 @@ fmMerge=function(arr,sourceLabel){let added=0,updated=0,skipped=0,blocked=0,dupC
   /* 강한 식별자 충돌 검사 — 이름+좌표(또는 URL)로 후보를 찾았어도, 양쪽에
      placeId가 실제로 있고 서로 다르면 구글 기준으로 이미 다른 장소라는
      확실한 증거다. 자동 병합하지 않는다(아래 이름 기반 후보 경로로 넘어감 —
-     fmPlacesConflict도 이 조건을 보므로 후보로도 안 묶인다). */
-  if(exact&&x.placeId&&exact.placeId&&x.placeId!==exact.placeId)exact=null;
+     fmPlacesConflict도 이 조건을 보므로 후보로도 안 묶인다).
+     2026-09-09 코드 검토(2차) 재현된 버그: x.placeId가 exact의 "주
+     식별자"와는 다르지만 exact.aliasPlaceIds(사람이 이미 "같은 곳"으로
+     확인해 합친 뒤 남겨 둔 별칭)에 들어 있는 경우가 있다 — 이건 충돌이
+     아니라 이미 승인된 별칭이 재수입된 것이다. 이 경우까지 충돌로
+     보고 튕겨내면, 합친 뒤 삭제된 쪽의 식별자로 재수입할 때마다 다시
+     새 레코드가 생겨 개수가 도로 늘어난다(실제로 재현·수정됨). 사람이
+     승인한 별칭과 "아직 해결 안 된 진짜 충돌"을 구분해야 한다. */
+  if(exact&&x.placeId&&exact.placeId&&x.placeId!==exact.placeId&&!(Array.isArray(exact.aliasPlaceIds)&&exact.aliasPlaceIds.includes(x.placeId)))exact=null;
   if(exact){
    /* 검증된 식별자로 확인된 경우만 자동으로 합친다.
       메모·주소·이름은 사용자가 원본에서 이미 고쳤으면(= 지금 값이 저장해 둔
@@ -5848,6 +5880,19 @@ fmMerge=function(arr,sourceLabel){let added=0,updated=0,skipped=0,blocked=0,dupC
    regKeys(exact);
    updated++;return;
   }
+  /* 2026-09-09 코드 검토(2차): 식별자가 아예 없는 항목은 같은 파일을
+     다시 올릴 때마다 "중복 후보"가 하나씩 더 생겨 개수가 계속 늘었다
+     (사람이 매번 확인해야 하는 대상이 계속 쌓인다는 뜻 — 질문을 안
+     반복하는 것과 레코드 자체가 안 느는 것은 다르다). "이 출처에서
+     이 내용을 이미 받아들인 적이 있다"는 기록(importKeys: 출처+내용
+     키)이 있으면, 후보로 또 쌓지 않고 그 레코드를 그대로 갱신한다. */
+  const pKeyPre=fmDupKey(x);
+  const importFingerprint=(sourceLabel||'')+'|'+pKeyPre;
+  const already=(byName.get(nk)||[]).find(o=>Array.isArray(o.importKeys)&&o.importKeys.includes(importFingerprint));
+  if(already){
+   already.importKeys=already.importKeys||[];
+   updated++;return;
+  }
   if(licRoom()<1){blocked++;return;}
   const p=fm2Normalize(Object.assign({id:'fm'+Date.now()+added+Math.floor(Math.random()*9999)},x));
   p.originName=x.name;p.originNote=x.note||'';p.originAddress=x.address||'';
@@ -5858,6 +5903,7 @@ fmMerge=function(arr,sourceLabel){let added=0,updated=0,skipped=0,blocked=0,dupC
   p.catConfirmed=!!x.cat;
   p.city=fmCityGuess(p);
   p.sourceLists=sourceLabel?[sourceLabel]:[];
+  p.importKeys=[importFingerprint];
   /* 이름만 같은 기존 장소가 있고, 다른 곳이라는 증거가 없으면 "중복 후보"로
      서로 연결한다. 자동으로 합치지 않는다 — 사람이 확인해야 한다.
      단, 사람이 이미 "다른 곳이에요"로 확인해 둔 조합(dismissedDupKeys)이면

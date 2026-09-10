@@ -269,6 +269,39 @@ function daCityHint(p) {
   if (daHasCoords(p) && p.lat >= 32.7 && p.lat <= 34.15 && p.lng >= 129.2 && p.lng <= 131.25) return '후쿠오카';
   return null;
 }
+/* 2026-09-09 코드 검토(2차): 코스 생성이 "지금 시각"을 기기(브라우저)
+   시각대로 읽고 있었다 — 한국에서 켠 폰으로 후쿠오카 코스를 밤에 다시
+   짜면, 기기가 한국 시각이어도 실제로는 후쿠오카(JST) 영업시간·"지금
+   몇 시부터"를 기준으로 계산해야 한다. FM_CITY_ALT에 있는 도시들을
+   시간대로 매핑해 둔다(없는 도시는 도쿄로 근사 — 완전하진 않다). */
+const FM_CITY_TZ = {
+  '후쿠오카': 'Asia/Tokyo', '도쿄': 'Asia/Tokyo', '오사카': 'Asia/Tokyo', '교토': 'Asia/Tokyo',
+  '삿포로': 'Asia/Tokyo', '오키나와': 'Asia/Tokyo', '나고야': 'Asia/Tokyo',
+  '서울': 'Asia/Seoul', '부산': 'Asia/Seoul', '제주': 'Asia/Seoul',
+  '타이베이': 'Asia/Taipei', '타이중': 'Asia/Taipei', '가오슝': 'Asia/Taipei',
+  '홍콩': 'Asia/Hong_Kong', '상하이': 'Asia/Shanghai', '베이징': 'Asia/Shanghai',
+  '방콕': 'Asia/Bangkok', '치앙마이': 'Asia/Bangkok',
+  '하노이': 'Asia/Ho_Chi_Minh', '호치민': 'Asia/Ho_Chi_Minh', '다낭': 'Asia/Ho_Chi_Minh', '후에': 'Asia/Ho_Chi_Minh',
+  '싱가포르': 'Asia/Singapore', '쿠알라룸푸르': 'Asia/Kuala_Lumpur',
+  '세부': 'Asia/Manila', '보라카이': 'Asia/Manila', '발리': 'Asia/Makassar',
+  '뉴욕': 'America/New_York', '파리': 'Europe/Paris', '로마': 'Europe/Rome',
+  '바르셀로나': 'Europe/Madrid', '런던': 'Europe/London', '시드니': 'Australia/Sydney',
+  '이스탄불': 'Europe/Istanbul', '두바이': 'Asia/Dubai',
+};
+function daDestNow(cityName) {
+  const tz = FM_CITY_TZ[cityName] || 'Asia/Tokyo';
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: 'numeric', minute: 'numeric',
+    }).formatToParts(new Date());
+    const get = (t) => +((parts.find((x) => x.type === t) || {}).value);
+    let h = get('hour'); if (h === 24) h = 0;
+    return { hour: h, minute: get('minute'), ymd: get('year') + '-' + String(get('month')).padStart(2, '0') + '-' + String(get('day')).padStart(2, '0') };
+  } catch (e) {
+    const d = new Date();
+    return { hour: d.getHours(), minute: d.getMinutes(), ymd: d.toISOString().slice(0, 10) };
+  }
+}
 /* private/personal.html: function fmGpsDistance — 그대로 옮김(미터 단위). */
 function daGpsDistance(a, b) {
   if (!a || !b) return 0;
@@ -303,13 +336,42 @@ function daIsShortMapsUrl(u) {
   const t = String(u || '');
   return /^https?:\/\/(goo\.gl\/maps|maps\.app\.goo\.gl)\//i.test(t);
 }
+/* 2026-09-09 코드 검토(2차) — 재현된 버그: 좌표가 URL에 안 박혀 있는
+   FID 링크(`!1s0x123:0x456`, 좌표 성분 없이 식별자만 있는 경우)가
+   cid 패턴에도 축약 링크 패턴에도 안 걸려 needsLookup=false로
+   잘못 판정됐다 — "더 확인할 게 없다"로 조용히 처리된 것이다.
+   실제로는 daIsPlaceUrl()이 "특정 장소를 가리키는 링크"로 인정하는
+   모든 형태(place_id=, cid=, FID, /maps/place/)에 대해 "그 식별자는
+   있는데 좌표가 URL 문자열에 없다"는 게 진짜 조건이어야 한다 — cid만
+   특별 취급할 이유가 없다. URL 자체가 아예 없는 경우(주소·이름뿐)도
+   이전엔 false였는데, 그건 "확인할 것 없음"이 아니라 오히려 확인할
+   근거가 가장 부족한 상태라 needsLookup=true가 맞다. 반대로 검색
+   URL(daIsPlaceUrl=false, "이 근처 카페" 같은 링크)은 애초에 어떤
+   장소를 가리키는지조차 특정이 안 된 별도 상태라 여기서 true로 안
+   묶는다(daLookupState가 이 경우를 'ambiguous-search'로 따로 구분). */
 function daNeedsLookup(p) {
   if (daHasCoords(p)) return false;
+  const state = daLookupState(p);
+  return state === 'short-link' || state === 'place-id-no-coords' || state === 'no-evidence';
+}
+/* 좌표 없는 장소를 상태별로 분류한다(라벨링용 — 실제 서버 조회는 아직
+   연결 안 함, 클라이언트에 API 키를 두지 않는다는 원칙 때문에 서버
+   쪽에서 처리해야 한다: 작업 목록 #17/#21). 화면에서 상태별로 다른
+   안내 문구를 보여줄 수 있게 문자열로 구분해 돌려준다.
+   - 'has-coords'         : 이미 좌표 있음 — 조회 불필요
+   - 'short-link'         : 축약 링크 — 리다이렉트를 따라가야 실제 목적지를 안다
+   - 'place-id-no-coords' : 특정 장소 식별자(FID·cid·place_id·/maps/place/)는
+                            있는데 URL 문자열 자체엔 좌표가 없음 — 식별자로 조회 가능
+   - 'ambiguous-search'   : 검색 URL이라 애초에 "그 장소가 무엇인지"조차
+                            URL만으로는 특정이 안 됨(좌표 조회 이전 문제)
+   - 'no-evidence'        : URL도 없음 — 이름·주소만으로 조회를 시도해야 함(가장 근거 부족) */
+function daLookupState(p) {
+  if (daHasCoords(p)) return 'has-coords';
   const u = String(p.url || '');
-  if (!u) return false;
-  if (daIsShortMapsUrl(u)) return true;
-  if (/[?&]cid=/i.test(u) && !daCoordFromUrl(u)) return true;
-  return false;
+  if (!u) return 'no-evidence';
+  if (daIsShortMapsUrl(u)) return 'short-link';
+  if (daIsPlaceUrl(u) && !daCoordFromUrl(u)) return 'place-id-no-coords';
+  return 'ambiguous-search';
 }
 /* private/personal.html: function fmPlacesConflict — 그대로 옮김.
    양쪽에 placeId가 실제로 있고 서로 다르면(2026-09-09 코드 검토 반영)
@@ -358,8 +420,12 @@ function daMerge(arr, sourceLabel, places) {
     const kx = kName(x);
     let exact = (x.placeId && byKey.get(x.placeId)) || (urlKey(x) && byKey.get(urlKey(x))) || (kx && byKey.get(kx));
     /* 강한 식별자 충돌 검사 — 이름+좌표(또는 URL)로 후보를 찾았어도 양쪽
-       placeId가 서로 다르면 병합하지 않는다(2026-09-09 코드 검토). */
-    if (exact && x.placeId && exact.placeId && x.placeId !== exact.placeId) exact = null;
+       placeId가 서로 다르면 병합하지 않는다(2026-09-09 코드 검토).
+       단, x.placeId가 exact.aliasPlaceIds(사람이 이미 병합해 남겨 둔
+       승인된 별칭)에 있으면 충돌이 아니라 별칭 재확인이다 — 재현된
+       버그: 이걸 구분 안 하면 합친 뒤 삭제된 쪽 식별자로 재수입할 때마다
+       레코드가 다시 늘어난다(2026-09-09 코드 검토 2차). */
+    if (exact && x.placeId && exact.placeId && x.placeId !== exact.placeId && !(Array.isArray(exact.aliasPlaceIds) && exact.aliasPlaceIds.includes(x.placeId))) exact = null;
     if (exact) {
       /* private/personal.html 과 동일 — origin* 필드 자체가 없는 기존
          레코드는 "지금 값 === undefined"가 항상 참이 되어 무조건
@@ -384,6 +450,14 @@ function daMerge(arr, sourceLabel, places) {
       regKeys(exact);
       updated++; return;
     }
+    /* 2026-09-09 코드 검토(2차): 식별자가 없는 항목은 같은 파일을 다시
+       올릴 때마다 후보가 하나씩 더 쌓여 개수가 계속 늘었다 — "같은
+       출처에서 이미 받아들인 내용"(importKeys: 출처+내용 키)이면 후보로
+       또 쌓지 않고 그 레코드를 그대로 갱신한다. */
+    const pKeyPre = daDupKey(x);
+    const importFingerprint = (sourceLabel || '') + '|' + pKeyPre;
+    const already = (byName.get(nk) || []).find((o) => Array.isArray(o.importKeys) && o.importKeys.includes(importFingerprint));
+    if (already) { updated++; return; }
     const p = Object.assign({ id: 'fm' + Date.now() + added + Math.floor(Math.random() * 9999) }, x);
     delete p.title;
     p.originName = x.name; p.originNote = x.note || ''; p.originAddress = x.address || '';
@@ -391,6 +465,7 @@ function daMerge(arr, sourceLabel, places) {
     p.catConfirmed = !!x.cat;
     p.city = daCityGuess(p);
     p.sourceLists = sourceLabel ? [sourceLabel] : [];
+    p.importKeys = [importFingerprint];
     /* 이름만 같아도 사람이 이미 "다른 곳이에요"로 확인해 둔 조합
        (dismissedDupKeys)이면 같은 판단을 또 묻지 않는다. */
     const pKey = daDupKey(p);
@@ -512,6 +587,7 @@ function daBuildSpots(foodMap) {
     url: daLink(p),
     hasCoords: daHasCoords(p),
     needsLookup: daNeedsLookup(p),
+    lookupState: daLookupState(p),
     lat: p.lat, lng: p.lng,
     sourceLists: Array.isArray(p.sourceLists) ? p.sourceLists : [],
     dupCandidateIds: Array.isArray(p.dupCandidateIds) ? p.dupCandidateIds : [],
@@ -543,5 +619,7 @@ window.DesignAdapter = {
   esc: daEsc,
   hasCoords: daHasCoords,
   needsLookup: daNeedsLookup,
+  lookupState: daLookupState,
   migrateStorage: daMigrateStorage,
+  destNow: daDestNow,
 };

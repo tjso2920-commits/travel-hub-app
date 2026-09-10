@@ -31,6 +31,14 @@ t('좌표 없으면 호출 0', called===0);
 t('좌표 없을 때 안내', w.document.getElementById('wxOut').textContent.includes('기준 좌표가 없습니다'));
 
 // 숙소를 정하면 그 좌표를 쓴다
+/* 2026-09-09 코드 검토(t21 결정론화): 판매용 빌드(SALE_MODE=true)는 무료
+   한도(FREE_LIMIT=30)가 걸려 있어 라이선스 없이 137건을 그대로 넣으면
+   앞쪽 30건만 들어가고 나머지는 조용히 막힌다 — 이 파일은 날씨·코스
+   기능을 검사하는 것이지 무료 한도를 검사하는 게 아니다(무료 한도는
+   t33에서 따로 검사한다). 다른 테스트 파일들(t4·t6·t11·t42·t44·t45·
+   t46·t48·t49)과 같은 방식으로 한도를 미리 풀어, 코스 후보 풀 크기가
+   가져온 순서에 우연히 좌우되지 않게 한다. */
+w.eval("foodMap.lic={name:'검사',date:'2026-01-01'};");
 w.fmMerge(w.fmCsv(csv));
 FM().places.forEach((p,i)=>{p.lat=33.59+i*0.001;p.lng=130.40+i*0.001;});
 FM().selected=FM().places[0].id; w.eval('fmSetHotelFromSpot()');
@@ -148,13 +156,31 @@ w.eval("foodMap.course=null;foodMap.plan=null;csSetStart(8);csBuild();");
 t('사전 조건: 코스 생성됨', (FM().course&&FM().course.stops||[]).length>0);
 t('시작 시각 8시 반영', FM().course.startHour===8);
 t('courseStart 저장', FM().courseStart===8);
+/* 2026-09-09 코드 검토(t21 결정론화): csReplanNow는 "여행지 현지 시각"을
+   쓰도록 고쳤다(csStartHour→fmDestNow, 기기 시각대 의존 버그 수정).
+   그런데 이 값 자체가 실행 시각(new Date())에 매번 달라지면 검사도
+   실행할 때마다 값이 바뀐다 — 실제로 실행 시각이 마침 이 CSV 장소들이
+   전부 닫혀 있는 심야 시간대면 csBuild가 후보를 하나도 못 찾아
+   foodMap.course가 null이 되어 다음 줄에서 그대로 죽는 게 재현된 버그였다.
+   시계 자체를 여행지 오후 시간(영업 중 확정 시간대 — 위 8시 사전조건과
+   마찬가지로 실제로 열려 있음이 이미 확인된 시간)으로 고정해 완전히
+   결정론적으로 만든다. */
+w.eval(`
+  window.__RealDate = Date;
+  const __fixed = new __RealDate('2026-09-09T20:00:00+09:00');
+  Date = class extends __RealDate {
+    constructor(...a){ if(a.length) return new __RealDate(...a); return new __RealDate(__fixed.getTime()); }
+    static now(){ return __fixed.getTime(); }
+  };
+`);
 w.eval('csReplanNow()');
 t('지금부터: courseStart 비움', FM().courseStart===null);
-t('지금부터: 현재 시각으로 다시 짬', FM().course.startHour===new Date().getHours());
+t('지금부터: 여행지 현지 시각(JST 20시, 고정)으로 다시 짬', FM().course&&FM().course.startHour===20);
 const firstId=FM().course.stops[0].id;
 FM().places.find(x=>x.id===firstId).visited=true;
-w.eval('csReplanNow()');
-t('지금부터: 방문한 곳 제외', !FM().course.stops.some(x=>x.id===firstId));
+w.eval('csReplanNow()'); /* 시계가 아직 고정돼 있어야 이 두 번째 재계산도 결정론적이다 */
+t('지금부터: 방문한 곳 제외', FM().course&&!FM().course.stops.some(x=>x.id===firstId));
+w.eval('Date = window.__RealDate;');
 w.eval('renderFoodMap()');
 const csPanel=()=>[...w.document.querySelectorAll('#fmPlan details.fm-panel')].find(x=>x.textContent.includes('오늘 동선'));
 t('지금부터 다시 버튼 노출', csPanel().textContent.includes('지금부터 다시'));

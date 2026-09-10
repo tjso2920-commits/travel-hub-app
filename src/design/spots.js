@@ -100,14 +100,22 @@ function detail(id) {
         (p.hasCoords ? '' : '<small>좌표가 없어서 도시를 지정해도 최단 동선·거리 계산에는 쓸 수 없습니다. 실제 위치 확인은 별도로 필요합니다.</small>');
     }
     if (p.needsLookup) {
-      /* 2026-09-09 코드 검토 — 저장된 링크가 축약 링크(goo.gl/maps 등)나
-         cid만 있는 링크라 좌표가 URL 문자열만으로는 안 나온다. 실제
-         목적지를 확인하려면 리다이렉트를 따라가거나 유료 API 조회가
-         필요한데, 소비자에게 API 키를 넣게 하지 않는다는 원칙상 여기서
-         그 조회를 자동으로 하지 않는다 — 사람이 지도에서 직접 열어
-         확인하는 것으로 남겨 둔다. */
-      cityBlock += `<div class="inline-note">저장된 링크만으로는 정확한 위치를 확인할 수 없어요(축약 링크). 자동 조회는 아직 연결되지 않았습니다.<br>` +
-        `<a class="text-button" href="${A.esc(p.url)}" target="_blank" rel="noopener noreferrer">Google 지도에서 직접 열어 확인하기 ↗</a></div>`;
+      /* 2026-09-09 코드 검토(2차) — 예전엔 "축약 링크"라고만 안내했는데,
+         실제로 이 상태에 걸리는 경우는 여러 가지다(daLookupState 참고):
+         축약 링크, 좌표 없이 식별자만 있는 장소 링크(FID·cid·place_id),
+         URL조차 없는 경우. 상태별로 사실과 다른 안내를 하지 않는다
+         (예: URL이 없는데 "링크를 열어 확인하라"고 하면 안 된다). 실제
+         좌표 조회는 소비자에게 API 키를 넣게 하지 않는다는 원칙상
+         서버 쪽에서 처리해야 할 몫으로 아직 남겨 둔다(작업 목록 참고). */
+      const lookupMsg = {
+        'short-link': '저장된 링크가 축약 링크라 정확한 위치를 URL만으로 확인할 수 없어요.',
+        'place-id-no-coords': '저장된 링크에 이 장소를 가리키는 식별자는 있지만, 좌표가 URL 문자열에는 없어요.',
+        'ambiguous-search': '저장된 링크가 특정 장소가 아니라 검색 링크라, 어떤 곳을 저장한 건지부터 확인이 필요해요.',
+        'no-evidence': '저장된 링크가 없어서 위치를 확인할 근거가 아직 없어요.',
+      }[p.lookupState] || '저장된 정보만으로는 정확한 위치를 확인할 수 없어요.';
+      cityBlock += `<div class="inline-note">${lookupMsg} 자동 조회는 아직 연결되지 않았습니다.` +
+        (p.url ? `<br><a class="text-button" href="${A.esc(p.url)}" target="_blank" rel="noopener noreferrer">Google 지도에서 직접 열어 확인하기 ↗</a>` : '') +
+        `</div>`;
     }
     if (p.dupCandidateIds && p.dupCandidateIds.length) {
       const others = p.dupCandidateIds.map((did) => spots.find((s) => s.id === did)).filter(Boolean);
@@ -191,17 +199,27 @@ function finishCityAssign(ids, cityName) {
    방문 순서·이동시간을 만들 수 있게 하고, 이미 만들어 둔 코스가 있으면
    그걸 보여준다(새로고침해도 foodMap.course에 저장돼 있어 유지된다). */
 function showRoute() {
-  if (foodMap && foodMap.course && Array.isArray(foodMap.course.stops) && foodMap.course.stops.length) {
+  /* 2026-09-09 코드 검토(2차): 저장된 코스가 있어도 그게 "지금 보고 있는
+     도시"의 코스가 아니면 그대로 보여주면 안 된다 — 도시를 바꿨는데 예전
+     도시에서 짠 코스가 마치 지금 도시 코스처럼 뜨는 걸 막는다(과거엔
+     course에 city를 저장하지 않아 구분할 방법이 아예 없었다). city가
+     없는 예전 저장분(마이그레이션 이전)은 구분할 근거가 없어 그대로
+     보여준다 — 새로 만들면 이번 수정으로 city가 붙는다. */
+  if (foodMap && foodMap.course && Array.isArray(foodMap.course.stops) && foodMap.course.stops.length
+    && (!foodMap.course.city || foodMap.course.city === city)) {
     showSavedCourse();
     return;
   }
-  const list = spots.filter((p) => route.has(p.id));
+  const list = spots.filter((p) => p.city === city && route.has(p.id));
   open(city + ' · 오늘 동선', `<div class="detail"><h2>오늘은 이곳으로.</h2><p>${list.length ? '담아 둔 ' + list.length + '곳을 확인하세요.' : '마음에 드는 장소를 먼저 골라보세요.'}</p>${list.map((p, i) => `<div class="route-row"><span>${i + 1}</span>${photoHTML(p, '')}<div><b>${A.esc(p.name)}</b><p>${A.esc(p.area)}</p></div><button data-remove="${p.id}" aria-label="${A.esc(p.name)} 동선에서 빼기">×</button></div>`).join('')}${list.length ? '<button class="primary" data-build-course>코스 만들기 ↗</button>' : ''}<button class="text-button" data-dismiss>스팟 더 고르기</button></div>`);
 }
 /* 출발지·가용 시간을 물어보는 시트. 출발지는 API 키 없이 되는 두 가지만
-   준다 — 현재 위치(브라우저 GPS) 또는 담아 둔 곳 중 하나. */
+   준다 — 현재 위치(브라우저 GPS) 또는 담아 둔 곳 중 하나.
+   2026-09-09 코드 검토(2차): route(오늘 동선)에는 다른 도시에서 담아 둔
+   id가 도시를 바꾼 뒤에도 남아 있을 수 있다 — 지금 보고 있는 도시로
+   한 번 더 걸러야 다른 도시 장소가 코스에 섞여 들어가지 않는다. */
 function buildCourseSheet() {
-  const list = spots.filter((p) => route.has(p.id));
+  const list = spots.filter((p) => p.city === city && route.has(p.id));
   open('출발지 정하기', `<div class="detail"><h2>어디서 출발할까요?</h2>` +
     `<p>${list.length}곳을 실제 방문 순서·이동시간으로 만듭니다.</p>` +
     `<div class="city-options"><button class="city-option" data-start-gps><span><b>현재 위치에서 출발</b><small>브라우저 위치 권한이 필요해요</small></span><span class="city-check">›</span></button>` +
@@ -227,16 +245,37 @@ function buildCourseSheet() {
 async function runCourseGeneration(origin, startPlaceId) {
   const minutesInput = $('#courseMinutes');
   const budgetMinutes = minutesInput && minutesInput.value ? +minutesInput.value : null;
-  const list = spots.filter((p) => route.has(p.id) && p.id !== startPlaceId);
+  /* 2026-09-09 코드 검토(2차): route에 다른 도시 id가 남아 있을 수 있어
+     여기서도 지금 도시로 한 번 더 거른다(buildCourseSheet만 걸러서는
+     이 함수가 다른 경로로 직접 불릴 가능성까지 막지 못한다). */
+  const list = spots.filter((p) => p.city === city && route.has(p.id) && p.id !== startPlaceId);
+  /* 시작 시각은 "오전 9시" 고정이 아니라 여행지 현지의 지금 시각이다 —
+     밤에 코스를 다시 짜면 밤부터, 아침이면 아침부터 계산해야 도착 예정
+     시각이 실제로 말이 된다(이전엔 언제 눌러도 항상 9시부터로 계산해
+     실제 지금 시각과 무관한 숫자를 보여줬다). */
+  const destNow = A.destNow(city);
+  const startMinutes = destNow.hour * 60 + destNow.minute;
   open('코스 만드는 중', '<div class="detail"><h2>실제 이동시간을 계산하고 있어요…</h2><p>도보 경로를 먼저 확인합니다. 네트워크 상태에 따라 몇 초 걸릴 수 있어요.</p></div>');
-  const result = await window.CourseGen.generate(origin, list, { startMinutes: 9 * 60 });
+  const result = await window.CourseGen.generate(origin, list, { startMinutes, budgetMinutes });
   if (!result.ok) {
     open('코스를 만들 수 없어요', '<div class="detail"><h2>좌표가 있는 곳이 없어요.</h2><p>담아 둔 곳 모두 좌표가 없어 이동시간을 계산할 수 없습니다. 장소 상세에서 위치를 먼저 확인해 주세요.</p><button class="primary" data-dismiss>돌아가기</button></div>');
     return;
   }
-  foodMap.course = {
+  /* 2026-09-09 코드 검토(2차): 저장하는 코스에 도시·출발지·이동수단·
+     계산 근거·생성 조건을 같이 남긴다 — 안 남기면 도시를 바꿨을 때 이
+     코스가 어느 도시 것인지 구분할 수 없고("새로고침해도 유지"라는 게
+     오히려 사고가 된다), 나중에 "이 코스는 무슨 조건으로 짰었는지"도
+     알 수 없다. 새로 만들기 전까지는 기존 코스를 절대 먼저 지우지
+     않는다 — 여기서 결과가 확정된 뒤에만 교체한다(실패·취소 시 이전
+     코스가 그대로 남는다). */
+  const newCourse = {
     made: new Date().toISOString().slice(0, 10),
-    startHour: 9,
+    city,
+    origin,
+    mode: 'walking',
+    startHour: destNow.hour,
+    startMinutes,
+    budgetMinutes: budgetMinutes || null,
     goals: [],
     stops: result.stops,
     endAt: result.endAt,
@@ -244,11 +283,15 @@ async function runCourseGeneration(origin, startPlaceId) {
     routedReal: result.routedReal,
     totalMeters: result.totalMeters,
     excludedIds: result.excluded.map((p) => p.id),
+    excludedReasons: result.excludedReasons || {},
     source: 'design',
   };
+  foodMap.course = newCourse;
   const saved = A.saveFoodMap(foodMap);
   if (!saved) {
-    delete foodMap.course;
+    /* 저장이 실패하면 저장소는 안 바뀌어 있으니, 저장소에서 다시 읽어
+       오면 이전 코스가 그대로 살아난다(방금 만든 새 코스로 메모리만
+       앞서가 있던 상태를 되돌린다 — 실패를 성공처럼 반영하지 않는다). */
     foodMap = A.loadFoodMap();
     alert('코스를 저장하지 못했어요. 브라우저 저장 공간을 확인해 주세요.');
     showRoute();
@@ -274,13 +317,20 @@ function showSavedCourse() {
       : '';
     return `<div class="route-row"><span>${i + 1}</span>${photoHTML(p, '')}<div><b>${A.esc(p.name)}</b><p>${window.CourseGen.clockLabel(s.at)} 도착 · 도보 ${s.walk}분 이동${links}</p></div></div>`;
   }).join('');
+  /* 2026-09-09 코드 검토(2차): "좌표가 없어서 빠짐"과 "가용 시간 안에
+     못 들어가서 빠짐"은 사용자가 할 수 있는 다음 행동이 다르다(위치
+     확인 vs 시간을 늘리거나 곳 수를 줄이기) — 하나로 뭉뚱그리지 않는다. */
+  const reasons = c.excludedReasons || {};
   const excluded = (c.excludedIds || []).map((id) => foodMap.places.find((p) => p.id === id)).filter(Boolean);
+  const noCoordsList = excluded.filter((p) => reasons[p.id] !== 'time-budget');
+  const timeList = excluded.filter((p) => reasons[p.id] === 'time-budget');
   const totalKm = (c.totalMeters / 1000).toFixed(1);
   const hours = Math.floor(c.walkTotal / 60), mins = c.walkTotal % 60;
   open('오늘의 코스', `<div class="detail"><h2>${c.stops.length}곳 · 도보 이동 ${hours ? hours + '시간 ' : ''}${mins}분</h2>` +
     `<p>${c.routedReal ? '실제 도보 경로 기준으로 계산했습니다.' : '실제 경로 연결에 실패해 직선거리 기준으로 추정했습니다(실제와 다를 수 있어요).'} 총 이동 거리 약 ${totalKm}km · 마지막 장소 도착 예정 ${window.CourseGen.clockLabel(c.endAt - (c.stops[c.stops.length - 1] ? c.stops[c.stops.length - 1].dwell : 0))}</p>` +
     stopViews +
-    (excluded.length ? `<div class="inline-note">좌표가 없어 이번 코스 계산에서 빠진 곳 ${excluded.length}곳: ${excluded.map((p) => A.esc(p.name)).join(', ')}. 위치를 확인하면 다음 코스에 포함할 수 있어요.</div>` : '') +
+    (noCoordsList.length ? `<div class="inline-note">좌표가 없어 이번 코스 계산에서 빠진 곳 ${noCoordsList.length}곳: ${noCoordsList.map((p) => A.esc(p.name)).join(', ')}. 위치를 확인하면 다음 코스에 포함할 수 있어요.</div>` : '') +
+    (timeList.length ? `<div class="inline-note">가용 시간 안에 다 들르지 못해 빠진 곳 ${timeList.length}곳: ${timeList.map((p) => A.esc(p.name)).join(', ')}. 쓸 수 있는 시간을 늘리거나 곳 수를 줄이면 포함할 수 있어요.</div>` : '') +
     `<button class="text-button" data-course-new>새로 만들기</button><button class="primary" data-dismiss>확인</button></div>`);
 }
 function profile() {
@@ -418,7 +468,14 @@ function importDone(perFile, skipped) {
   const dupCandidates = perFile.reduce((s, f) => s + (f.z ? f.z.dupCandidates : 0), 0);
   const ok = perFile.filter((f) => f.z);
   const failed = perFile.filter((f) => f.error);
-  const skipReasonLabel = { 'entry-too-large': '용량이 너무 커서 제외', 'too-many-entries': '한 번에 처리할 수 있는 개수를 넘어 제외', 'review-file': '리뷰 파일이라 제외(장소 아님)' };
+  const skipReasonLabel = {
+    'entry-too-large': '용량이 너무 커서 제외', 'too-many-entries': '한 번에 처리할 수 있는 개수를 넘어 제외', 'review-file': '리뷰 파일이라 제외(장소 아님)',
+    /* 2026-09-09 코드 검토(2차) — zip-import.js 경로 필터·전체 용량 상한·
+       실제 타임아웃 중단에서 새로 생긴 제외 사유. */
+    'not-places-path': '저장한 장소 폴더(Saved·지도) 밖에 있어 제외(다른 서비스 파일로 판단)',
+    'total-size-exceeded': '전체 압축 해제 용량 한도를 넘어 제외',
+    timeout: '처리 시간 제한을 넘어 이후 항목 압축 해제를 시작하지 않음',
+  };
   const fileList = (perFile.length > 1 || failed.length || skipped.length)
     ? `<div class="import-filelist">${
         ok.map((f) => `<div class="import-file ok">✓ ${A.esc(f.label)} — 새로 추가 ${f.z.added} · 자동 갱신 ${f.z.updated}</div>`).join('') +
@@ -452,11 +509,35 @@ $('#sheetContent').onclick = (e) => {
   if (b.dataset.dupMerge) { const [x, y] = b.dataset.dupMerge.split('|'); return resolveDup(x, y, 'merge'); }
   if (b.dataset.dupDismiss) { const [x, y] = b.dataset.dupDismiss.split('|'); return resolveDup(x, y, 'dismiss'); }
   if (b.hasAttribute('data-build-course')) return buildCourseSheet();
-  if (b.hasAttribute('data-course-new')) { delete foodMap.course; A.saveFoodMap(foodMap); showRoute(); }
+  /* 2026-09-09 코드 검토(2차): 예전엔 여기서 기존 코스를 먼저 지우고
+     저장했다 — 그 상태에서 출발지 화면을 취소하거나 코스 생성이
+     실패하면 이전 코스가 사라진 채로 남았다. 이제 기존 코스는 그대로
+     두고 출발지 화면으로만 넘어간다 — 실제로 새 코스가 완성돼 저장에
+     성공했을 때만(runCourseGeneration) 교체된다. */
+  if (b.hasAttribute('data-course-new')) buildCourseSheet();
 };
 function resolveDup(aId, bId, action) {
   const result = A.resolveDup(foodMap.places, aId, bId, action);
   if (!result) return;
+  /* 2026-09-09 코드 검토(2차): 저장된 코스(foodMap.course.stops·
+     excludedIds)에도 삭제되는 쪽 id가 남아 있을 수 있다 — 여긴
+     places 배열이 아니라 foodMap에 직접 딸린 데이터라서 A.resolveDup가
+     손대지 않는다. 여기서 옮겨 두지 않으면 합친 뒤 "저장된 코스"를
+     다시 열었을 때 이미 없어진 장소를 가리키는 조용한 참조 오류가
+     남는다. saveFoodMap을 부르기 전에 옮겨야 이번 저장에 같이 반영된다. */
+  if (result.survivorId && result.mergedId && foodMap.course) {
+    const from = result.mergedId, to = result.survivorId;
+    if (Array.isArray(foodMap.course.stops)) {
+      foodMap.course.stops.forEach((s) => { if (s.id === from) s.id = to; });
+    }
+    if (Array.isArray(foodMap.course.excludedIds)) {
+      foodMap.course.excludedIds = foodMap.course.excludedIds.map((id) => (id === from ? to : id));
+    }
+    if (foodMap.course.excludedReasons && foodMap.course.excludedReasons[from] !== undefined) {
+      foodMap.course.excludedReasons[to] = foodMap.course.excludedReasons[from];
+      delete foodMap.course.excludedReasons[from];
+    }
+  }
   const saved = A.saveFoodMap(foodMap);
   if (!saved) {
     /* 저장 실패 시 원상태로 복구 — 방금 합치거나 끊은 변경이 메모리에만

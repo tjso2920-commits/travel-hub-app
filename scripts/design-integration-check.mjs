@@ -72,17 +72,33 @@ t('지도 링크가 실제 저장 URL을 그대로 씀(검색 링크로 안 바�
 await p.evaluate(() => document.getElementById('close').click());
 await p.waitForTimeout(200);
 
-// 재수입 — URL 있는 곳은 자동 갱신, URL·주소·좌표가 전부 없는 곳(st.763)은
-// 검증할 방법이 없어 "중복 후보"로만 남는다(2026-09-09 코드 검토 반영 —
-// 증거 없이 자동으로 합치지 않는다. 이건 회귀가 아니라 의도한 동작이다).
+// 재수입 — 완전히 같은 파일(같은 출처)을 다시 올리면 URL 있는 2곳은
+// 검증된 식별자로, URL·주소·좌표가 전부 없는 st.763도 "같은 출처에서
+// 이미 받아들인 내용"으로 인식돼 전부 자동 갱신된다(2026-09-09 코드
+// 검토 2차 — 식별자 없는 동일 파일 반복 업로드가 후보를 계속 쌓지
+// 않게 출처+내용 기반 기록을 추가했다. 완전히 다른 파일에서 같은
+// 이름이 오면 이 기록이 없어 여전히 후보로 남는다 — 아래 별도 검증).
 await p.click('[data-add]');
 const [fc2] = await Promise.all([p.waitForEvent('filechooser'), p.click('#realFileBtn')]);
 await fc2.setFiles(csvPath);
 await p.waitForTimeout(700);
 const summary = await p.textContent('.import-summary').catch(() => '');
 const flat = summary.replace(/\s+/g, ' ');
-t('URL 있는 2곳은 검증된 식별자로 자동 갱신', /2\s*자동 갱신/.test(flat));
-t('URL·주소·좌표가 전부 없는 1곳은 중복 후보로만 남음(자동 병합 안 함)', /1\s*새로 추가/.test(flat));
+t('완전히 같은 파일 재수입 시 3곳 전부 자동 갱신(식별자 없는 곳도 출처 기록으로 인식)', /3\s*자동 갱신/.test(flat));
+t('같은 파일 재수입은 새로 추가 0곳(후보가 더 안 쌓임)', /0\s*새로 추가/.test(flat));
+await p.evaluate(() => document.getElementById('close').click());
+t('완전히 같은 파일을 반복 올려도 레코드 수가 안 늚(3곳 그대로)', (await p.evaluate(() => foodMap.places.length)) === 3);
+
+// 다른 파일(다른 출처)에서 식별자 없이 같은 이름이 오면 — 출처 기록이
+// 없으므로 여전히 정직하게 "중복 후보"로 남는다(자동 병합 아님).
+const otherFileCsvPath = path.join(tmp, 'other-list.csv');
+fs.writeFileSync(otherFileCsvPath, '제목,메모,URL,태그,댓글\nst.763,다른 목록에서 온 같은 이름,,,\n', 'utf8');
+await p.click('[data-add]');
+const [fc2b] = await Promise.all([p.waitForEvent('filechooser'), p.click('#realFileBtn')]);
+await fc2b.setFiles(otherFileCsvPath);
+await p.waitForTimeout(700);
+const summary2 = (await p.textContent('.import-summary').catch(() => '')).replace(/\s+/g, ' ');
+t('다른 출처에서 온 동일 이름(식별자 없음)은 여전히 후보로 남음(새로 추가 1곳)', /1\s*새로 추가/.test(summary2));
 await p.evaluate(() => document.getElementById('close').click());
 t('중복 후보는 화면에서 사람이 합치기 전엔 별개 레코드로 남음(4곳)', (await p.evaluate(() => foodMap.places.length)) === 4);
 
@@ -199,6 +215,32 @@ t('축약 링크는 "추가 조회 필요"로 구분 표시됨(좌표 없음과 
 t('자동 조회 대신 지도에서 직접 열어보라고 안내(API 키 요구 없음)', lookupDetail.includes('직접 열어'));
 const apiKeyInputExists = await p.evaluate(() => !!document.querySelector('input[type="password"]'));
 t('화면 어디에도 API 키 입력창이 없음', apiKeyInputExists === false);
+await p.evaluate(() => document.getElementById('close').click());
+
+// 2026-09-09 코드 검토(2차) 재현된 버그: 좌표 성분이 없는 FID 링크
+// (`!1s0x...:0x...`만 있고 `!3d..!4d..`나 `@lat,lng`가 없는 경우)가
+// cid 패턴에도 축약 링크 패턴에도 안 걸려 needsLookup=false로 잘못
+// 판정됐다 — "더 확인할 것 없음"으로 조용히 넘어갔다. daLookupState
+// 도입 이후 daIsPlaceUrl(특정 장소 식별자로 인정)+좌표 없음 조건으로
+// 이 경우도 잡아야 한다.
+const fidCsvPath = path.join(tmp, 'fid-check.csv');
+fs.writeFileSync(fidCsvPath, '제목,메모,URL,태그,댓글\nFID링크가게,,https://www.google.com/maps/place/FID링크가게/data=!4m2!3m1!1s0x0000000000000301:0x0000000000000301,,\n', 'utf8');
+await p.click('[data-add]');
+const [fc8] = await Promise.all([p.waitForEvent('filechooser'), p.click('#realFileBtn')]);
+await fc8.setFiles(fidCsvPath);
+await p.waitForTimeout(700);
+await p.evaluate(() => document.getElementById('close').click());
+await p.waitForTimeout(200);
+const fidTarget = await p.evaluate(() => {
+  const d = foodMap.places.find((x) => x.name === 'FID링크가게');
+  return d ? d.id : null;
+});
+t('FID만 있고 좌표 성분이 없는 링크도 needsLookup=true로 잡힘(재현된 버그 수정 확인)',
+  await p.evaluate((id) => window.DesignAdapter.needsLookup(foodMap.places.find((x) => x.id === id)), fidTarget) === true);
+await p.evaluate((id) => { detail(id); }, fidTarget);
+await p.waitForTimeout(150);
+const fidDetail = await p.textContent('#sheetContent');
+t('FID 링크는 "축약 링크"가 아니라 "식별자는 있는데 좌표가 없다"고 정확히 안내됨', fidDetail.includes('식별자는 있지만'));
 await p.evaluate(() => document.getElementById('close').click());
 
 t('최종 콘솔/런타임 오류 0', errs.length === 0);

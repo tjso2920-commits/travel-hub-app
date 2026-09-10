@@ -29,9 +29,17 @@ async function seedPlaces(withRealRoute) {
       route.fulfill({
         status: 200,
         contentType: 'application/json',
+        /* 2026-09-09 코드 검토(2차): OSRM Trip 서비스는 roundtrip=false에
+           destination을 안 주는(기본값 any) 조합이 공식적으로 지원되지
+           않는다(project-osrm.org 문서 참고) — course.js를 공식 지원
+           조합인 roundtrip=true&source=first로 고쳤다. roundtrip=true는
+           출발지로 돌아오는 마지막 구간까지 포함해 legs를 돌려주므로
+           (입력 좌표 3개 = origin+c2+c3 → legs 3개: origin→p1, p1→p2,
+           p2→origin) 모의 응답도 실제 모양대로 닫힌 구간을 포함한다.
+           course.js가 이 마지막 구간을 잘라내고 쓴다. */
         body: JSON.stringify({
           code: 'Ok',
-          trips: [{ distance: 1500, duration: 1200, legs: [{ distance: 500, duration: 400 }, { distance: 1000, duration: 800 }] }],
+          trips: [{ distance: 2700, duration: 2160, legs: [{ distance: 500, duration: 400 }, { distance: 1000, duration: 800 }, { distance: 1200, duration: 960 }] }],
           waypoints: [{ waypoint_index: 0 }, { waypoint_index: 2 }, { waypoint_index: 1 }],
         }),
       });
@@ -124,6 +132,92 @@ t('GPS 현재 위치를 출발지로 써도 코스가 만들어짐(API 키 없�
 const savedCourseGps = await p.evaluate(() => foodMap.course);
 t('GPS 출발일 때는 담아 둔 곳 전부가 정거장이 됨(출발지 자체가 목록에 없으므로)', savedCourseGps.stops.length === 2);
 await p.evaluate(() => document.getElementById('close').click());
+
+// --- 2026-09-09 코드 검토(2차): 속도 타당성 검사 — 도보라기엔 너무 빠른
+// (자동차 프로필로 잘못 응답한 것으로 의심되는) 응답은 "실제 경로 성공"
+// 으로 인정하지 않고 직선거리 추정으로 넘어가야 한다. ---
+await p.unroute('https://router.project-osrm.org/**').catch(() => {});
+await p.route('https://router.project-osrm.org/**', (route) => {
+  route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    // 500m를 4초에(시속 450km) — 명백히 도보가 아니다.
+    body: JSON.stringify({
+      code: 'Ok',
+      trips: [{ distance: 2700, duration: 12, legs: [{ distance: 500, duration: 4 }, { distance: 1000, duration: 8 }, { distance: 1200, duration: 9.6 }] }],
+      waypoints: [{ waypoint_index: 0 }, { waypoint_index: 2 }, { waypoint_index: 1 }],
+    }),
+  });
+});
+await p.evaluate(() => {
+  foodMap.lic = { name: 'q', date: '2026-01-01' };
+  foodMap.places = [
+    { id: 'c1', name: '커피집', lat: 33.590, lng: 130.400, cat: '카페·디저트', catConfirmed: true, sourceLists: [] },
+    { id: 'c2', name: '라멘집', lat: 33.591, lng: 130.402, cat: '맛집·식당', catConfirmed: true, sourceLists: [] },
+    { id: 'c3', name: '전망대', lat: 33.593, lng: 130.405, cat: '관광·명소', catConfirmed: true, sourceLists: [] },
+  ];
+  delete foodMap.course;
+  A.saveFoodMap(foodMap);
+});
+await p.reload();
+await p.waitForTimeout(300);
+await p.evaluate(() => { ['c1', 'c2', 'c3'].forEach((id) => route.add(id)); });
+await p.evaluate(() => showRoute());
+await p.waitForTimeout(200);
+await p.click('[data-build-course]');
+await p.waitForTimeout(200);
+await p.click('[data-start-pick="c1"]');
+await p.waitForTimeout(800);
+const detailImplausible = await p.textContent('#sheetContent');
+t('말이 안 되는 속도(도보로 보기엔 너무 빠름) 응답은 실제 경로로 인정 안 함', detailImplausible.includes('직선거리 기준으로 추정'));
+const savedCourseImplausible = await p.evaluate(() => foodMap.course);
+t('비정상 속도 응답은 routedReal=false로 저장됨', savedCourseImplausible.routedReal === false);
+await p.evaluate(() => document.getElementById('close').click());
+await p.unroute('https://router.project-osrm.org/**').catch(() => {});
+
+// --- 가용 시간(분)을 넘겨 받으면 실제로 코스 길이를 제한해야 한다
+// (예전엔 입력만 읽고 계산에는 안 썼다) ---
+await p.route('https://router.project-osrm.org/**', (route) => route.abort('failed')); // 직선거리 추정 경로로 단순화해 검사
+await p.evaluate(() => {
+  foodMap.lic = { name: 'q', date: '2026-01-01' };
+  foodMap.places = [
+    { id: 'b1', name: '출발점', lat: 33.590, lng: 130.400, cat: '카페·디저트', catConfirmed: true, sourceLists: [] },
+    { id: 'b2', name: '가까운곳', lat: 33.591, lng: 130.401, cat: '맛집·식당', catConfirmed: true, sourceLists: [] },
+    { id: 'b3', name: '먼곳', lat: 33.750, lng: 130.550, cat: '관광·명소', catConfirmed: true, sourceLists: [] },
+  ];
+  delete foodMap.course;
+  A.saveFoodMap(foodMap);
+});
+await p.reload();
+await p.waitForTimeout(300);
+await p.evaluate(() => { ['b1', 'b2', 'b3'].forEach((id) => route.add(id)); });
+await p.evaluate(() => showRoute());
+await p.waitForTimeout(200);
+await p.click('[data-build-course]');
+await p.waitForTimeout(200);
+await p.fill('#courseMinutes', '60'); // b2(도보 몇 분+체류 40분)는 들어가고, b3(17km 넘게 떨어짐)는 못 들어갈 시간
+await p.click('[data-start-pick="b1"]');
+await p.waitForTimeout(800);
+const detailBudget = await p.textContent('#sheetContent');
+t('가용 시간을 넘겨 못 들르는 곳은 "시간 안에 못 들름"으로 따로 표시', detailBudget.includes('가용 시간 안에'));
+const savedCourseBudget = await p.evaluate(() => foodMap.course);
+t('가용 시간을 넘는 먼 곳은 정거장에서 빠짐', !savedCourseBudget.stops.some((s) => s.id === 'b3'));
+t('시간 안에 드는 가까운 곳은 그대로 들어감', savedCourseBudget.stops.some((s) => s.id === 'b2'));
+t('시간 이유로 뺀 곳은 excludedReasons에 time-budget으로 남음', savedCourseBudget.excludedReasons && savedCourseBudget.excludedReasons.b3 === 'time-budget');
+await p.evaluate(() => document.getElementById('close').click());
+
+// --- "새로 만들기"는 실제로 새 코스가 완성되기 전까지 기존 코스를
+// 지우면 안 된다(취소하면 이전 코스가 그대로 남아야 한다) ---
+await p.evaluate(() => showRoute());
+await p.waitForTimeout(150);
+const beforeNewCourse = await p.evaluate(() => foodMap.course);
+await p.click('[data-course-new]');
+await p.waitForTimeout(150);
+t('"새로 만들기"를 누른 직후에도(아직 새 코스 완성 전) 기존 코스가 안 지워짐', JSON.stringify(await p.evaluate(() => foodMap.course)) === JSON.stringify(beforeNewCourse));
+await p.evaluate(() => document.getElementById('close').click()); // 출발지 시트를 취소
+await p.waitForTimeout(150);
+t('출발지 시트를 취소해도 기존 코스가 그대로 남음', JSON.stringify(await p.evaluate(() => foodMap.course)) === JSON.stringify(beforeNewCourse));
+await p.unroute('https://router.project-osrm.org/**').catch(() => {});
 
 t('최종 콘솔/런타임 오류 0', errs.length === 0);
 if (errs.length) console.log('  ', errs.slice(0, 5));

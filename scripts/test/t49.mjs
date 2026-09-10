@@ -237,6 +237,41 @@ t('축약 링크(goo.gl/maps)는 URL 문자열만으로 좌표를 못 뽑음(추
 w.eval("foodMap.places=[{id:'x1',name:'테스트','address':'福岡市',lat:33.59,lng:130.40}];save('foodmap_v1',foodMap);");
 t('fmMerge 로 담긴 장소는 destCountry 와 무관하게 그대로 유지됨(별도 검증은 t46)', w.eval('foodMap.places.length') === 1);
 
+/* ── 9. 재현된 버그 — 합친 뒤 별칭 식별자로 재수입하면 다시 늘어남
+   (2026-09-09 코드 검토 2차). 동명 레코드 2개(placeId A/B, 서로 다른
+   cid URL) → 사용자가 수동 병합(같은 곳 확인) → 삭제된 쪽 placeId B로
+   재가져오기 → 이전엔 다시 2개로 늘었다. ── */
+w.eval(`foodMap.places = [
+  {id:'rA', name:'동일상호', placeId:'A', url:'https://www.google.com/maps/place/x/data=!4m2!3m1!1s0xAAA', address:'', sourceLists:[]},
+  {id:'rB', name:'동일상호', placeId:'B', url:'https://www.google.com/maps/place/y/?cid=222', address:'', sourceLists:[]}
+];save('foodmap_v1',foodMap);`);
+w.eval("fmResolveDup(foodMap.places,'rA','rB','merge');");
+t('수동 병합 직후엔 1곳', w.eval('foodMap.places.length') === 1);
+const zAlias = JSON.parse(w.eval(`JSON.stringify(fmMerge([{name:'동일상호',placeId:'B',url:'https://www.google.com/maps/place/y/?cid=222'}],'재가져오기'))`));
+t('삭제된 쪽 placeId로 재수입해도 갱신으로 처리됨(새 레코드 안 생김)', zAlias.added === 0 && zAlias.updated === 1);
+t('재수입 후에도 여전히 1곳(재현된 버그 수정 확인)', w.eval('foodMap.places.length') === 1);
+/* 진짜 충돌(별칭이 아닌, 전혀 다른 placeId)은 여전히 자동 병합 거부 */
+w.eval("foodMap.places=[{id:'rC',name:'동일상호2',placeId:'X',url:'',address:'',sourceLists:[]}];save('foodmap_v1',foodMap);");
+const zConflict = JSON.parse(w.eval(`JSON.stringify(fmMerge([{name:'동일상호2',placeId:'Y'}],'다른곳'))`));
+t('별칭이 아닌 진짜 다른 placeId는 여전히 충돌로 처리(자동 병합 안 함)', zConflict.added === 1 && zConflict.updated === 0);
+t('진짜 충돌은 후보로도 안 묶임', w.eval('foodMap.places.length') === 2);
+
+/* ── 10. 식별자 없는 동일 파일 반복 가져오기 — 레코드가 계속 안 늘어야
+   한다(2026-09-09 코드 검토 2차 — "질문을 안 반복"과 "레코드가 안 늚"은
+   다르다). ── */
+w.eval("foodMap.places=[];");
+const noIdRow = { name: '흔한이름집', address: '', url: '' };
+w.eval(`fmMerge([${JSON.stringify(noIdRow)}],'같은파일')`);
+t('첫 수입: 1곳 추가', w.eval('foodMap.places.length') === 1);
+const zRepeat1 = JSON.parse(w.eval(`JSON.stringify(fmMerge([${JSON.stringify(noIdRow)}],'같은파일'))`));
+t('같은 출처에서 같은 내용 반복 수입은 갱신으로 처리(added=0)', zRepeat1.added === 0 && zRepeat1.updated === 1);
+t('반복 수입해도 레코드 수가 안 늚(질문만 숨긴 게 아니라 실제로 안 늚)', w.eval('foodMap.places.length') === 1);
+const zRepeat2 = JSON.parse(w.eval(`JSON.stringify(fmMerge([${JSON.stringify(noIdRow)}],'같은파일'))`));
+t('세 번째 반복도 마찬가지', zRepeat2.added === 0 && w.eval('foodMap.places.length') === 1);
+/* 다른 출처에서 같은 이름이 오면(진짜 다른 곳일 수 있으니) 여전히 후보로 남김 */
+const zOtherSource = JSON.parse(w.eval(`JSON.stringify(fmMerge([${JSON.stringify(noIdRow)}],'다른파일'))`));
+t('다른 출처에서 온 동일 이름은 여전히 후보로 남김(자동 병합 아님)', zOtherSource.added === 1 && zOtherSource.dupCandidates === 1);
+
 t('최종 런타임 오류 0', errs.length === 0);
 if (errs.length) console.log('  ', errs.slice(0, 5));
 console.log(fail ? ('\n실패 ' + fail + '건') : '\n전체 통과');

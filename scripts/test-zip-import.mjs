@@ -70,6 +70,26 @@ const bigZip = makeZip('big.zip', {
   'Takeout/Saved/거대한파일.csv': '제목,메모,URL,태그,댓글\n' + bigRow.repeat(40), // 약 40MB — 기본 상한(30MB) 초과
 });
 
+// 1-c) 2026-09-09 코드 검토(2차) 재현된 문제: 계정 전체 Takeout ZIP
+// 안에는 Gmail·캘린더 등 다른 서비스의 csv/json도 들어 있을 수 있다.
+// 파일명이 review를 안 담고 확장자가 csv/json이기만 하면 예전 코드는
+// 전부 압축을 풀어버렸다 — 실제로는 "Saved/지도(내 장소)" 폴더 밖에
+// 있는 파일은 아예 압축을 풀면 안 된다.
+const otherServicesZip = makeZip('other-services.zip', {
+  'Takeout/Saved/기본 목록.csv': '제목,메모,URL,태그,댓글\n실제 저장 장소,,,,\n',
+  'Takeout/Calendar/내 캘린더.json': JSON.stringify({ summary: '개인 일정', events: [{ title: '치과 예약' }] }),
+  'Takeout/Gmail/all_mail.json': JSON.stringify({ subject: '주문 확인', body: '결제가 완료됐습니다' }),
+});
+
+// 1-d) 2026-09-09 코드 검토(2차): 개별 항목 상한(30MB)보다 작은 항목을
+// 여러 개 넣어 "합"이 전체 압축해제량 상한(기본 200MB)을 넘기는 경우도
+// 걸러야 한다 — 테스트에서만 상한을 작게 낮춰 확인한다.
+const midRow = '가게,' + 'y'.repeat(1024 * 200) + ',,,\n'; // 항목 하나당 약 200KB
+const totalCapZip = makeZip('totalcap.zip', {
+  'Takeout/Saved/A.csv': '제목,메모,URL,태그,댓글\n' + midRow.repeat(3), // 약 600KB
+  'Takeout/Saved/B.csv': '제목,메모,URL,태그,댓글\n' + midRow.repeat(3), // 약 600KB
+});
+
 // 2) 손상된 ZIP(그냥 텍스트 파일에 .zip 확장자만 붙임).
 const corruptZip = path.join(tmp, 'corrupt.zip');
 fs.writeFileSync(corruptZip, 'this is not a real zip file at all');
@@ -123,6 +143,54 @@ t('정상 크기 파일은 처리됨(용량 제한과 무관)', /1\s*새로 추�
 t('너무 큰 항목은 압축 해제 전에 걸러지고 이유가 표시됨(브라우저 멈춤 방지)', fileListBig.includes('거대한파일') && fileListBig.includes('제외'));
 await p.evaluate(() => document.getElementById('close').click());
 await p.waitForTimeout(200);
+
+// --- 2026-09-09 코드 검토(2차) 재현된 문제: 계정 전체 Takeout ZIP 안의
+// 다른 서비스(캘린더·Gmail) csv/json이 경로 기준으로 걸러지는지 ---
+await p.click('[data-add]');
+const [fcOther] = await Promise.all([p.waitForEvent('filechooser'), p.click('#realFileBtn')]);
+await fcOther.setFiles(otherServicesZip);
+await p.waitForTimeout(1200);
+const summaryOther = (await p.textContent('.import-summary').catch(() => '')).replace(/\s+/g, ' ');
+const fileListOther = await p.textContent('.import-filelist').catch(() => '');
+t('Saved 폴더 안 파일만 실제로 반영됨(1곳)', /1\s*새로 추가/.test(summaryOther));
+t('다른 서비스(캘린더) 파일은 경로 기준으로 제외되고 이유가 표시됨', fileListOther.includes('내 캘린더') && fileListOther.includes('제외'));
+t('다른 서비스(Gmail) 파일도 경로 기준으로 제외됨', fileListOther.includes('all_mail') && fileListOther.includes('제외'));
+const placesAfterOther = await p.evaluate(() => foodMap.places.map((x) => x.name));
+t('캘린더·Gmail 내용이 장소로 잘못 들어가지 않음', !placesAfterOther.includes('개인 일정') && !placesAfterOther.includes('주문 확인'));
+await p.evaluate(() => document.getElementById('close').click());
+await p.waitForTimeout(200);
+
+// --- 전체 압축해제량 상한 — 화면 기본값(200MB)으로는 테스트 zip이
+// 너무 작아 안 걸리므로, window.ZipImport.parseZip을 낮은 상한으로
+// 직접 불러 확인한다. ---
+const totalCapCheck = await p.evaluate(async (b64) => {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const file = new File([bytes], 'totalcap.zip', { type: 'application/zip' });
+  return window.ZipImport.parseZip(file, { maxTotalBytes: 700 * 1024 }); // 700KB 상한 — 두 항목 다는 못 들어감
+}, fs.readFileSync(totalCapZip).toString('base64'));
+t('전체 압축해제량 상한을 낮게 주면 두 항목을 다 받지 않고 일부만 반영', totalCapCheck.files.length === 1);
+t('상한 초과로 못 받은 항목은 total-size-exceeded 이유로 남음', totalCapCheck.skipped.some((s) => s.reason === 'total-size-exceeded'));
+
+// --- 시간 예산이 이미 지난 상태(음수)로 주면 첫 항목부터 시간 초과로
+// 처리돼야 한다 — "결과만 포기"가 아니라 새 항목의 압축 해제 자체를
+// 시작하지 않는지 확인한다(0ms는 실제 파싱이 1ms 미만에 끝나 마감이
+// 지났는지 판정이 타이밍에 좌우될 수 있어, 확실히 지난 마감을 준다).
+// 돌던 작업이 물리적으로 멈췄는지는 브라우저 계측 없이는 못 보지만,
+// 최소한 그 이후 항목이 전혀 새로 반영되지 않는다는 관찰 가능한
+// 결과로 확인한다. ---
+const timeoutCheck = await p.evaluate(async (b64) => {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const file = new File([bytes], 'normal.zip', { type: 'application/zip' });
+  return window.ZipImport.parseZip(file, { timeoutMs: -60000 });
+}, fs.readFileSync(normalZip).toString('base64'));
+// normalZip에는 리뷰 파일도 하나 있어 그건 'review-file' 사유로 먼저
+// 걸러진다 — "그 외 정상 후보였을 항목"이 timeout 사유로 남는지만 본다.
+t('시간 예산이 이미 지났으면 새 항목을 하나도 안 받음', timeoutCheck.files.length === 0);
+t('정상 후보였을 항목은 timeout 사유로 남음(다른 사유로 어차피 제외될 항목은 그 사유 유지)', timeoutCheck.skipped.some((s) => s.reason === 'timeout') && timeoutCheck.skipped.some((s) => s.reason === 'review-file'));
 
 // --- 손상된 ZIP ---
 await p.click('[data-add]');
