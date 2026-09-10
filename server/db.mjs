@@ -173,6 +173,18 @@ function migrate(d) {
       created_at TEXT NOT NULL
     );
 
+    /* weather_cache: 2026-09-10 재검토(7차) 4절 — 착장 판단용 날씨 카드.
+       같은 지역(위경도를 약 1km 단위로 반올림한 값)의 날씨는 이 지역을
+       고른 모든 사용자가 공유해서 캐시한다("도시를 고를 때마다 매번
+       호출" 방지 — weather.mjs의 regionKey 참고). lookup_cache와 표를
+       분리한 이유는 TTL 정책이 다르기 때문이다(장소조회는 짧은 중복
+       클릭만 줄이면 되고, 날씨는 자연 갱신 주기에 맞춰 더 길게 둔다). */
+    CREATE TABLE IF NOT EXISTS weather_cache (
+      region_key TEXT PRIMARY KEY,
+      data TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
     /* login_attempts: 코드 검증 실패 횟수를 세어 일정 횟수 넘으면 잠깐
        잠근다(무한 추측 방지 — rate_counters의 "요청 쿨다운"과는 다른
        문제라 별도 표로 둔다). */

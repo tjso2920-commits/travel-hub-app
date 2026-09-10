@@ -82,6 +82,24 @@
 | `ROUTING_ADAPTER` | `google` |
 | `GOOGLE_ROUTES_API_KEY` | Google Cloud Console에서 발급한 키(Places 키와 같은 프로젝트여도 되고 달라도 됨 — Routes API가 활성화돼 있어야 함) |
 
+### 1-5b. 착장 판단용 날씨(WeatherAPI.com) — 7차 신규
+
+| 환경변수 | 값 |
+|---|---|
+| `WEATHER_API_KEY` | WeatherAPI.com에서 발급한 키(무료 등급으로 충분 — 공식 가격표
+  https://www.weatherapi.com/pricing.aspx 확인: 상업적 사용 허용, 월
+  100,000회, 현재 날씨+3일 예보 포함, https://www.weatherapi.com/docs/) |
+
+이 키가 없어도 서버는 정상 시작된다(결제·이메일과 달리 **부팅을 막는
+필수값이 아니다** — 날씨는 코스·동선 기능에 얹는 부가 기능이라, 키가
+없으면 그냥 날씨 카드만 "일시적으로 이용할 수 없어요"로 뜬다). 다만
+소비자에게 날씨 카드를 실제로 보여주려면 이 키를 넣어야 한다.
+
+**소비자에게 절대 이 키를 입력하라고 요구하지 않는다** — 서버가 키를
+들고 있고, 클라이언트(`src/design/weather-card.js`)는 좌표만 서버에
+보낸다(Google Places/Routes 키와 같은 원칙). 이 공급자와 유료 계약을
+새로 맺지 않는다 — 무료 등급 그대로 쓴다.
+
 ### 1-6. 운영 모드 전환(항상 맨 마지막)
 
 | 환경변수 | 값 | 주의 |
@@ -122,6 +140,7 @@ EMAIL_ADAPTER=resend EMAIL_API_KEY=re_xxx EMAIL_FROM=noreply@yourdomain.com \
 PAYMENT_ADAPTER=toss TOSS_CLIENT_KEY=live_ck_xxx PAYMENT_PG_SECRET=live_sk_xxx PAYMENT_WEBHOOK_SECRET=whsec_xxx \
 PLACE_LOOKUP_ADAPTER=google GOOGLE_PLACES_API_KEY=xxx \
 ROUTING_ADAPTER=google GOOGLE_ROUTES_API_KEY=xxx \
+WEATHER_API_KEY=xxx \
 node server/index.mjs
 ```
 
@@ -153,8 +172,13 @@ node server/index.mjs
    대시보드에 그 거래가 실제로 찍히는지, 이 계정이 실제로
    `paid`(유료)로 바뀌는지 확인한다. 그 뒤 **테스트 결제라면 반드시
    토스페이먼츠 쪽에서 취소 처리**한다(실제 돈이 오갔다면).
+5. **날씨(7차 신규)** — "오늘 동선" 화면을 열어 맨 위 날씨 카드가
+   "테스트 데이터(예시)"가 아니라 "WeatherAPI.com 제공"으로 뜨는지,
+   실제 그 도시의 실제 기온·날씨로 보이는지 확인한다. 카드 하단의
+   "몇 시 기준" 표시가 실제 현재 시각과 크게 어긋나지 않는지도 함께
+   본다(너무 오래된 값이면 `stale` 문구가 같이 뜬다).
 
-이 네 가지를 실제 아이폰(Safari)에서도 한 번씩 해 보는 걸 권장한다 —
+이 다섯 가지를 실제 아이폰(Safari)에서도 한 번씩 해 보는 걸 권장한다 —
 이 세션은 실제 iPhone 기기에서 확인한 적이 없다(`docs/RELEASE_STATUS.md`
 2-3절).
 

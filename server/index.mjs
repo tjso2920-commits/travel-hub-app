@@ -37,6 +37,7 @@ import { getVisits, markVisited, unmarkVisited, setWantRevisit, setNotes, syncVi
 import { suggestNextTripPlaces } from './routes/next-trip-suggestions.mjs';
 import { usageSummaryForAccount } from './entitlement-usage.mjs';
 import { getVerifiedStatus } from './status.mjs';
+import { weatherRoute } from './routes/weather.mjs';
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -268,6 +269,14 @@ async function handle(req, res) {
       const accountId = requireAccount(req, res); if (!accountId) return;
       const body = JSON.parse((await readBody(req)) || '{}');
       const result = await lookupPlacesBatchRoute(accountId, body.items);
+      return sendJson(res, result.status, result);
+    }
+
+    // 착장 판단용 날씨(2026-09-10 재검토 7차 4절) — 로그인 불필요(무료
+    // 사용자도 볼 수 있어야 하고, 위치확인·코스생성 이용권/비용과 전혀
+    // 무관하다 — requireAccount를 일부러 안 부른다).
+    if (req.method === 'GET' && pathname === '/api/weather') {
+      const result = await weatherRoute(url.searchParams.get('lat'), url.searchParams.get('lng'), url.searchParams.get('tz'));
       return sendJson(res, result.status, result);
     }
 

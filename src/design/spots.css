@@ -29,6 +29,23 @@ nav button{font-weight:500;font-size:13px;letter-spacing:-.025em}
 .import .import-cta{font-size:14px;width:auto;height:auto;min-height:44px;padding:10px 15px;border-radius:25px;white-space:nowrap;margin-left:10px}
 .city-options{margin:22px 0}.city-option{display:flex;align-items:center;gap:13px;text-align:left;width:100%;padding:16px 12px;background:#fffefa;border:1px solid #e8ece5;border-radius:18px;margin:10px 0}.city-option.chosen{background:#e9f1ef;border-color:#90b9b9}.city-initial{display:grid;place-items:center;width:44px;height:44px;border-radius:15px;background:#e3eeec;color:#569294;font-size:19px}.city-option b{font-weight:500;font-size:16px}.city-option small{margin:2px 0 0}.city-check{margin-left:auto;color:var(--blue);font-size:22px}.inline-note{background:#edf1eb;border-radius:15px;padding:15px;color:#728b86;font-size:14px;line-height:1.7}.import-filelist{margin:14px 0;max-height:220px;overflow-y:auto;border:1px solid #e8ece5;border-radius:14px;padding:4px}.import-file{font-size:12.5px;padding:8px 10px;border-radius:9px;line-height:1.5}.import-file.ok{color:#4d8a6a}.import-file.bad{color:#b45050;background:#fbecec}.import-file.skip{color:#9aa4a2}
 .flow-tag{display:inline-block;border-radius:20px;background:#e5efee;color:#568e90;padding:4px 10px;font-size:12px}.file-surface{margin:23px 0 15px;padding:22px 15px;border:1.5px dashed #b9ceca;border-radius:22px;display:flex;flex-direction:column;align-items:center;gap:8px;background:#f0f4ee}.file-symbol{color:var(--blue);font-size:28px}.file-surface b{font-weight:500;font-size:16px}.file-surface>span:not(.file-symbol){font-size:13px;color:#8b9d98}.file-surface .not-ready{border-radius:15px;background:white;padding:3px 10px}.import-flow>small{line-height:1.7}.import-help{margin-top:22px;border-top:1px solid #e1e7df;padding-top:17px;font-size:14px}.import-help summary{cursor:pointer;color:#5e7e84;min-height:32px}.import-help ol{padding-left:23px;color:#839590;line-height:1.9}.import-help p{line-height:1.7}.import-summary{display:flex;justify-content:space-between;text-align:center;background:#eaf1ed;padding:20px 13px;border-radius:20px;margin:22px 0}.import-summary span{font-size:12px;color:#80958f}.import-summary b{display:block;color:var(--blue);font-size:28px;font-weight:600}.detail .legacy-import{font-size:13px;text-align:center;background:transparent;text-decoration:underline;color:#829992}
+/* 착장 판단용 날씨 카드(2026-09-10 재검토 7차 4절) — .route-row·
+   .inline-note와 같은 톤(흰 카드, 부드러운 그림자, 파랑/청록 포인트)을 그대로 따른다. */
+.weather-card{background:white;border-radius:18px;padding:16px 18px;margin:0 0 18px;box-shadow:0 3px 14px #354f5010;border:1px solid #eef1ec}
+.weather-top{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+.weather-top b{font-size:13px;color:#5e7e84;font-weight:600;letter-spacing:-.2px}
+.weather-sub{font-size:12px;color:#9aa8a6}
+.weather-main{display:flex;align-items:baseline;gap:10px;margin-top:8px}
+.weather-temp{font:700 34px 'Nunito Sans',sans-serif;color:var(--ink)}
+.weather-feels{font-size:13px;color:#8b9c9b}
+.weather-range{font-size:13px;color:#7c8585;margin:6px 0 0}
+.weather-hourly{display:flex;gap:10px;overflow-x:auto;margin-top:10px;padding-bottom:2px;scrollbar-width:none}
+.weather-hour{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:11px;color:#8b9c9b;min-width:46px;flex-shrink:0}
+.weather-hour b{font-size:12px;color:var(--blue);font-weight:600}
+.weather-hour i{font-style:normal;color:#8b9c9b}
+.weather-note{font-size:13px;color:#728b86;margin:10px 0 0;line-height:1.6}
+.weather-note.weather-stale{color:#a97a4f}
+.weather-source{display:block;font-size:11px;color:#a3b0ae;margin-top:8px}
 
 /* ── 기능 통합 추가분 ──────────────────────────────────────────────────
    승인 디자인에는 "사진 없음" 상태가 없었다(샘플은 전부 사진이 있었으므로).

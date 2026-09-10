@@ -71,6 +71,12 @@ export function buildConfig(env) {
   const hasPaymentSecret = !!env.PAYMENT_PG_SECRET;
   const hasTossClientKey = !!env.TOSS_CLIENT_KEY;
   const hasEmailKey = !!env.EMAIL_API_KEY;
+  // 2026-09-10 재검토(7차) 4절 — 착장 판단용 날씨 카드. 날씨는 장소조회·
+  // 결제·이메일과 달리 "이게 없으면 서비스 자체가 의미 없는" 핵심
+  // 기능이 아니다(코스·동선 기능이 먼저고, 날씨는 비동기로 얹는
+  // 부가 기능) — 그래서 운영에서도 키가 없으면 서버 시작을 막지 않고
+  // 그냥 'unavailable'로만 둔다(routing/placeLookup과 같은 원칙).
+  const hasWeatherKey = !!env.WEATHER_API_KEY;
   const webhookSecretIsDefault = !env.PAYMENT_WEBHOOK_SECRET || env.PAYMENT_WEBHOOK_SECRET === 'test-webhook-secret-not-for-production';
 
   let services;
@@ -82,6 +88,7 @@ export function buildConfig(env) {
       routing: hasRoutesKey ? 'real' : 'unavailable',
       payment: hasPaymentSecret && hasTossClientKey ? 'real' : 'unavailable',
       email: hasEmailKey ? 'real' : 'unavailable',
+      weather: hasWeatherKey ? 'real' : 'unavailable',
     };
   } else {
     services = {
@@ -89,6 +96,7 @@ export function buildConfig(env) {
       routing: serviceModeDev(forceTest, hasRoutesKey, env.ROUTING_ADAPTER),
       payment: serviceModeDev(forceTest, hasPaymentSecret && hasTossClientKey, env.PAYMENT_ADAPTER),
       email: serviceModeDev(forceTest, hasEmailKey, env.EMAIL_ADAPTER),
+      weather: serviceModeDev(forceTest, hasWeatherKey, env.WEATHER_ADAPTER),
     };
   }
 
@@ -294,6 +302,25 @@ export function buildConfig(env) {
       routesKey: env.GOOGLE_ROUTES_API_KEY || '',
       routesApiBase: env.GOOGLE_ROUTES_API_BASE || 'https://routes.googleapis.com',
     },
+    // 2026-09-10 재검토(7차) 4절 — 착장 판단용 날씨 카드. WeatherAPI.com
+    // 무료 등급(공식 가격표 확인 — https://www.weatherapi.com/pricing.aspx:
+    // 상업적 사용 허용, 월 100,000회, 현재 날씨+3일 예보 포함,
+    // https://www.weatherapi.com/docs/). 서버가 키를 들고 있고,
+    // 소비자는 절대 키를 입력하지 않는다(placesKey/routesKey와 같은 원칙).
+    weather: {
+      apiKey: env.WEATHER_API_KEY || '',
+      apiBase: env.WEATHER_API_BASE || 'https://api.weatherapi.com/v1',
+    },
+    // 같은 지역(위경도를 대략 1km 단위로 반올림)의 날씨는 여러 사용자가
+    // 공유해서 캐시한다 — "도시 하나 고를 때마다 매번 호출" 방지. 현재
+    // 날씨는 자연 갱신 주기가 짧아(대체로 수십 분 단위) 너무 길게
+    // 캐시하면 오래된 값을 최신인 것처럼 보여주는 위험이 있고, 너무
+    // 짧으면 호출이 과도하다 — 25분으로 절충(제안값, 확정 아님).
+    weatherCacheTtlMs: Number(env.WEATHER_CACHE_TTL_MS || 25 * 60 * 1000),
+    // 서비스 전체 하루 호출 상한(무료 등급 월 100,000회 ÷ 30일 ≈
+    // 3,333회/일 — 지역 캐시 공유로 실제 호출은 이보다 훨씬 적게
+    // 나가겠지만, 안전하게 그보다 낮게 잡는다).
+    weatherGlobalDailyCap: Number(env.WEATHER_GLOBAL_DAILY_CAP || 2000),
     expectedCurrency: env.PAYMENT_EXPECTED_CURRENCY || 'KRW',
   };
 }
