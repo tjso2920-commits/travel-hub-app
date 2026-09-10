@@ -193,6 +193,13 @@ export function buildConfig(env) {
     // 더 둘 수 있게).
     paymentLockTimeoutSeconds: Number(env.PAYMENT_LOCK_TIMEOUT_SECONDS || 60),
 
+    // 2026-09-10 재검토(8차) 2절 — 장소 확인 잠정 예약(reserve→finalize
+    // 사이)도 서버가 그 사이에 죽으면 회수돼야 한다(같은 이유:
+    // generation_locks/payment_locks와 동일한 잠금 만료 패턴). 외부
+    // 장소조회는 코스 생성보다 훨씬 빨리 끝나는 게 정상이라 기본값을
+    // 짧게 잡았다.
+    entitlementReservationTimeoutSeconds: Number(env.ENTITLEMENT_RESERVATION_TIMEOUT_SECONDS || 60),
+
     // 코스 생성 입력 상한 — 서버가 좌표 범위·개수·시간 예산을 검증한다
     // (2026-09-10 재검토(4차) 지시). Google Routes의 중간 경유지 상한
     // (아래 routes 절)과는 별개로, 애초에 "여행 하루 코스"라는 상식적

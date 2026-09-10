@@ -138,11 +138,17 @@ async function runOneLookup(accountId, query, expectedArea, placeId) {
   if (!reservation.ok) {
     return { ok: false, status: 402, reason: reservation.reason, used: reservation.used, limit: reservation.limit };
   }
+  // 2026-09-10 재검토(8차) 2절 — finalize는 이제 결과를 돌려준다.
+  // 외부 호출(또는 캐시 재사용)이 성공했더라도, finalize가
+  // ok:false(진짜 신규인데 한도 초과)를 돌려주면 그 성공을 그대로
+  // 고객에게 넘기면 안 된다 — 실패(402)로 바꿔서 응답해야 한다.
   const finalize = (result) => finalizePlaceLookupResult(accountId, placeId, reservation, result);
+  const asFinalizeFailure = (fin) => ({ ok: false, status: 402, reason: fin.reason, used: fin.used, limit: fin.limit });
 
   const cached = cacheGet(cacheKey);
   if (cached) {
-    finalize(cached);
+    const fin = finalize(cached);
+    if (!fin.ok) return asFinalizeFailure(fin);
     return { ok: true, result: cached, cached: true };
   }
 
@@ -152,8 +158,9 @@ async function runOneLookup(accountId, query, expectedArea, placeId) {
   const existing = inFlightLookups.get(cacheKey);
   if (existing) {
     const outcome = await existing;
-    finalize(outcome.ok ? outcome.result : { ok: false });
+    const fin = finalize(outcome.ok ? outcome.result : { ok: false });
     if (!outcome.ok) return outcome; // 비용 한도 등으로 실패한 결과도 그대로 공유
+    if (!fin.ok) return asFinalizeFailure(fin);
     return { ok: true, result: outcome.result, cached: true, deduped: true };
   }
 
@@ -186,7 +193,8 @@ async function runOneLookup(accountId, query, expectedArea, placeId) {
   inFlightLookups.set(cacheKey, promise);
   try {
     const outcome = await promise;
-    finalize(outcome.ok ? outcome.result : { ok: false });
+    const fin = finalize(outcome.ok ? outcome.result : { ok: false });
+    if (outcome.ok && !fin.ok) return asFinalizeFailure(fin);
     return outcome;
   } finally {
     inFlightLookups.delete(cacheKey);

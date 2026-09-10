@@ -365,6 +365,24 @@ function migrate(d) {
       updated_at TEXT NOT NULL,
       PRIMARY KEY (account_id, local_place_id)
     );
+    /* entitlement_place_reservations: 2026-09-10 재검토(8차) 2절 —
+       reservePlaceLookupSlot이 사용량을 잠정으로 +1 한 순간부터
+       finalizePlaceLookupResult(성공/실패 어느 쪽이든)가 그 잠정 상태를
+       해소할 때까지의 "진행 중" 표시. 이 행이 남아 있다는 것 자체가
+       "아직 최종 판정이 안 끝났다"는 뜻이다. 서버 프로세스가 외부 호출
+       도중 죽으면 이 행만 영원히 남고 사용량 +1은 절대 안 풀린다 —
+       generation_locks/payment_locks와 같은 이유로 만료 회수가
+       필요하다(락처럼 소유권 다툼이 있는 자원은 아니라 job_id 없이
+       예약 자체의 존재 여부·나이만으로 판단한다). */
+    CREATE TABLE IF NOT EXISTS entitlement_place_reservations (
+      reservation_id TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL REFERENCES accounts(id),
+      period_id TEXT NOT NULL,
+      local_place_id TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_entitlement_place_reservations_account
+      ON entitlement_place_reservations(account_id);
   `);
 
   migrateLegacyCoursesIntoTrips(d);
