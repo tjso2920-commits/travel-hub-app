@@ -781,7 +781,7 @@ function showRoute() {
   // 2026-09-10 재검토(7차) 4절 — 착장 판단용 날씨 카드를 화면 맨 위에
   // 얹는다. 코스·동선 기능(메인 내용)을 먼저 그린 뒤 날씨는 비동기로
   // 채운다(loadWeatherCard는 await 안 함 — 늦어도 화면 사용에 지장 없음).
-  open(city + ' · 오늘 동선', `${window.WeatherCard.skeletonHTML(city)}<div class="detail"><h2>오늘은 이곳으로.</h2>${tripBlockHTML(city)}<p>${list.length ? '담아 둔 ' + list.length + '곳을 확인하세요.' : '마음에 드는 장소를 먼저 골라보세요.'}</p>${carryBlock}${list.map((p, i) => `<div class="route-row"><span>${i + 1}</span>${photoHTML(p, '')}<div><b>${A.esc(p.name)}</b><p>${A.esc(p.area)}</p></div><button data-remove="${p.id}" aria-label="${A.esc(p.name)} 동선에서 빼기">×</button></div>`).join('')}${needLookupList.length ? `<button class="text-button" data-batch-lookup>위치 미확인 ${needLookupList.length}곳 한번에 확인하기 ↗</button>` : ''}${list.length ? '<button class="primary" data-build-course>코스 만들기 ↗</button>' : ''}<button class="text-button" data-dismiss>스팟 더 고르기</button></div>`);
+  open(city + ' · 오늘 동선', `${window.WeatherCard.skeletonHTML(city)}${window.StreetVideo.buttonHTML(city)}<div class="detail"><h2>오늘은 이곳으로.</h2>${tripBlockHTML(city)}<p>${list.length ? '담아 둔 ' + list.length + '곳을 확인하세요.' : '마음에 드는 장소를 먼저 골라보세요.'}</p>${carryBlock}${list.map((p, i) => `<div class="route-row"><span>${i + 1}</span>${photoHTML(p, '')}<div><b>${A.esc(p.name)}</b><p>${A.esc(p.area)}</p></div><button data-remove="${p.id}" aria-label="${A.esc(p.name)} 동선에서 빼기">×</button></div>`).join('')}${needLookupList.length ? `<button class="text-button" data-batch-lookup>위치 미확인 ${needLookupList.length}곳 한번에 확인하기 ↗</button>` : ''}${list.length ? '<button class="primary" data-build-course>코스 만들기 ↗</button>' : ''}<button class="text-button" data-dismiss>스팟 더 고르기</button></div>`);
   window.WeatherCard.loadWeatherCard(A, city, spots);
 }
 
@@ -1274,7 +1274,7 @@ function showSavedCourse() {
   const timeList = excluded.filter((p) => reasons[p.id] === 'time-budget');
   const totalKm = (c.totalMeters / 1000).toFixed(1);
   const hours = Math.floor(c.walkTotal / 60), mins = c.walkTotal % 60;
-  open('오늘의 코스', `${window.WeatherCard.skeletonHTML(city)}<div class="detail">${dayTabsHTML(c)}${tripBlockHTML(city)}<h2>${c.stops.length}곳 · 도보 이동 ${hours ? hours + '시간 ' : ''}${mins}분</h2>` +
+  open('오늘의 코스', `${window.WeatherCard.skeletonHTML(city)}${window.StreetVideo.buttonHTML(city)}<div class="detail">${dayTabsHTML(c)}${tripBlockHTML(city)}<h2>${c.stops.length}곳 · 도보 이동 ${hours ? hours + '시간 ' : ''}${mins}분</h2>` +
     `<p>${c.routedReal ? '실제 도보 경로 기준으로 계산했습니다.' : '실제 경로 연결에 실패해 직선거리 기준으로 추정했습니다(실제와 다를 수 있어요).'} 총 이동 거리 약 ${totalKm}km · 마지막 장소 도착 예정 ${window.CourseGen.clockLabel(c.endAt - (c.stops[c.stops.length - 1] ? c.stops[c.stops.length - 1].dwell : 0))}</p>` +
     stopViews +
     (noCoordsList.length ? `<div class="inline-note">좌표가 없어 이번 코스 계산에서 빠진 곳 ${noCoordsList.length}곳: ${noCoordsList.map((p) => A.esc(p.name)).join(', ')}. 위치를 확인하면 다음 코스에 포함할 수 있어요.</div>` : '') +
@@ -1563,6 +1563,11 @@ $('#sheetContent').onclick = (e) => {
     const el = document.getElementById('visitNotes_' + notesId);
     return visitAction(notesId, 'notes', el ? el.value : '');
   }
+  // 2026-09-10 재검토(8차) 4절 — 현지 거리·옷차림 영상. 클릭했을 때만
+  // 공식 플레이어를 실제로 불러온다(street-video.js의 openPanel 참고 —
+  // 그 전까지 이 버튼은 그냥 정적 텍스트일 뿐 iframe도 스크립트도 없다).
+  if (b.dataset.streetVideoOpen) return window.StreetVideo.openPanel(b.dataset.streetVideoOpen);
+  if (b.hasAttribute('data-street-video-close')) return window.StreetVideo.closePanel();
 };
 function resolveDup(aId, bId, action) {
   const result = A.resolveDup(foodMap.places, aId, bId, action);

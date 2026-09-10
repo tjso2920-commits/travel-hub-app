@@ -46,6 +46,15 @@ nav button{font-weight:500;font-size:13px;letter-spacing:-.025em}
 .weather-note{font-size:13px;color:#728b86;margin:10px 0 0;line-height:1.6}
 .weather-note.weather-stale{color:#a97a4f}
 .weather-source{display:block;font-size:11px;color:#a3b0ae;margin-top:8px}
+/* 현지 거리 · 옷차림 보기(2026-09-10 재검토 8차 4절) — 날씨 카드와 같은
+   톤. 버튼은 클릭 전엔 그냥 텍스트일 뿐 iframe·스크립트를 전혀 안 만든다. */
+.street-video-button{display:block;width:100%;text-align:left;background:white;border-radius:18px;padding:14px 18px;margin:0 0 18px;box-shadow:0 3px 14px #354f5010;border:1px solid #eef1ec;font-size:14px;color:var(--blue);font-weight:600}
+.street-video-panel{background:white;border-radius:18px;padding:16px 18px;margin:-8px 0 18px;box-shadow:0 3px 14px #354f5010;border:1px solid #eef1ec}
+.street-video-frame-wrap{position:relative;width:100%;aspect-ratio:16/9;border-radius:12px;overflow:hidden;background:#0c1a1c}
+.street-video-frame-wrap iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+.street-video-original-link{display:inline-block;color:var(--blue);font-size:14px;text-decoration:underline;margin-top:6px}
+.street-video-meta{color:#7c8585}
+.street-video-disclaimer{color:#9aa8a6;font-size:12px}
 
 /* ── 기능 통합 추가분 ──────────────────────────────────────────────────
    승인 디자인에는 "사진 없음" 상태가 없었다(샘플은 전부 사진이 있었으므로).
