@@ -30,6 +30,16 @@ if (usingSample) { spots = SAMPLE_SPOTS; cities = SAMPLE_CITIES; }
 let city = cities[0] ? cities[0].name : '';
 let filter = '전체', visitFilter = '전체', selected = new Set(), route = new Set(), selecting = false;
 
+/* 2026-09-10 재검토(7차) — "계정 전환 후 늦게 도착한 응답이 다른 계정
+   화면에 섞이지 않게 하라"는 지시. 로그인·로그아웃마다 1씩 올리는
+   세대(epoch) 번호를 둔다 — daSyncPush/daSyncPullAndMerge처럼 서버
+   응답을 나중에 foodMap에 반영하는 비동기 함수는, 응답이 도착한
+   시점의 세대가 요청을 보낼 때의 세대와 다르면(그 사이 로그아웃하고
+   다른 계정으로 로그인했다는 뜻) 그 응답을 그냥 버린다 — 이미 화면에
+   떠 있는 다른 계정의 데이터를 늦게 도착한 이전 계정 응답이 덮어쓰는
+   사고를 막는다. */
+let sessionEpoch = 0;
+
 /* 2026-09-09 코드 검토 — 로드맵 ⑨(구매 흐름)·⑩(측정). 측정은 절대
    화면 동작을 막으면 안 된다(analytics.js가 아직 안 붙었거나 서버가
    없어도 앱은 그대로 써야 한다) — 그래서 존재 여부를 매번 확인하고
@@ -58,32 +68,86 @@ daTrackSafe('channel_inflow', { channel: window.Analytics ? window.Analytics.cla
    보내면 버전 보호 없이 통째로 덮어써져 R5-7이 막으려던 문제가 그대로
    재발한다) — tripId가 있는 코스는 /api/trips/sync의 courses 필드로만
    보낸다(trips.mjs의 syncTrips가 날짜별 upsert로 보수적으로 병합). */
+/* 2026-09-10 재검토(7차) — "/api/places 전체치환으로 오래된 기기가
+   최신 수정을 덮어쓰는 문제"를 실제로 고쳤다(account-data.mjs의
+   syncPlaces 참고 — 버전 비교+보수적 병합, 삭제는 배열에 없다고
+   추측하지 않고 foodMap.deletedPlaceIds로 명시한 것만 지운다). 그리고
+   "daSyncPush가 일부 응답 실패를 확인하지 않는다"는 지적도 고쳤다 —
+   이제 각 응답의 .ok를 실제로 확인해서, 실패한 것은 로컬을 덮어쓰지도
+   않고(안 잃음) 성공한 것만 반영한다. 반환값(성공 여부)은 daLogout이
+   "동기화가 실제로 끝났는지"를 판단하는 데 쓴다. */
+let daSyncPushSeq = 0;
 async function daSyncPush(token) {
-  if (!token) return;
+  if (!token) return { placesOk: true, coursesOk: true, tripsOk: true, visitsOk: true, allOk: true };
+  const epochAtStart = sessionEpoch;
+  // 2026-09-10 재검토(7차) — daSyncPushSafe는 로컬이 바뀔 때마다 fire-
+  // and-forget으로 겹쳐 불릴 수 있다(예: 방문 표시 직후 + 곧이어 여행
+  // 만들기). 두 호출이 동시에 나가면 응답이 요청 순서와 다르게 돌아올
+  // 수 있어, 먼저 시작한(하지만 나중에 응답이 온) 낡은 호출이 그 사이
+  // 이미 최신 상태를 반영한 나중 호출의 결과를 덮어쓸 수 있다. 매
+  // 호출마다 일련번호를 매겨, 이 호출이 시작된 뒤 더 새 호출이
+  // 시작됐으면(mySeq가 더 이상 최신이 아니면) 이 응답은 적용하지 않고
+  // 버린다 — 항상 "가장 나중에 시작한 요청"의 결과만 신뢰한다.
+  const mySeq = ++daSyncPushSeq;
   const tripsPayload = (foodMap.trips || []).map((t) => ({
     ...t, courses: (foodMap.courses || []).filter((c) => c.tripId === t.tripId),
   }));
-  const [, , tripsRes, visitsRes] = await Promise.all([
-    A.api('/api/places', { method: 'PUT', token, body: { places: foodMap.places || [] } }),
+  const pendingDeletedIds = (foodMap.deletedPlaceIds || []).slice();
+  const [placesRes, coursesRes, tripsRes, visitsRes] = await Promise.all([
+    A.api('/api/places', { method: 'PUT', token, body: { places: foodMap.places || [], deletedIds: pendingDeletedIds } }),
     A.api('/api/courses', { method: 'PUT', token, body: { courses: (foodMap.courses || []).filter((c) => !c.tripId) } }),
     A.api('/api/trips/sync', { method: 'POST', token, body: { trips: tripsPayload } }),
     A.api('/api/visits/sync', { method: 'POST', token, body: { visits: foodMap.visits || [] } }),
   ]);
-  // syncTrips/syncVisits는 이 계정의 현재 전체 목록을 그대로 돌려준다
-  // (병합이 이미 서버에서 끝난 상태) — 로컬을 그 결과로 맞춘다.
-  if (tripsRes.ok && tripsRes.json && Array.isArray(tripsRes.json.trips)) foodMap.trips = tripsRes.json.trips;
-  if (visitsRes.ok && visitsRes.json && Array.isArray(visitsRes.json.visits)) foodMap.visits = visitsRes.json.visits;
+  // 응답이 오는 사이 로그아웃하고 다른 계정으로 로그인했으면(세대가
+  // 바뀌었으면) 지금 이 응답을 화면에 반영하지 않는다 — 다른 계정의
+  // 데이터를 이전 계정의 늦은 응답이 덮어쓰는 사고를 막는다.
+  if (sessionEpoch !== epochAtStart) return { placesOk: false, coursesOk: false, tripsOk: false, visitsOk: false, allOk: false, stale: true };
+  // 그 사이 더 최신 daSyncPush가 이미 시작됐으면 이 응답은 낡은 것 —
+  // 적용하지 않는다(그 최신 호출이 알아서 반영한다).
+  if (mySeq !== daSyncPushSeq) return { placesOk: false, coursesOk: false, tripsOk: false, visitsOk: false, allOk: false, stale: true };
+
+  const placesOk = !!(placesRes.ok && placesRes.json && Array.isArray(placesRes.json.places));
+  const coursesOk = !!(coursesRes.ok && coursesRes.json && Array.isArray(coursesRes.json.courses));
+  const tripsOk = !!(tripsRes.ok && tripsRes.json && Array.isArray(tripsRes.json.trips));
+  const visitsOk = !!(visitsRes.ok && visitsRes.json && Array.isArray(visitsRes.json.visits));
+  // 서버가 실제로 받아 병합한 전체 목록을 그대로 돌려준다 — 로컬을 그
+  // 결과로 맞춘다(trips/visits와 동일한 패턴). 실패한 것은 로컬을 그대로
+  // 두고(잃지 않음) 다음 daSyncPushSafe 호출 때 다시 시도된다 —
+  // deletedPlaceIds도 places 저장이 실제로 성공했을 때만 비운다(성공을
+  // 확인하기 전에 지우면, 서버에 못 들어간 삭제가 다음 저장 때 조용히
+  // 사라진다).
+  if (placesOk) {
+    foodMap.places = placesRes.json.places;
+    // 서버가 확정한 값을 그대로 받아들인 것 — 지금 이 기기에서 새로
+    // 고친 게 아니므로, 다음 저장 때 이 반영 자체를 또 하나의 수정으로
+    // 오인해 버전을 이중으로 올리지 않게 기준선을 여기서 조용히 맞춘다.
+    A.resyncPlacesBaseline(foodMap.places);
+    foodMap.deletedPlaceIds = (foodMap.deletedPlaceIds || []).filter((id) => !pendingDeletedIds.includes(id));
+  }
+  if (coursesOk) {
+    // account_courses는 tripId 없는 레거시 코스만 담당한다 — trip에
+    // 딸린 코스(foodMap.courses 중 tripId 있는 것)는 그대로 두고, 그
+    // 부분만 서버의 병합 결과로 맞춘다.
+    const tripCourses = (foodMap.courses || []).filter((c) => c.tripId);
+    foodMap.courses = [...coursesRes.json.courses, ...tripCourses];
+  }
+  if (tripsOk) foodMap.trips = tripsRes.json.trips;
+  if (visitsOk) foodMap.visits = visitsRes.json.visits;
   A.saveFoodMap(foodMap);
+  return { placesOk, coursesOk, tripsOk, visitsOk, allOk: placesOk && coursesOk && tripsOk && visitsOk };
 }
 function daSyncPushSafe() {
   const token = A.sessionToken(foodMap);
   if (token) daSyncPush(token).catch(() => {});
 }
 async function daSyncPullAndMerge(token) {
+  const epochAtStart = sessionEpoch;
   const [placesRes, coursesRes] = await Promise.all([
     A.api('/api/places', { token }),
     A.api('/api/courses', { token }),
   ]);
+  if (sessionEpoch !== epochAtStart) return; // 그 사이 로그아웃/재로그인 — 이 응답은 버린다.
   const serverPlaces = (placesRes.ok && placesRes.json && Array.isArray(placesRes.json.places)) ? placesRes.json.places : [];
   const serverCourses = (coursesRes.ok && coursesRes.json && Array.isArray(coursesRes.json.courses)) ? coursesRes.json.courses : [];
 
@@ -112,6 +176,23 @@ async function daSyncPullAndMerge(token) {
    게 아니라 "이 기기에서 로그아웃 중에는 안 보이는" 것뿐이다. */
 async function daLogout() {
   const token = A.sessionToken(foodMap);
+  if (token) {
+    // 2026-09-10 재검토(7차) — "동기화 완료 보장 없이 로컬 데이터를
+    // 지운다"는 지적 반영. 로그아웃 직전에 마지막으로 한 번 더 밀어
+    // 넣어 보고, 그게 실패하면(오프라인 등) 조용히 밀어붙이지 않고
+    // 사실대로 알린 뒤 사용자가 정말 그래도 로그아웃할지 직접 고르게
+    // 한다 — 아직 서버에 못 올라간 이 기기의 최근 변경을 실수로 잃지
+    // 않기 위해서다.
+    const result = await daSyncPush(token).catch(() => ({ allOk: false, stale: false }));
+    if (!result.allOk && !result.stale) {
+      const proceed = confirm('일부 변경사항이 아직 서버에 저장되지 못했어요(네트워크 상태를 확인해 주세요). 그래도 로그아웃하면 이 기기에 저장되지 않은 최근 변경사항을 잃을 수 있어요. 그래도 로그아웃할까요?');
+      if (!proceed) return;
+    }
+  }
+  // 지금부터 세대를 올려, 이 시점 이전에 걸려 있던 다른 비동기 응답이
+  // 나중에 도착해도 다음 화면(로그아웃 후 손님 상태 또는 다른 계정
+  // 로그인)에 반영되지 않게 막는다.
+  sessionEpoch++;
   if (token) { await A.api('/api/auth/logout', { method: 'POST', token }).catch(() => {}); }
   delete foodMap.session;
   delete foodMap.places;
@@ -120,6 +201,7 @@ async function daLogout() {
   delete foodMap.trips;
   delete foodMap.visits;
   delete foodMap.currentTripByCity;
+  delete foodMap.deletedPlaceIds;
   A.saveFoodMap(foodMap);
   foodMap = A.loadFoodMap();
   route.clear(); selected.clear(); filter = '전체';
@@ -774,6 +856,11 @@ function showLoginCodeSheet(email, onSuccess) {
       msg(r.json && r.json.reason === 'locked' ? '시도 횟수를 너무 많이 넘겨 잠시 후 다시 시도해 주세요.' : '코드가 맞지 않거나 만료됐어요. 다시 시도해 주세요.');
       return;
     }
+    // 2026-09-10 재검토(7차) — 로그인마다 세대(epoch)를 올려, 이전
+    // 계정(또는 로그인 전 손님 상태)에서 걸려 있던 늦은 응답이 지금
+    // 막 로그인한 계정 화면에 섞이지 않게 막는다(daSyncPush/
+    // daSyncPullAndMerge의 세대 확인 참고).
+    sessionEpoch++;
     foodMap.session = { token: r.json.token, email };
     A.saveFoodMap(foodMap);
     /* 2026-09-10 재검토(3차): 개인화 코스 생성 자체가 이제 로그인
@@ -1409,6 +1496,17 @@ function resolveDup(aId, bId, action) {
         delete crs.excludedReasons[from];
       }
     });
+  }
+  /* 2026-09-10 재검토(7차) — 중복 병합으로 사라지는 쪽(mergedId)은
+     서버 쪽 레코드에도 명시적으로 "지워졌다"고 알려야 한다. 그냥
+     배열에서 빠진 채로 다음에 전체를 올리면, 이 사실을 아직 모르는
+     오래된 기기가 나중에 그 id를 다시 들고 나타났을 때 "이 기기가
+     이 장소를 아직 모른다"와 구분이 안 돼 되살아날 수 있다
+     (server/routes/account-data.mjs의 syncPlaces 참고 — 무덤 표시는
+     명시적으로 알려온 id만 지운다). */
+  if (result.mergedId) {
+    foodMap.deletedPlaceIds = foodMap.deletedPlaceIds || [];
+    if (!foodMap.deletedPlaceIds.includes(result.mergedId)) foodMap.deletedPlaceIds.push(result.mergedId);
   }
   const saved = A.saveFoodMap(foodMap);
   if (!saved) {

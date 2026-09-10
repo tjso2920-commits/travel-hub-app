@@ -30,6 +30,53 @@ function daSave(k, v) {
   try { localStorage.setItem(PFX + k, JSON.stringify(v)); return true; }
   catch (e) { return false; }
 }
+
+/* 2026-09-10 재검토(7차) — 장소마다 version을 매겨 서버 동기화가 버전
+   비교로 충돌(오래된 기기가 최신 수정을 덮어쓰는 것)을 감지할 수 있게
+   한다(account-data.mjs의 syncPlaces 참고). 유형 지정·위치 확인·도시
+   지정·중복 병합·가져오기 병합 등 장소 객체를 고치는 자리가 여러
+   곳이라, 그 모든 자리를 일일이 찾아 버전을 올리는 대신 — foodMap을
+   저장할 때마다(saveFoodMap) 마지막으로 저장했던 내용과 비교해 실제로
+   내용이 바뀐 장소만 자동으로 버전을 올린다(한 곳만 고치면 되고,
+   어떤 자리에서 장소를 고치든 빠짐이 없다). */
+let _placesVersionSnapshot = null; // Map<id, JSON 문자열(version/updatedAt 제외)>
+function _placeContentKey(p) {
+  const { version, updatedAt, ...rest } = p;
+  return JSON.stringify(rest);
+}
+function _stampPlaceVersions(places) {
+  if (!Array.isArray(places)) return;
+  const prev = _placesVersionSnapshot;
+  const next = new Map();
+  const now = new Date().toISOString();
+  for (const p of places) {
+    if (!p || !p.id) continue;
+    const key = _placeContentKey(p);
+    const prevKey = prev ? prev.get(p.id) : undefined;
+    if (prevKey === undefined) {
+      // 이번 세션에서 처음 보는 장소(막 가져왔거나, 페이지를 새로
+      // 불러온 직후) — 이미 버전이 있으면(서버에서 받아온 것 등)
+      // 그대로 두고, 없으면 1로 시작한다. 여기서 무작정 버전을
+      // 올리면 페이지를 열 때마다 모든 장소가 "수정됐다"고 오판된다.
+      if (p.version === undefined) p.version = 1;
+      if (p.updatedAt === undefined) p.updatedAt = now;
+    } else if (prevKey !== key) {
+      p.version = (Number(p.version) || 0) + 1;
+      p.updatedAt = now;
+    }
+    next.set(p.id, key);
+  }
+  _placesVersionSnapshot = next;
+}
+/* 서버 동기화 응답으로 로컬을 완전히 교체한 직후 부른다 — "서버가
+   확정한 값을 그대로 받아들인 것"이지 "지금 이 기기에서 새로 고친
+   것"이 아니므로, 다음 저장 때 스스로의 반영을 또 하나의 수정으로
+   오인해 버전을 이중으로 올리지 않게 기준선만 조용히 맞춘다. */
+function _resetPlacesSnapshot(places) {
+  const next = new Map();
+  for (const p of (places || [])) { if (p && p.id) next.set(p.id, _placeContentKey(p)); }
+  _placesVersionSnapshot = next;
+}
 /* 2026-09-09 코드 검토 반영 — sale-mode 메타 태그를 바꾸는 것만으로는
    cp1_ 데이터가 cs1_로 옮겨지지 않는다(그냥 다른 storage 칸을 보기
    시작할 뿐이다). 이 화면이 실제 판매용 자리를 대체하는 순간 사용자
@@ -632,8 +679,13 @@ window.DesignAdapter = {
   api: daApi,
   apiBase: daApiBase,
   sessionToken: daSessionToken,
-  loadFoodMap: () => daLoad('foodmap_v1', { places: [], dest: '', destCountry: '' }),
-  saveFoodMap: (fm) => daSave('foodmap_v1', fm),
+  loadFoodMap: () => {
+    const fm = daLoad('foodmap_v1', { places: [], dest: '', destCountry: '' });
+    _stampPlaceVersions(fm.places); // 세션 시작 시 기준선만 맞춘다(버전 안 올림).
+    return fm;
+  },
+  saveFoodMap: (fm) => { _stampPlaceVersions(fm.places); return daSave('foodmap_v1', fm); },
+  resyncPlacesBaseline: _resetPlacesSnapshot,
   parseCsv: daCsv,
   parseJson: daJsonPlaces,
   merge: daMerge,

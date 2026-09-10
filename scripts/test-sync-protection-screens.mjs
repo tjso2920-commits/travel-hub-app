@@ -100,22 +100,13 @@ const city = '동기화도시';
   const serverPlaces = await apiCall('/api/places', { token: await pA.evaluate(() => foodMap.session.token) });
   const place1OnServer = serverPlaces.json.places.find((p) => p.id === 'place1');
   const survived = place1OnServer && place1OnServer.name === 'A가 고친 최신 이름';
-  if (survived) {
-    t('(a) 기기 B의 오래된 저장이 기기 A의 최신 장소 수정을 덮어쓰지 않음', true);
-  } else {
-    // 2026-09-10 재검토(6차) 4-(a) 검증 결과 — /api/places는 전체
-    // 치환(버전 비교 없음)이라 실제로 "마지막에 저장을 누른 기기가
-    // 이긴다": 오래된 기기 B가 A보다 늦게 저장을 누르면 B가 갖고 있던
-    // 옛 스냅샷이 A의 수정을 덮어쓴다. trips/visits(R5-7)와 달리
-    // account_places/account_courses는 버전 필드 자체가 없어 서버가
-    // 충돌을 감지할 수 없다 — 이건 이번 라운드에서 새로 생긴 문제가
-    // 아니라 R4~R5부터 있던 기존 구조의 한계이며, 이번 6차 범위(재방문
-    // 화면 연결)만으로는 안전하게 고칠 수 없다(장소 배열 전체에
-    // 필드별 버전을 새로 설계해야 하는 별도 작업). 사실대로 실패로
-    // 기록하고 RELEASE_STATUS.md에 알려진 한계로 남긴다 — 조용히
-    // 통과시키지 않는다.
-    t('(a) 기기 B의 오래된 저장이 기기 A의 최신 장소 수정을 덮어쓰지 않음 [알려진 한계 — RELEASE_STATUS.md 4절 참고]', false);
-  }
+  // 2026-09-10 재검토(7차) — 6차에서는 이 시나리오가 실패했다(/api/places가
+  // 전체 치환이라 버전 비교가 없어 "마지막에 저장을 누른 기기가 이긴다"는
+  // 구조였다 — 알려진 한계로 문서에 남겼었다). 7차에서 account_places에도
+  // trips/visits(R5-7)와 같은 버전 비교+보수적 병합을 실제로 적용해
+  // 고쳤다(server/routes/account-data.mjs의 syncPlaces) — 이제는 실제로
+  // 통과해야 한다. 다시 실패하면 조용히 넘기지 않고 그대로 보고한다.
+  t('(a) 기기 B의 오래된 저장이 기기 A의 최신 장소 수정을 덮어쓰지 않음', survived);
   await pA.close(); await pB.close();
 }
 

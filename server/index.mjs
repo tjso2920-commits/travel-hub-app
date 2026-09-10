@@ -30,7 +30,7 @@ import { lookupPlaceRoute, lookupPlacesBatchRoute } from './routes/places.mjs';
 import { recordEvent } from './routes/events.mjs';
 import { joinWaitlist } from './routes/waitlist.mjs';
 import { generateCourseRoute } from './routes/course-generation.mjs';
-import { getPlaces, putPlaces, getCourses, putCourses } from './routes/account-data.mjs';
+import { getPlaces, syncPlaces, getCourses, syncCourses } from './routes/account-data.mjs';
 import { paymentConfigRoute, createOrderRoute, confirmOrderRoute, cancelOrderRoute } from './routes/payment.mjs';
 import { listTrips, createTrip, updateTrip, getTripCourses, putTripCourses, syncTrips } from './routes/trips.mjs';
 import { getVisits, markVisited, unmarkVisited, setWantRevisit, setNotes, syncVisits } from './routes/visits.mjs';
@@ -109,10 +109,14 @@ async function handle(req, res) {
       const accountId = requireAccount(req, res); if (!accountId) return;
       return sendJson(res, 200, getPlaces(accountId));
     }
+    // 2026-09-10 재검토(7차) — 전체치환 대신 버전 비교+보수적 병합
+    // (syncPlaces/syncCourses). 엔드포인트 경로·메서드(PUT)는 그대로
+    // 두고(클라이언트가 이미 쓰던 이름 유지) 내부 동작만 안전하게
+    // 바꿨다 — deletedIds로 명시된 것만 지운다(배열에 없다고 추측 안 함).
     if (req.method === 'PUT' && pathname === '/api/places') {
       const accountId = requireAccount(req, res); if (!accountId) return;
       const body = JSON.parse((await readBody(req)) || '{}');
-      const result = putPlaces(accountId, body.places);
+      const result = syncPlaces(accountId, body.places, body.deletedIds);
       return sendJson(res, result.status || 200, result);
     }
     if (req.method === 'GET' && pathname === '/api/courses') {
@@ -122,7 +126,7 @@ async function handle(req, res) {
     if (req.method === 'PUT' && pathname === '/api/courses') {
       const accountId = requireAccount(req, res); if (!accountId) return;
       const body = JSON.parse((await readBody(req)) || '{}');
-      const result = putCourses(accountId, body.courses);
+      const result = syncCourses(accountId, body.courses);
       return sendJson(res, result.status || 200, result);
     }
     // 예전 단일 코스 저장(로드맵 ⑧ 최초 설계) — 클라이언트가 실제로

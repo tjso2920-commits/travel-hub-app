@@ -103,11 +103,16 @@ function migrate(d) {
        서버에 보관한다(로드맵 신규 — "브라우저에만 저장되어 계정별 서버
        보관이 연결되지 않았다"는 지적 반영). 클라이언트의 foodMap.places/
        foodMap.courses 배열과 1:1로 대응한다. */
+    /* 2026-09-10 재검토(7차) — version/deleted: 전체치환 PUT이 오래된
+       기기의 스냅샷으로 최신 수정을 덮어쓰던 문제를 고치기 위해 추가.
+       account-data.mjs의 syncPlaces/syncCourses 참고. */
     CREATE TABLE IF NOT EXISTS account_places (
       account_id TEXT NOT NULL REFERENCES accounts(id),
       place_id TEXT NOT NULL,
       data TEXT NOT NULL,
+      deleted INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 1,
       PRIMARY KEY (account_id, place_id)
     );
     CREATE TABLE IF NOT EXISTS account_courses (
@@ -115,7 +120,9 @@ function migrate(d) {
       city TEXT NOT NULL,
       date TEXT NOT NULL,
       data TEXT NOT NULL,
+      deleted INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 1,
       PRIMARY KEY (account_id, city, date)
     );
 

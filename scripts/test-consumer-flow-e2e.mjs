@@ -110,7 +110,13 @@ const city = (await p.evaluate(() => cities[0] && cities[0].name)) || '';
 t('실제 CSV로 가져온 도시가 화면에 반영됨', !!city);
 await p.evaluate((cityName) => { city = cityName; updateCity(); }, city);
 await p.waitForTimeout(150);
-const pickIds = await p.evaluate(() => spots.filter((s) => s.city === city).slice(0, 2).map((s) => s.id));
+// 이름으로 콕 집어 고른다(배열 순서에 기대지 않는다) — "장소1"·"장소3"은
+// 테스트 어댑터의 결정론적 not-found 해시(hash%5===0)에 걸리지 않는
+// 것으로 미리 확인된 이름이라, 어느 두 곳을 고르든 항상 위치 후보를
+// 찾는다(예전엔 배열의 "처음 두 개"를 썼는데, 실제 순서가 파일 순서와
+// 다를 수 있어(예: "장소11"이 "장소2"보다 앞에 옴) 우연히 not-found
+// 해시에 걸리는 이름이 뽑히면 이 단계가 간헐적으로 실패했다).
+const pickIds = await p.evaluate(() => ['장소1', '장소3'].map((n) => spots.find((s) => s.name === n)).filter(Boolean).map((s) => s.id));
 await p.evaluate((ids) => { ids.forEach((id) => route.add(id)); }, pickIds);
 await p.evaluate(() => showRoute());
 await p.waitForTimeout(150);
