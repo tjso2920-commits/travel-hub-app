@@ -18,6 +18,12 @@ export function paymentConfigRoute() {
 export function createOrderRoute(accountId) {
   if (config.services.payment !== 'real') return { ok: false, status: 503, reason: 'payment-service-unavailable' };
   const r = createOrder(accountId);
+  // 2026-09-10 재검토(5차) — 예전엔 실패 응답(예: 409 already-has-active-
+  // entitlement, 503 service-unavailable-for-new-sales)에도 무조건
+  // status:200을 덮어써서, 실패했는데도 클라이언트에는 200으로 갔다.
+  // createOrder는 실패 시 이미 자기 status를 들고 있으니 그대로 쓴다 —
+  // 성공(status 없음)일 때만 200을 채운다.
+  if (!r.ok) return r;
   return { ...r, status: 200 };
 }
 

@@ -37,6 +37,25 @@
  *    이미 유효한 계정의 새 주문 생성을 거부하고 만료일을 알려준다.
  * 8. **모든 토스 호출에 타임아웃 적용**: server/net.mjs의
  *    fetchWithTimeout을 쓴다.
+ *
+ * 2026-09-10 재검토(5차) — ChatGPT가 지적한 남은 경계를 고쳤다:
+ * a. **paymentMatchesOrder 필드 누락 우회**: 필드가 없으면 그 검사를
+ *    건너뛰던 것을 "없으면 불일치"로 바꾸고, paymentKey도 대조 대상에
+ *    추가했다.
+ * b. **여러 pending 주문으로 중복구매 차단 우회 방지**: createOrder
+ *    시점 확인만으로는 거의 동시에 만든 주문 2개를 각각 confirm하는
+ *    경로를 못 막는다 — confirmPayment도 "이 주문이 아닌 다른 주문"이
+ *    부여한 활성 이용권이 있으면 토스를 부르기도 전에 거부한다.
+ * c. **부분 취소 판정을 공급자 응답 기준으로**: 요청한 cancelAmount가
+ *    아니라 응답의 status/balanceAmount/누적 cancels 금액으로 부분/전액
+ *    을 가른다.
+ * d. **결제 가능 여부 판정 확장**: 월간 한도가 "정확히 다 찼을 때"만
+ *    보지 않고, 일일 한도·최소 코스 생성비 부족·운영에서 경로 API 키
+ *    자체가 없는 상태까지 "신규 판매 불가"로 본다(새 주문 생성만 막고,
+ *    이미 진행 중인 confirm은 건드리지 않는다).
+ * e. 위 d의 신규판매 차단과, 이미 승인된 결제의 복구(재시도 confirm)는
+ *    코드 경로 자체가 분리돼 있다 — order.status==='paid' 조기 반환이
+ *    d/b의 어떤 검사보다 먼저 온다.
  */
 import { openDb, uuid, nowIso } from '../db.mjs';
 import { config } from '../config.mjs';
@@ -68,15 +87,35 @@ export function orderName() {
    꽉 찼다면(장소조회·경로 계산이 사실상 전부 막힌 상태) 새 결제도 막는다
    — 그렇지 않으면 손님이 9,900원을 내고도 정작 코스를 하나도 못
    만드는 상황이 생긴다. */
-function isServiceCostBudgetExhausted() {
+/* 2026-09-10 재검토(5차) — ChatGPT 지적: "월 5만원은 초기 전체 운영
+   목표이지 전액 Google 예산이 아니다"와 별개로, 이 판정 자체는 "이번
+   달 전체 한도가 정확히 다 찼는가"만 봤다 — 그러면: (1) 일일 한도가
+   먼저 걸려도 안 걸리는 것처럼 취급되고, (2) 남은 예산이 코스 하나도
+   못 만들 만큼 적어도(예: 100원 남았는데 조회+경로 비용이 51.8원이면
+   1건은 되고 그 다음은 못 되는데) 새 결제를 계속 받고, (3) 운영인데
+   경로 API 키 자체가 없어(services.routing !== 'real') 애초에 코스를
+   못 만드는 상태에서도 결제만 먼저 받을 수 있었다. 이제 이 세 가지를
+   전부 "신규 판매를 막아야 하는 상태"로 본다.
+
+   **이미 결제를 마친 손님의 이용권 부여(복구 포함)는 이 함수와 완전히
+   분리돼 있다** — 이 함수는 createOrder(신규 주문 생성)에서만 부르고,
+   confirmPayment의 "이미 승인된 주문 재확인"(order.status==='paid')
+   경로는 이 함수를 아예 거치지 않는다. */
+function isServiceUnavailableForNewSales() {
+  if (config.isProd && config.services.routing !== 'real') return true;
   const usage = usageSummary(null);
-  const cap = usage.caps.globalMonthlyMicros;
-  return cap > 0 && usage.globalMonthlyMicros >= cap;
+  const caps = usage.caps;
+  const minCourseCostMicros = config.costEstimate.placesTextSearchMicros + config.costEstimate.routesComputeMicros;
+  if (caps.globalMonthlyMicros > 0 && usage.globalMonthlyMicros >= caps.globalMonthlyMicros) return true;
+  if (caps.globalDailyMicros > 0 && usage.globalDailyMicros >= caps.globalDailyMicros) return true;
+  if (caps.globalMonthlyMicros > 0 && (caps.globalMonthlyMicros - usage.globalMonthlyMicros) < minCourseCostMicros) return true;
+  if (caps.globalDailyMicros > 0 && (caps.globalDailyMicros - usage.globalDailyMicros) < minCourseCostMicros) return true;
+  return false;
 }
 
 export function createOrder(accountId) {
-  if (isServiceCostBudgetExhausted()) {
-    return { ok: false, status: 503, reason: 'service-cost-budget-exhausted' };
+  if (isServiceUnavailableForNewSales()) {
+    return { ok: false, status: 503, reason: 'service-unavailable-for-new-sales' };
   }
   const ent = checkEntitlement(accountId);
   if (ent.ok && ent.plan === 'paid') {
@@ -119,12 +158,20 @@ export async function queryPayment(paymentKey) {
    주문번호·금액·통화를 전부 대조한다(2026-09-10 재검토 4차: "주문번호,
    결제키, 금액, 통화를 서버 주문과 대조하라"). 하나라도 안 맞으면
    위조·오배선 가능성이 있다고 보고 신뢰하지 않는다. */
-function paymentMatchesOrder(payment, order) {
+/* 2026-09-10 재검토(5차) — ChatGPT 지적: 예전엔 필드가 "없으면" 그 검사를
+   통째로 건너뛰었다(누락 = 통과 취급) — 응답이 불완전하거나 위조된
+   경우도 놓칠 수 있었다. 이제 필수 필드(주문번호·금액·통화)는 값 자체가
+   없어도 불일치로 본다. 또한 `paymentKey`도 대조 대상에 추가한다(호출부가
+   자신이 확인하려는 paymentKey를 `expectedPaymentKey`로 넘긴다) —
+   금액·주문번호가 우연히 같아도 실제로는 다른 결제 건이 섞여 들어오는
+   경우까지 막는다. */
+function paymentMatchesOrder(payment, order, expectedPaymentKey) {
   if (!payment) return false;
-  if (payment.orderId && payment.orderId !== order.order_id) return false;
+  if (!payment.orderId || payment.orderId !== order.order_id) return false;
   const amount = payment.totalAmount != null ? payment.totalAmount : payment.amount;
-  if (amount != null && Number(amount) !== order.amount) return false;
-  if (payment.currency && payment.currency !== config.expectedCurrency) return false;
+  if (amount == null || Number(amount) !== order.amount) return false;
+  if (!payment.currency || payment.currency !== config.expectedCurrency) return false;
+  if (expectedPaymentKey != null && (!payment.paymentKey || payment.paymentKey !== expectedPaymentKey)) return false;
   return true;
 }
 
@@ -147,6 +194,25 @@ export async function confirmPayment({ accountId, orderId, paymentKey, amount, c
   if (currency && currency !== config.expectedCurrency) return { ok: false, status: 400, reason: 'currency-mismatch' };
   if (order.status === 'paid') return { ok: true, status: 200, alreadyProcessed: true };
 
+  // 2026-09-10 재검토(5차) — ChatGPT 지적: "여러 개의 pending 주문을
+  // 만들고 각각 개별적으로 confirm하면 활성 이용권 중복구매 차단을
+  // 우회할 수 있는지" 확인 지시. createOrder 시점 확인만으로는 두 주문을
+  // 거의 동시에 만든 경쟁 상황(둘 다 아직 미승인이라 그때는 이용권이
+  // 없었음)을 못 막는다 — 지금 이 계정에 "이 주문이 아닌 다른 주문"이
+  // 부여한 활성 이용권이 이미 있으면, 실제 토스 승인 호출을 부르기도
+  // 전에 거부한다(위젯 승인만 됐지 confirm 전이라 아직 실제 청구는
+  // 안 나간 상태 — 거부하면 그 인증은 토스 쪽에서 그냥 만료된다).
+  // 바로 위의 "alreadyProcessed" 조기 반환(이 주문 자신의 재확인/복구)은
+  // 이 검사보다 먼저 걸러지므로 서로 안 겹친다(항목 (e) — 이미 승인된
+  // 결제의 복구는 이 신규판매 차단과 분리해서 처리).
+  const acctRow = openDb().prepare('SELECT active_order_id, plan, plan_expires_at FROM accounts WHERE id = ?').get(accountId);
+  const hasOtherActiveEntitlement = acctRow && acctRow.plan === 'paid'
+    && (!acctRow.plan_expires_at || new Date(acctRow.plan_expires_at).getTime() > Date.now())
+    && acctRow.active_order_id && acctRow.active_order_id !== orderId;
+  if (hasOtherActiveEntitlement) {
+    return { ok: false, status: 409, reason: 'already-has-active-entitlement', expiresAt: acctRow.plan_expires_at };
+  }
+
   const jobId = acquireLock('payment_locks', 'order_id', orderId, config.paymentLockTimeoutSeconds);
   if (!jobId) return { ok: false, status: 409, reason: 'confirm-in-progress' };
 
@@ -164,18 +230,18 @@ export async function confirmPayment({ accountId, orderId, paymentKey, amount, c
       res = null; // 네트워크 오류/타임아웃 — 아래에서 조회로 실제 상태를 확인한다.
     }
 
-    if (res && res.ok && res.json && res.json.status === 'DONE' && paymentMatchesOrder(res.json, order)) {
+    if (res && res.ok && res.json && res.json.status === 'DONE' && paymentMatchesOrder(res.json, order, paymentKey)) {
       confirmed = res.json;
     } else if (res && res.ok && res.json && res.json.status === 'DONE') {
-      // 승인은 됐다는데 우리 주문과 금액/통화가 안 맞는다 — 절대 이용권을
-      // 주지 않는다(위조·오배선 의심, 사람이 직접 봐야 하는 상황).
+      // 승인은 됐다는데 우리 주문과 금액/통화/결제키가 안 맞는다 — 절대
+      // 이용권을 주지 않는다(위조·오배선 의심, 사람이 직접 봐야 하는 상황).
       hardFailure = { reason: 'confirmed-but-mismatch', detail: res.json };
     } else {
       // confirm 자체가 실패(네트워크 오류/4xx/5xx/응답 없음)했거나 상태가
       // DONE이 아니다 — 곧바로 실패로 단정하지 않고 조회 API로 다시
       // 확인한다(재시도·유실 대응).
       const query = await queryPayment(paymentKey);
-      if (query.ok && query.json && query.json.status === 'DONE' && paymentMatchesOrder(query.json, order)) {
+      if (query.ok && query.json && query.json.status === 'DONE' && paymentMatchesOrder(query.json, order, paymentKey)) {
         confirmed = query.json;
       } else if (!res) {
         hardFailure = { reason: 'network-error-unconfirmed', detail: query.ok ? query.json : query.reason };
@@ -236,8 +302,6 @@ export async function cancelPayment({ accountId, paymentKey, cancelReason, cance
   if (!jobId) return { ok: false, status: 409, reason: 'cancel-in-progress' };
 
   try {
-    const isPartial = typeof cancelAmount === 'number' && cancelAmount > 0 && cancelAmount < order.amount;
-
     let res;
     try {
       res = await tossFetch(`/v1/payments/${encodeURIComponent(paymentKey)}/cancel`, {
@@ -253,16 +317,40 @@ export async function cancelPayment({ accountId, paymentKey, cancelReason, cance
     }
     if (!res.ok) return { ok: false, status: res.status, reason: 'toss-cancel-failed', detail: res.json };
 
+    // 2026-09-10 재검토(5차) — ChatGPT 지적: "부분 취소 여부는 우리가
+    // 요청한 cancelAmount가 아니라 공급자의 실제 상태·잔액·누적 취소
+    // 금액으로 판단하라." 예전엔 클라이언트가 보낸 cancelAmount 값만
+    // 보고 부분/전액을 결정했다 — 실제로 토스가 무슨 이유로든 다르게
+    // 처리했으면(예: 이미 부분 취소된 결제라 나머지 잔액이 요청보다
+    // 적게 남아 사실상 전액이 됨) 우리 쪽 기록이 틀어질 수 있었다. 이제
+    // 응답의 status 필드(CANCELED/PARTIAL_CANCELED)를 1순위 근거로,
+    // balanceAmount(잔액)·cancels 배열의 누적 취소액을 보조 근거로 쓴다.
+    const p = res.json || {};
+    const cancelsSum = Array.isArray(p.cancels) ? p.cancels.reduce((sum, c) => sum + (Number(c.cancelAmount) || 0), 0) : null;
+    const balanceAmount = p.balanceAmount != null ? Number(p.balanceAmount) : null;
+    const isFull = p.status === 'CANCELED'
+      || balanceAmount === 0
+      || (cancelsSum != null && cancelsSum >= order.amount);
+    const isPartial = !isFull && (
+      p.status === 'PARTIAL_CANCELED'
+      || (balanceAmount != null && balanceAmount > 0)
+      || (cancelsSum != null && cancelsSum > 0 && cancelsSum < order.amount)
+      // 공급자 응답이 이 필드들을 하나도 안 줄 만큼 부실하면(테스트
+      // 이중처럼), 마지막 수단으로만 우리가 요청한 금액을 근거로 삼는다.
+      || (p.status == null && balanceAmount == null && cancelsSum == null && typeof cancelAmount === 'number' && cancelAmount > 0 && cancelAmount < order.amount)
+    );
+    const actualCancelledAmount = cancelsSum != null ? cancelsSum : (isFull ? order.amount : cancelAmount);
+
     if (isPartial) {
       // 부분 취소 — 전액 취소와 다르게 다룬다. 이용권 조정 정책이 아직
       // 없으므로 여기서는 자동으로 회수하지 않는다(문서에 별도 보고).
       db.prepare('UPDATE orders SET status = ?, cancelled_amount = ?, updated_at = ? WHERE order_id = ?')
-        .run('partially_cancelled', cancelAmount, nowIso(), order.order_id);
+        .run('partially_cancelled', actualCancelledAmount, nowIso(), order.order_id);
       return { ok: true, status: 200, partial: true, entitlementUnchanged: true };
     }
 
     db.prepare('UPDATE orders SET status = ?, cancelled_amount = ?, updated_at = ? WHERE order_id = ?')
-      .run('cancelled', order.amount, nowIso(), order.order_id);
+      .run('cancelled', actualCancelledAmount, nowIso(), order.order_id);
     const revoke = revokeEntitlementIfCurrentOrder(order.account_id, order.order_id);
     return { ok: true, status: 200, entitlementRevoked: !revoke.skipped };
   } finally {
@@ -292,7 +380,7 @@ export async function handleTossWebhookEvent(body) {
   const db = openDb();
   const order = orderId ? db.prepare('SELECT * FROM orders WHERE order_id = ?').get(orderId) : null;
   if (!order) return { ok: false, status: 404, reason: 'order-not-found' };
-  if (!paymentMatchesOrder(payment, order)) return { ok: false, status: 400, reason: 'payment-order-mismatch' };
+  if (!paymentMatchesOrder(payment, order, paymentKey)) return { ok: false, status: 400, reason: 'payment-order-mismatch' };
 
   const jobId = acquireLock('payment_locks', 'order_id', orderId, config.paymentLockTimeoutSeconds);
   if (!jobId) return { ok: true, status: 200, reason: 'concurrent-webhook-ignored' }; // 동시에 처리 중 — 재시도해도 안전(멱등)하므로 200으로 응답해 PG 재시도를 멈추게 한다.
@@ -312,13 +400,17 @@ export async function handleTossWebhookEvent(body) {
         return { ok: false, status: 500, reason: 'entitlement-storage-failed' };
       }
     } else if (payment.status === 'CANCELED' && order.status !== 'cancelled') {
+      // 2026-09-10 재검토(5차): 전액 취소도 요청 시점 예상값이 아니라
+      // 공급자가 실제로 밝힌 누적 취소액을 우선 쓴다(cancelPayment와
+      // 같은 원칙) — 없으면 주문 금액으로 대체한다.
+      const cancelsSum = Array.isArray(payment.cancels) ? payment.cancels.reduce((sum, c) => sum + (Number(c.cancelAmount) || 0), 0) : null;
       db.prepare('UPDATE orders SET status = ?, cancelled_amount = ?, updated_at = ? WHERE order_id = ?')
-        .run('cancelled', order.amount, nowIso(), orderId);
+        .run('cancelled', cancelsSum || order.amount, nowIso(), orderId);
       revokeEntitlementIfCurrentOrder(order.account_id, orderId);
     } else if (payment.status === 'PARTIAL_CANCELED' && order.status !== 'partially_cancelled' && order.status !== 'cancelled') {
-      const cancelledAmount = payment.cancels && payment.cancels[0] && payment.cancels[0].cancelAmount;
+      const cancelsSum = Array.isArray(payment.cancels) ? payment.cancels.reduce((sum, c) => sum + (Number(c.cancelAmount) || 0), 0) : null;
       db.prepare('UPDATE orders SET status = ?, cancelled_amount = ?, updated_at = ? WHERE order_id = ?')
-        .run('partially_cancelled', cancelledAmount || null, nowIso(), orderId);
+        .run('partially_cancelled', cancelsSum || null, nowIso(), orderId);
       // 부분 취소는 이용권을 건드리지 않는다 — cancelPayment와 동일한 이유.
     }
     return { ok: true, status: 200 };

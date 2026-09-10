@@ -7,22 +7,33 @@
  *
  * 설계: "예약 후 나중에 확정/취소"하는 2단계 대신, **"실제 호출을 하기로
  * 결정하는 바로 그 순간에 비용을 확정 기록"**하는 1단계 모델을 쓴다.
- * 이유: 우리는 외부 공급자가 실제로 얼마를 청구했는지 알 방법이 없다
- * (그건 공급자 청구 콘솔에만 있다) — 우리가 아는 유일한 사실은 "우리가
- * 그 요청을 보내기로 했다"는 것뿐이다. 그래서:
- *   - 예산 확인 결과 "보내도 된다"면 → 그 즉시 예상 비용을 원장에 기록
- *     한다(성공/실패/타임아웃과 무관하게 이미 "쓰기로 결정한 돈"이다).
- *   - 예산 확인 결과 "안 된다"면 → 아예 호출하지 않고, 원장에도 아무것도
- *     안 남긴다(쓰지 않은 돈이니까).
- * 이 모델은 "타임아웃도 과금됐을 수 있으니 0원으로 처리하지 말라"와
- * "공급자 예산 알림에만 의존하지 말라"는 지시 둘 다를 동시에 만족한다 —
- * 우리 쪽 회계가 공급자의 실제 응답 여부와 완전히 무관하기 때문이다.
+ * 우리는 외부 공급자가 실제로 얼마를 청구했는지 알 방법이 없다 — 우리가
+ * 아는 유일한 사실은 "우리가 그 요청(들)을 보내기로 했다"는 것뿐이다.
+ * 그래서 예산 확인을 통과했을 때만 그 즉시 예상 비용을 원장에 기록한다
+ * (성공/실패/타임아웃과 무관 — "타임아웃도 과금됐을 수 있으니 0원
+ * 처리하지 말라"는 지시를 이 설계로 만족한다).
  *
- * "이미 개인 한도를 초과한 요청이 전체 한도를 소모하지 않도록"이라는
- * 지시는 검사 순서로 지킨다 — **계정별 한도를 먼저 확인**하고, 그걸
- * 통과했을 때만 전체(글로벌) 한도를 확인한다. 어느 쪽이든 거부되면
- * 원장에 아무 행도 안 남기므로, 거부된 요청은 절대 다른 스코프의 예산을
- * 깎지 않는다.
+ * **2026-09-10 재검토(5차) — ChatGPT가 재현한 버그를 고침**: 여러 번의
+ * 외부 호출이 필요한 작업(예: Google Routes 경유지 상한 때문에 나뉘는
+ * 여러 세그먼트)에서 이전 버전은 세그먼트마다 `chargeCost`를 따로
+ * 호출했다 — 앞쪽 세그먼트는 예산을 통과해 기록되고, 뒤쪽 세그먼트에서
+ * 예산이 모자라 전체 작업이 취소돼도 앞쪽에서 이미 기록된 비용은
+ * 남았다(실제 호출은 결국 한 번도 안 나갔는데 원장에는 비용이 남는
+ * 모순). 이제 여러 건을 한 번에 확인·기록하는 `chargeCostBatch`를
+ * 추가했다 — **하나의 DB 트랜잭션**으로 전체 계획의 비용을 먼저 다
+ * 확인하고, 전부 통과할 때만 전부 기록한다(all-or-nothing). 하나라도
+ * 예산을 넘으면 그 무엇도 기록되지 않는다.
+ *
+ * **동시 요청·여러 프로세스 안전성**: `BEGIN IMMEDIATE`로 트랜잭션을
+ * 열어 SQLite 파일 수준의 쓰기 잠금을 즉시 확보한다 — 같은 DB 파일을
+ * 쓰는 다른 프로세스가 있어도(수평 확장 구성) 그 프로세스의 확인·기록
+ * 사이에 우리가 끼어들 수 없다(반대도 마찬가지). 단, 이건 "같은 SQLite
+ * 파일에 쓰기 잠금이 걸린다"는 보장이지 — 여러 DB 파일로 완전히 분리된
+ * 다중 인스턴스 구성(각자 다른 SQLite 파일)에서는 예산이 인스턴스별로
+ * 따로 집계된다. **지원하는 운영 구성은 "하나의 SQLite 파일을 공유하는
+ * 프로세스(들)"뿐이다** — 완전히 분리된 DB로 수평 확장하려면 이 비용
+ * 원장을 별도의 공유 저장소(예: 별도 RDBMS)로 옮겨야 한다(지금 범위
+ * 밖).
  */
 import { openDb, uuid, nowIso } from './db.mjs';
 import { config } from './config.mjs';
@@ -49,46 +60,83 @@ export function skuCostMicros(sku) {
   return v;
 }
 
-/* 계정별 한도 → 전체 한도 순으로 확인한 뒤에만 실제로 기록한다. 통과
-   못 하면 아무것도 기록하지 않고 이유를 돌려준다 — 호출부는 이 결과를
-   보고서야 실제 외부 요청을 보낼지 말지 정한다(먼저 부르고 나중에
-   따지지 않는다 — "예상 비용을 먼저 예약해 한도 초과를 방지"). */
-export function chargeCost({ accountId, service, sku, count }) {
-  const n = Math.max(1, Number(count) || 1);
-  const unitMicros = skuCostMicros(sku);
-  const totalMicros = unitMicros * n;
-  const now = new Date();
-
-  if (accountId) {
-    const acctDaily = sumSince(accountId, dayStartIso(now));
-    const cap = config.costBudget.perAccountDailyMicros;
-    if (cap > 0 && acctDaily + totalMicros > cap) {
-      return { ok: false, reason: 'account-daily-cost-budget-exceeded', capMicros: cap, usedMicros: acctDaily };
-    }
-  }
-
-  const globalDaily = sumSince(null, dayStartIso(now));
-  const dailyCap = config.costBudget.globalDailyMicros;
-  if (dailyCap > 0 && globalDaily + totalMicros > dailyCap) {
-    return { ok: false, reason: 'global-daily-cost-budget-exceeded', capMicros: dailyCap, usedMicros: globalDaily };
-  }
-  const globalMonthly = sumSince(null, monthStartIso(now));
-  const monthlyCap = config.costBudget.globalMonthlyMicros;
-  if (monthlyCap > 0 && globalMonthly + totalMicros > monthlyCap) {
-    return { ok: false, reason: 'global-monthly-cost-budget-exceeded', capMicros: monthlyCap, usedMicros: globalMonthly };
-  }
+/* 여러 건(charges: [{sku, count}])의 비용을 하나의 트랜잭션으로 확인·
+   기록한다. 계정별 일일→계정별 월간→전체 일일→전체 월간 순으로 확인한다
+   (계정 한도가 먼저 걸리면 전체 한도 쪽 숫자는 아예 안 건드린다 — "이미
+   개인 한도를 초과한 요청이 전체 한도를 소모하지 않도록"). 하나라도
+   막히면 즉시 ROLLBACK하고 그 무엇도 기록하지 않는다 — 앞선 항목이
+   먼저 "통과"했다고 미리 기록해 두지 않는다(부분 기록 버그 재현 방지). */
+export function chargeCostBatch({ accountId, service, charges }) {
+  const list = Array.isArray(charges) ? charges : [];
+  if (!list.length) return { ok: true, estimatedCostMicros: 0, ids: [] };
 
   const db = openDb();
-  const id = uuid();
-  db.prepare('INSERT INTO cost_ledger (id, account_id, service, sku, count, estimated_cost_micros, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(id, accountId || null, service, sku, n, totalMicros, nowIso());
-  return { ok: true, id, estimatedCostMicros: totalMicros };
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const now = new Date();
+    let totalMicros = 0;
+    const rows = list.map(({ sku, count }) => {
+      const n = Math.max(1, Number(count) || 1);
+      const micros = skuCostMicros(sku) * n;
+      totalMicros += micros;
+      return { sku, n, micros };
+    });
+
+    const fail = (reason, capMicros, usedMicros) => {
+      db.exec('ROLLBACK');
+      return { ok: false, reason, capMicros, usedMicros };
+    };
+
+    if (accountId) {
+      const acctDaily = sumSince(accountId, dayStartIso(now));
+      const dailyCap = config.costBudget.perAccountDailyMicros;
+      if (dailyCap > 0 && acctDaily + totalMicros > dailyCap) {
+        return fail('account-daily-cost-budget-exceeded', dailyCap, acctDaily);
+      }
+      const acctMonthly = sumSince(accountId, monthStartIso(now));
+      const monthlyCap = config.costBudget.perAccountMonthlyMicros;
+      if (monthlyCap > 0 && acctMonthly + totalMicros > monthlyCap) {
+        return fail('account-monthly-cost-budget-exceeded', monthlyCap, acctMonthly);
+      }
+    }
+    const globalDaily = sumSince(null, dayStartIso(now));
+    const globalDailyCap = config.costBudget.globalDailyMicros;
+    if (globalDailyCap > 0 && globalDaily + totalMicros > globalDailyCap) {
+      return fail('global-daily-cost-budget-exceeded', globalDailyCap, globalDaily);
+    }
+    const globalMonthly = sumSince(null, monthStartIso(now));
+    const globalMonthlyCap = config.costBudget.globalMonthlyMicros;
+    if (globalMonthlyCap > 0 && globalMonthly + totalMicros > globalMonthlyCap) {
+      return fail('global-monthly-cost-budget-exceeded', globalMonthlyCap, globalMonthly);
+    }
+
+    const ids = [];
+    const insert = db.prepare('INSERT INTO cost_ledger (id, account_id, service, sku, count, estimated_cost_micros, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    const createdAt = nowIso();
+    for (const r of rows) {
+      const id = uuid();
+      insert.run(id, accountId || null, service, r.sku, r.n, r.micros, createdAt);
+      ids.push(id);
+    }
+    db.exec('COMMIT');
+    return { ok: true, estimatedCostMicros: totalMicros, ids };
+  } catch (e) {
+    try { db.exec('ROLLBACK'); } catch (e2) { /* 이미 롤백됐거나 트랜잭션이 없음 */ }
+    throw e;
+  }
+}
+
+/* 단일 건 편의 함수 — 내부적으로 chargeCostBatch를 그대로 쓴다(별도
+   로직 중복 없음). */
+export function chargeCost({ accountId, service, sku, count }) {
+  return chargeCostBatch({ accountId, service, charges: [{ sku, count }] });
 }
 
 export function usageSummary(accountId) {
   const now = new Date();
   return {
     accountDailyMicros: accountId ? sumSince(accountId, dayStartIso(now)) : null,
+    accountMonthlyMicros: accountId ? sumSince(accountId, monthStartIso(now)) : null,
     globalDailyMicros: sumSince(null, dayStartIso(now)),
     globalMonthlyMicros: sumSince(null, monthStartIso(now)),
     caps: config.costBudget,

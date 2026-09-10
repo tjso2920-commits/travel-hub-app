@@ -29,6 +29,33 @@ function serviceModeDev(forceTest, keyPresent, adapterOverride) {
   return keyPresent ? 'real' : 'test';
 }
 
+/* USD/1,000회 단가 → 계산용 환율(가정) → 마이크로원 단가로 변환한다.
+   *_KRW_MICROS 환경변수를 직접 주면(고급 사용 — 실제 계약 후 정확한
+   원화 단가를 알게 됐을 때) 그 값을 그대로 쓰고, 아니면 위 USD 단가·
+   환율로 계산한다. 안전 여유는 여기(단가)가 아니라 costBudget에만
+   적용한다 — 실제 원가 계산(BUSINESS_DECISIONS.md)과 예산 안전판을
+   같은 숫자로 섞지 않기 위해서다. */
+function buildCostEstimateMicros(env) {
+  const fx = Number(env.COST_FX_KRW_PER_USD || 1400);
+  const usd = {
+    placesTextSearchPro: Number(env.COST_PLACES_TEXT_SEARCH_PRO_USD_PER_1000 || 32),
+    routesComputeEssentials: Number(env.COST_ROUTES_COMPUTE_ESSENTIALS_USD_PER_1000 || 5),
+    routesComputePro: Number(env.COST_ROUTES_COMPUTE_PRO_USD_PER_1000 || 10),
+  };
+  const fromUsdPer1000 = (usdPer1000) => Math.round((usdPer1000 / 1000) * fx * 1_000_000);
+  return {
+    placesTextSearchMicros: env.COST_PLACES_TEXT_SEARCH_KRW_MICROS != null
+      ? Number(env.COST_PLACES_TEXT_SEARCH_KRW_MICROS)
+      : fromUsdPer1000(usd.placesTextSearchPro),
+    routesComputeMicros: env.COST_ROUTES_COMPUTE_KRW_MICROS != null
+      ? Number(env.COST_ROUTES_COMPUTE_KRW_MICROS)
+      : fromUsdPer1000(usd.routesComputeEssentials),
+    routesComputeHighVolumeMicros: env.COST_ROUTES_COMPUTE_HIGHVOLUME_KRW_MICROS != null
+      ? Number(env.COST_ROUTES_COMPUTE_HIGHVOLUME_KRW_MICROS)
+      : fromUsdPer1000(usd.routesComputePro),
+  };
+}
+
 export function buildConfig(env) {
   env = env || {};
   const forceTest = env.FORCE_TEST_MODE === 'true';
@@ -146,26 +173,60 @@ export function buildConfig(env) {
     routesMaxIntermediatesPerCall: Number(env.ROUTES_MAX_INTERMEDIATES_PER_CALL || 25),
     routesHighVolumeThreshold: Number(env.ROUTES_HIGH_VOLUME_THRESHOLD || 11),
 
-    // API 비용 통제(2026-09-10 재검토(4차) 6절) — SKU별 "예상" 비용을
-    // 마이크로원(KRW의 100만분의 1) 정수로 둔다(부동소수점 오차 방지).
-    // **이 값들은 학습 기억 기준의 자릿수 추정치이지 확정 단가가
-    // 아니다** — 이 세션은 mapsplatform.google.com 접속이 막혀 공식
-    // 가격표를 재확인하지 못했다(docs/BUSINESS_DECISIONS.md 3절 참고).
-    // 실제 계약 후 이 값을 반드시 재확인하고 필요하면 환경변수로
-    // 갱신해야 한다 — 코드 변경 없이 값만 바꿀 수 있게 전부 env로 뺐다.
-    costEstimate: {
-      placesTextSearchMicros: Number(env.COST_PLACES_TEXT_SEARCH_KRW_MICROS || 15_000_000), // 약 15원/건 추정
-      routesComputeMicros: Number(env.COST_ROUTES_COMPUTE_KRW_MICROS || 8_000_000), // 약 8원/건 추정(경유지 10개 이하)
-      routesComputeHighVolumeMicros: Number(env.COST_ROUTES_COMPUTE_HIGHVOLUME_KRW_MICROS || 24_000_000), // 약 24원/건 추정(경유지 11개 이상 — 고요금 구간, 배수는 미확인 가정)
+    // API 비용 통제(2026-09-10 재검토 4차 6절, 5차에서 단가 정확화) —
+    // SKU별 "예상" 비용을 마이크로원(KRW의 100만분의 1) 정수로 둔다
+    // (부동소수점 오차 방지).
+    //
+    // **2026-09-10 재검토(5차) 수정 — ChatGPT가 지적한 단가 오류를
+    // 고쳤다.** 예전엔 "학습 기억 기준 자릿수 추정치"(15원/건 등)를
+    // 바로 마이크로원에 박아 뒀는데, 이건 (1) 실제 공식 단가와 얼마나
+    // 차이 나는지 알 수 없고 (2) 우리가 실제로 요청하는 필드가 바뀌면
+    // 등급도 같이 바뀌어야 한다는 걸 코드에서 알 수 없었다. 이제
+    // "공식 SKU별 달러 단가 → 계산용 환율(가정, 실시간 아님) → 최종
+    // 원화 단가"를 명시적으로 분리한 뒤 계산한다(안전 여유는 단가가
+    // 아니라 예산 상한 쪽에 적용한다 — 아래 costBudget 참고, 실제
+    // 원가 계산과 예산 안전판을 같은 숫자로 섞지 않기 위해서다).
+    //
+    // 공식 SKU·단가 근거(2026-09-10, ChatGPT가 공식 가격표 기준으로
+    // 확인해 전달한 값 — 이 세션 자체는 mapsplatform.google.com 접속이
+    // 막혀 직접 재대조하지 못했다, RELEASE_STATUS.md 참고):
+    //   - Places API(New) Text Search, **Pro 등급**(우리가 실제로
+    //     요청하는 필드 `places.displayName`/`places.location`/
+    //     `places.formattedAddress`가 이 등급에 해당 — "가장 싼 등급"
+    //     이라던 예전 주석은 틀렸다): 무료 구간 소진 후 $32 / 1,000회.
+    //   - Routes API computeRoutes, Essentials 등급(거리·시간만 요청,
+    //     교통정보·대안경로 없음 — 경유지 11개 미만): $5 / 1,000회.
+    //   - Routes API computeRoutes, Pro 등급(경유지 11개 이상은 이
+    //     등급으로 전환된다고 가정): $10 / 1,000회.
+    costUsdPerThousand: {
+      placesTextSearchPro: Number(env.COST_PLACES_TEXT_SEARCH_PRO_USD_PER_1000 || 32),
+      routesComputeEssentials: Number(env.COST_ROUTES_COMPUTE_ESSENTIALS_USD_PER_1000 || 5),
+      routesComputePro: Number(env.COST_ROUTES_COMPUTE_PRO_USD_PER_1000 || 10),
     },
+    // 계산용 환율 — **실시간 환율이 아니라 예산 산정을 위한 가정치다.**
+    // 실제 카드·PG 결제는 이 값과 무관하게 그때그때의 실제 환율로
+    // 이뤄진다. 이 값은 순수히 "우리 서버가 비용 한도를 얼마로 잡을지"
+    // 계산하는 내부 상수일 뿐이다.
+    costFxKrwPerUsd: Number(env.COST_FX_KRW_PER_USD || 1400),
+    costEstimate: buildCostEstimateMicros(env),
     // 서버가 직접 집행하는 예산 한도(마이크로원 정수, 0 이하 = 무제한).
-    // 초기 제안값은 BUSINESS_DECISIONS.md 3절의 월 5만원 목표에서
-    // 고정비를 뺀 나머지를 계정 수 가정으로 나눈 것 — 확정 아님, 전부
-    // env로 조정 가능.
+    // **여기에만 안전 여유(costSafetyMarginRatio)를 적용한다** — 실제
+    // 단가(costEstimate)는 안 부풀리고, "우리가 쓸 수 있다고 보는
+    // 한도"만 그만큼 낮춰 잡는다(환율 변동·요금 인상·우리가 놓친
+    // 부가 비용에 대비한 안전판). 초기 제안값은
+    // `docs/BUSINESS_DECISIONS.md` 3절의 월 5만원 목표에서 고정비를
+    // 뺀 나머지(Google 예산 약 32,000~45,000원)에 안전 여유를 적용해
+    // 보수적으로 잡은 것 — 확정 아님, 전부 env로 조정 가능.
+    costSafetyMarginRatio: Number(env.COST_SAFETY_MARGIN_RATIO || 0.15),
     costBudget: {
       perAccountDailyMicros: Number(env.COST_PER_ACCOUNT_DAILY_KRW_MICROS || 500_000_000), // 계정당 하루 약 500원
       globalDailyMicros: Number(env.COST_GLOBAL_DAILY_KRW_MICROS || 3_000_000_000), // 전체 하루 약 3,000원
-      globalMonthlyMicros: Number(env.COST_GLOBAL_MONTHLY_KRW_MICROS || 30_000_000_000), // 전체 한 달 약 30,000원(고정비 제외 Google 예산 제안치)
+      globalMonthlyMicros: Number(env.COST_GLOBAL_MONTHLY_KRW_MICROS || 27_000_000_000), // 전체 한 달 약 27,000원(Google 예산 제안치 32,000원에 15% 안전 여유 반영)
+      // 2026-09-10 재검토(5차) 신규 — "계정별 월간 비용 한도도
+      // 추가하라"는 지시 반영. 계정당 일일 한도만 있으면 매일 한도를
+      // 꽉 채워 쓰는 악성/오작동 계정이 한 달 내내 예산을 잠식할 수
+      // 있다.
+      perAccountMonthlyMicros: Number(env.COST_PER_ACCOUNT_MONTHLY_KRW_MICROS || 5_000_000_000), // 계정당 한 달 약 5,000원
     },
 
     adapters: {

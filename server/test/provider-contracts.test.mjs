@@ -83,7 +83,7 @@ async function ensureAccount(id) {
   t('주문 생성 — 서버가 orderId·금액을 authoritative하게 만들어 둠', !!order.orderId && order.amount === config.price.amountKrw);
 
   const mock = mockFetchOnce((url, init) => {
-    return jsonResponse(200, { status: 'DONE', orderId: order.orderId, totalAmount: order.amount, paymentKey: 'pay_key_1' });
+    return jsonResponse(200, { status: 'DONE', orderId: order.orderId, totalAmount: order.amount, currency: 'KRW', paymentKey: 'pay_key_1' });
   });
   const r = await confirmPayment({ accountId: 'acc_1', orderId: order.orderId, paymentKey: 'pay_key_1', amount: order.amount });
   mock.restore();

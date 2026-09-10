@@ -32,6 +32,9 @@ import { joinWaitlist } from './routes/waitlist.mjs';
 import { generateCourseRoute } from './routes/course-generation.mjs';
 import { getPlaces, putPlaces, getCourses, putCourses } from './routes/account-data.mjs';
 import { paymentConfigRoute, createOrderRoute, confirmOrderRoute, cancelOrderRoute } from './routes/payment.mjs';
+import { listTrips, createTrip, updateTrip, getTripCourses, putTripCourses, syncTrips } from './routes/trips.mjs';
+import { getVisits, markVisited, unmarkVisited, setWantRevisit, setNotes, syncVisits } from './routes/visits.mjs';
+import { suggestNextTripPlaces } from './routes/next-trip-suggestions.mjs';
 import { getVerifiedStatus } from './status.mjs';
 
 function readBody(req) {
@@ -141,6 +144,89 @@ async function handle(req, res) {
       const body = JSON.parse((await readBody(req)) || '{}');
       const result = await generateCourseRoute(accountId, body);
       return sendJson(res, result.status || (result.ok ? 200 : 400), result);
+    }
+
+    // 재방문 여행자 지원(2026-09-10 재검토 5차 5절) — 여행 분리(trips)와
+    // 방문 기록(visits). 전부 순수 기록 읽기/쓰기라 유료 API를 전혀 안
+    // 부른다 — 무료체험·이용권 상태와 무관하게 항상 동작한다(5-④ 지시).
+    if (req.method === 'GET' && pathname === '/api/trips') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      return sendJson(res, 200, listTrips(accountId));
+    }
+    if (req.method === 'POST' && pathname === '/api/trips') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const result = createTrip(accountId, body);
+      return sendJson(res, result.status, result);
+    }
+    // 6절 — 재방문 기록을 보호하는 동기화(버전 확인 후 충돌이면 조용히
+    // 덮어쓰지 않고 재병합). 예전 /api/places, /api/courses의 "전체
+    // 치환 PUT"과 달리, 이 엔드포인트는 기기가 보낸 각 항목의 version을
+    // 서버와 대조해 뒤처진 항목만 보수적으로 재병합한다.
+    if (req.method === 'POST' && pathname === '/api/trips/sync') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const result = syncTrips(accountId, body.trips);
+      return sendJson(res, result.status, result);
+    }
+    if (req.method === 'POST' && pathname === '/api/visits/sync') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const result = syncVisits(accountId, body.visits);
+      return sendJson(res, result.status, result);
+    }
+    const tripCoursesMatch = pathname.match(/^\/api\/trips\/([^/]+)\/courses$/);
+    if (tripCoursesMatch) {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      const tripId = decodeURIComponent(tripCoursesMatch[1]);
+      if (req.method === 'GET') {
+        const result = getTripCourses(accountId, tripId);
+        return sendJson(res, result.status || 200, result);
+      }
+      if (req.method === 'PUT') {
+        const body = JSON.parse((await readBody(req)) || '{}');
+        const result = putTripCourses(accountId, tripId, body.courses);
+        return sendJson(res, result.status, result);
+      }
+    }
+    const tripMatch = pathname.match(/^\/api\/trips\/([^/]+)$/);
+    if (tripMatch && req.method === 'PUT') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      const tripId = decodeURIComponent(tripMatch[1]);
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const result = updateTrip(accountId, tripId, body);
+      return sendJson(res, result.status, result);
+    }
+
+    if (req.method === 'GET' && pathname === '/api/visits') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      return sendJson(res, 200, getVisits(accountId));
+    }
+    // 5-③ 다음 여행 코스 후보 제안 — 순수 DB 조회/정렬이라 유료 API를
+    // 전혀 안 부른다(무료·유료 경계 5-④와 동일 원칙).
+    if (req.method === 'GET' && pathname === '/api/trips/next-suggestions') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      const mustIncludeIds = (url.searchParams.get('mustInclude') || '').split(',').map((s) => s.trim()).filter(Boolean);
+      const result = suggestNextTripPlaces(accountId, {
+        fromTripId: url.searchParams.get('fromTripId') || undefined,
+        preferUnvisited: url.searchParams.get('preferUnvisited') !== '0',
+        includeWantRevisit: url.searchParams.get('includeWantRevisit') !== '0',
+        mustIncludeIds,
+      });
+      return sendJson(res, result.status || 200, result);
+    }
+    const visitActionMatch = pathname.match(/^\/api\/visits\/([^/]+)\/(mark|unmark|want-revisit|notes)$/);
+    if (visitActionMatch && req.method === 'POST') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      const placeId = decodeURIComponent(visitActionMatch[1]);
+      const action = visitActionMatch[2];
+      const body = JSON.parse((await readBody(req)) || '{}');
+      let result;
+      if (action === 'mark') result = markVisited(accountId, placeId, { date: body.date, tripId: body.tripId, note: body.note });
+      else if (action === 'unmark') result = unmarkVisited(accountId, placeId, { date: body.date });
+      else if (action === 'want-revisit') result = setWantRevisit(accountId, placeId, !!body.wantRevisit);
+      else result = setNotes(accountId, placeId, body.notes);
+      return sendJson(res, result.status, result);
     }
 
     if (req.method === 'GET' && pathname === '/api/trial') {

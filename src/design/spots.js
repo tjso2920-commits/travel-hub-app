@@ -257,7 +257,28 @@ async function daLookupCandidateSheet(id) {
   const areaParam = p.area ? '&area=' + encodeURIComponent(p.area) : '';
   const r = await A.api('/api/places/lookup?q=' + encodeURIComponent(q) + areaParam, { token });
   if (!r.ok || !r.json || r.json.ok === false || typeof r.json.lat !== 'number') {
-    open('위치 확인', `<div class="detail"><h2>후보를 찾지 못했어요.</h2><p><b>${A.esc(p.name)}</b>에 대한 위치 후보를 서버에서 찾지 못했습니다. 구글 지도에서 직접 열어 확인해 주세요.</p><button class="primary" data-dismiss>돌아가기</button></div>`);
+    // 2026-09-10 재검토(5차) — "비용 한도 도달을 '못 찾았어요'로
+    // 표시하지 말고 원인별로 정확히 안내하라"는 지시 반영. r.ok(HTTP
+    // 상태 자체)가 false인 경우는 조회를 시도조차 못 한 상황(한도·예산·
+    // 인증)이고, r.ok가 true인데 r.json.ok===false인 경우만 "실제로
+    // 찾아봤지만 없었다"는 정직한 not-found다 — 이 둘을 같은 문구로
+    //뭉개지 않는다.
+    let title = '위치 확인'; let msg;
+    const reason = r.json && r.json.reason;
+    if (!r.ok && reason === 'unauthorized') {
+      showLoginSheet(() => daLookupCandidateSheet(id)); return;
+    } else if (!r.ok && (reason === 'account-daily-limit-reached')) {
+      msg = '오늘 위치 확인을 너무 많이 시도했어요. 내일 다시 시도해 주세요.';
+    } else if (!r.ok && reason === 'cost-budget-exceeded') {
+      msg = '지금은 위치 확인 서비스 이용 한도에 도달해 잠시 이용할 수 없어요. 나중에 다시 시도해 주세요.';
+    } else if (!r.ok && reason === 'service-daily-cap-reached') {
+      msg = '지금 위치 확인 서비스 전체 이용량이 많아 잠시 제한돼요. 나중에 다시 시도해 주세요.';
+    } else if (!r.ok) {
+      msg = '지금 위치 확인을 처리하지 못했어요. 잠시 후 다시 시도해 주세요.';
+    } else {
+      msg = `<b>${A.esc(p.name)}</b>에 대한 위치 후보를 서버에서 찾지 못했습니다. 구글 지도에서 직접 열어 확인해 주세요.`;
+    }
+    open(title, `<div class="detail"><h2>${!r.ok ? '지금은 확인할 수 없어요' : '후보를 찾지 못했어요'}</h2><p>${msg}</p><button class="primary" data-dismiss>돌아가기</button></div>`);
     return;
   }
   const cand = r.json;
@@ -347,7 +368,64 @@ function showRoute() {
     return;
   }
   const list = spots.filter((p) => p.city === city && route.has(p.id));
-  open(city + ' · 오늘 동선', `<div class="detail"><h2>오늘은 이곳으로.</h2><p>${list.length ? '담아 둔 ' + list.length + '곳을 확인하세요.' : '마음에 드는 장소를 먼저 골라보세요.'}</p>${list.map((p, i) => `<div class="route-row"><span>${i + 1}</span>${photoHTML(p, '')}<div><b>${A.esc(p.name)}</b><p>${A.esc(p.area)}</p></div><button data-remove="${p.id}" aria-label="${A.esc(p.name)} 동선에서 빼기">×</button></div>`).join('')}${list.length ? '<button class="primary" data-build-course>코스 만들기 ↗</button>' : ''}<button class="text-button" data-dismiss>스팟 더 고르기</button></div>`);
+  // 2026-09-10 재검토(5차) — "배치 조회 서버 기능은 있지만 화면 연결이
+  // 안 됐다"는 지적 반영. 오늘 동선에 담은 곳 중 위치가 아직 불확실한
+  // 곳이 있으면, 장소마다 상세를 열어 하나씩 누르는 대신 여기서 한
+  // 번에 확인할 수 있게 한다(실제 코스 후보로 좁혀진 상태에서만
+  // 묶어서 조회 — 가져오기 직후 전체를 조회하는 게 아니다).
+  const needLookupList = list.filter((p) => p.needsLookup);
+  open(city + ' · 오늘 동선', `<div class="detail"><h2>오늘은 이곳으로.</h2><p>${list.length ? '담아 둔 ' + list.length + '곳을 확인하세요.' : '마음에 드는 장소를 먼저 골라보세요.'}</p>${list.map((p, i) => `<div class="route-row"><span>${i + 1}</span>${photoHTML(p, '')}<div><b>${A.esc(p.name)}</b><p>${A.esc(p.area)}</p></div><button data-remove="${p.id}" aria-label="${A.esc(p.name)} 동선에서 빼기">×</button></div>`).join('')}${needLookupList.length ? `<button class="text-button" data-batch-lookup>위치 미확인 ${needLookupList.length}곳 한번에 확인하기 ↗</button>` : ''}${list.length ? '<button class="primary" data-build-course>코스 만들기 ↗</button>' : ''}<button class="text-button" data-dismiss>스팟 더 고르기</button></div>`);
+}
+
+/* 일괄 위치 확인 — /api/places/lookup-batch를 실제로 화면에 연결한다
+   (2026-09-10 재검토 5차: "배치 서버 구현과 사용자가 편하게 쓰는 화면
+   구현을 구분하라" — 이 함수가 그 화면 쪽이다). 단일 조회
+   (daLookupCandidateSheet)와 같은 원칙을 그대로 따른다: 절대 자동으로
+   좌표를 확정하지 않고, 후보마다 사람이 직접 "맞아요"를 눌러야
+   반영된다 — 여러 곳을 한 번에 "물어보기"만 묶었을 뿐, "확정"은 여전히
+   한 곳씩 사람이 한다. */
+let daBatchQueue = null;
+async function daBatchLookupFlow() {
+  const token = A.sessionToken(foodMap);
+  if (!token) { showLoginSheet(() => daBatchLookupFlow()); return; }
+  const list = spots.filter((p) => p.city === city && route.has(p.id) && p.needsLookup);
+  if (!list.length) return;
+  open('위치 확인', `<div class="detail"><h2>${list.length}곳의 후보를 한번에 찾는 중…</h2><p>잠시만요.</p></div>`);
+  const items = list.map((p) => ({ id: p.id, query: [p.name, p.area].filter(Boolean).join(' ').trim() || p.name, expectedArea: p.area || undefined }));
+  const r = await A.api('/api/places/lookup-batch', { method: 'POST', token, body: { items } });
+  if (!r.ok || !r.json || r.json.ok === false) {
+    const reason = r.json && r.json.reason;
+    let msg = '지금 위치를 한번에 확인하지 못했어요. 잠시 후 다시 시도해 주세요.';
+    if (reason === 'account-daily-limit-reached') msg = '오늘 위치 확인을 너무 많이 시도했어요. 내일 다시 시도해 주세요.';
+    else if (reason === 'cost-budget-exceeded' || reason === 'service-daily-cap-reached') msg = '지금은 위치 확인 서비스 이용 한도에 도달해 잠시 이용할 수 없어요. 나중에 다시 시도해 주세요.';
+    open('위치 확인', `<div class="detail"><h2>지금은 확인할 수 없어요</h2><p>${msg}</p><button class="primary" data-dismiss>돌아가기</button></div>`);
+    return;
+  }
+  const results = r.json.results || [];
+  const foundQueue = results.filter((x) => x.ok && x.result && x.result.ok && typeof x.result.lat === 'number');
+  const notFoundCount = results.length - foundQueue.length;
+  daBatchQueue = { items: foundQueue, idx: 0, notFoundCount, truncated: r.json.truncated, skippedCount: (r.json.skipped || []).length };
+  daShowBatchQueueStep();
+}
+function daShowBatchQueueStep() {
+  if (!daBatchQueue) return;
+  const { items, idx, notFoundCount, truncated, skippedCount } = daBatchQueue;
+  if (idx >= items.length) {
+    let note = `${items.length}곳 확인을 마쳤어요.`;
+    if (notFoundCount) note += ` ${notFoundCount}곳은 후보를 찾지 못했어요.`;
+    if (truncated) note += ` 한 번에 담을 수 있는 개수를 넘어 ${skippedCount}곳은 이번에 확인하지 못했어요 — 동선을 좁혀 다시 시도해 주세요.`;
+    open('위치 확인', `<div class="detail"><h2>확인이 끝났어요</h2><p>${A.esc(note)}</p><button class="primary" data-dismiss>돌아가기</button></div>`);
+    daBatchQueue = null;
+    return;
+  }
+  const item = items[idx];
+  const p = foodMap.places.find((x) => x.id === item.id);
+  const cand = item.result;
+  const ambiguousNote = cand.ambiguous ? ' 이 이름의 장소가 여러 곳 있을 수 있어요 —' : '';
+  open(`위치 확인 (${idx + 1}/${items.length})`, `<div class="detail"><h2>이 위치가 맞나요?</h2><p><b>${A.esc(cand.name || (p && p.name) || '')}</b>${cand.address ? `<br>${A.esc(cand.address)}` : ''}<br>위도 ${cand.lat.toFixed(5)}, 경도 ${cand.lng.toFixed(5)}</p>` +
+    `<p class="inline-note">이름으로 찾은 후보일 뿐 확정된 위치가 아닙니다 —${ambiguousNote} 실제로 저장하신 곳이 맞는지 꼭 확인한 뒤에만 저장해 주세요.</p>` +
+    `<button class="primary" data-batch-confirm="${A.esc(item.id)}|${cand.lat}|${cand.lng}|${A.esc(cand.placeId || '')}">맞아요 · 이 위치로 저장</button>` +
+    `<button class="text-button" data-batch-skip>건너뛰기</button></div>`);
 }
 /* ── 짧은 구매 흐름(로드맵 ⑨) ────────────────────────────────────────
    샘플 체험(로그인 없음) → 가져오기 → 로그인 → 개인화 코스 1회 무료 →
@@ -947,6 +1025,17 @@ $('#sheetContent').onclick = (e) => {
   if (b.dataset.lookupConfirm) {
     const [pid, lat, lng, placeId] = b.dataset.lookupConfirm.split('|');
     return finishLookupConfirm(pid, +lat, +lng, placeId);
+  }
+  if (b.hasAttribute('data-batch-lookup')) return daBatchLookupFlow();
+  if (b.dataset.batchConfirm) {
+    const [pid, lat, lng, placeId] = b.dataset.batchConfirm.split('|');
+    finishLookupConfirm(pid, +lat, +lng, placeId);
+    if (daBatchQueue) { daBatchQueue.idx += 1; daShowBatchQueueStep(); }
+    return;
+  }
+  if (b.hasAttribute('data-batch-skip')) {
+    if (daBatchQueue) { daBatchQueue.idx += 1; daShowBatchQueueStep(); }
+    return;
   }
   if (b.dataset.dupMerge) { const [x, y] = b.dataset.dupMerge.split('|'); return resolveDup(x, y, 'merge'); }
   if (b.dataset.dupDismiss) { const [x, y] = b.dataset.dupDismiss.split('|'); return resolveDup(x, y, 'dismiss'); }

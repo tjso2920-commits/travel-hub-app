@@ -226,7 +226,119 @@ function migrate(d) {
       estimated_cost_micros INTEGER NOT NULL,
       created_at TEXT NOT NULL
     );
+
+    /* 2026-09-10 재검토(5차) — "재방문 여행자 지원"(5절): 장소 보관함
+       (account_places)은 계정 단위로 그대로 두고, 여행은 각자 고유한
+       tripId·이름·날짜·숙소·코스 저장을 갖는다. 같은 도시로 여러 번
+       떠난 여행도 각각 따로 저장·열람·전환할 수 있어야 하고, 새 여행을
+       만들거나 도시를 바꿔도 기존 기록은 절대 지워지지 않는다.
+
+       version: R5-7(재방문 기록을 보호하는 동기화)이 쓰는 낙관적 동시성
+       번호 — 기기가 마지막으로 받아 간 버전과 지금 서버 버전이 다르면
+       "조용한 전체 덮어쓰기" 대신 충돌로 보고 재병합한다(trips.mjs 참고). */
+    CREATE TABLE IF NOT EXISTS trips (
+      trip_id TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL REFERENCES accounts(id),
+      city TEXT NOT NULL,
+      name TEXT,
+      start_date TEXT,
+      end_date TEXT,
+      lodging TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 1
+    );
+    /* trip_courses: 예전 account_courses(계정+도시+날짜)를 대신해
+       "여행(trip_id)+날짜"로 코스를 저장한다 — 같은 도시라도 서로 다른
+       여행이면 완전히 분리된 자리에 저장된다. */
+    CREATE TABLE IF NOT EXISTS trip_courses (
+      trip_id TEXT NOT NULL REFERENCES trips(trip_id),
+      date TEXT NOT NULL,
+      data TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (trip_id, date)
+    );
+    /* place_visits: 장소 하나(계정 전체 보관함 기준 — 특정 여행에 종속
+       되지 않는다)의 방문 기록. visited/want_revisit은 서로 독립된
+       불리언이라 동시에 둘 다 켤 수 있다("방문함"이면서 "다시 가고
+       싶음"). visited_dates는 실제 방문 완료 처리를 할 때마다 쌓이는
+       날짜 배열(같은 장소를 여러 번 방문한 기록·개인 메모를 보존하기
+       위해 배열로 둔다) — 코스에 장소를 담는 행위 자체는 이 표를 절대
+       건드리지 않는다(자동 방문처리 금지 지시).
+       removed_visit_dates: "실수로 표시한 걸 취소"한 날짜의 흔적(무덤
+       표시) — R5-7 동기화에서, 오래된 기기가 이미 지워진 날짜를 다시
+       들고 나타나도 union 병합이 되살리지 못하게 막는 근거로 쓴다. */
+    CREATE TABLE IF NOT EXISTS place_visits (
+      account_id TEXT NOT NULL REFERENCES accounts(id),
+      place_id TEXT NOT NULL,
+      visited INTEGER NOT NULL DEFAULT 0,
+      want_revisit INTEGER NOT NULL DEFAULT 0,
+      visited_dates TEXT NOT NULL DEFAULT '[]',
+      removed_visit_dates TEXT NOT NULL DEFAULT '[]',
+      notes TEXT,
+      updated_at TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 1,
+      PRIMARY KEY (account_id, place_id)
+    );
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      name TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL
+    );
   `);
+
+  migrateLegacyCoursesIntoTrips(d);
+}
+
+/* 2026-09-10 재검토(5차) — "기존 city+date 코스 데이터와 단일 일정
+   데이터가 손실 없이 마이그레이션되어야 한다"(5-① 지시)는 요구를
+   실제로 수행한다. schema_migrations로 딱 한 번만 실행되게 막는다(서버가
+   재시작될 때마다 같은 데이터를 중복으로 여행을 또 만들지 않도록).
+
+   규칙: 계정×도시 조합 하나당 새 여행 하나를 만든다(예전 구조는 "여행"
+   개념이 없이 도시+날짜만 있었으므로, 같은 도시로의 모든 기존 날짜를
+   하나의 여행으로 묶는 것이 가장 손실 없는 변환이다 — 이후로 그
+   계정이 같은 도시에 다시 가면 완전히 새로운 여행이 별도로 생긴다).
+   예전 단일 코스(courses 테이블, 멀티데이 도입 이전 구조)도 city/date
+   필드가 있으면 같은 그룹에 합치고, 없으면 'unknown' 도시의 별도
+   여행으로 만들어 데이터 자체는 절대 버리지 않는다. */
+function migrateLegacyCoursesIntoTrips(d) {
+  const already = d.prepare('SELECT 1 FROM schema_migrations WHERE name = ?').get('trips_v1_from_account_courses');
+  if (already) return;
+
+  const groups = new Map(); // key: accountId + '||' + city -> { accountId, city, rows: [{date, data, updatedAt}] }
+  const getGroup = (accountId, city) => {
+    const key = accountId + '||' + city;
+    let g = groups.get(key);
+    if (!g) { g = { accountId, city, rows: [] }; groups.set(key, g); }
+    return g;
+  };
+
+  for (const r of d.prepare('SELECT account_id, city, date, data, updated_at FROM account_courses').all()) {
+    getGroup(r.account_id, r.city).rows.push({ date: r.date, data: r.data, updatedAt: r.updated_at });
+  }
+  for (const r of d.prepare('SELECT account_id, data, updated_at FROM courses').all()) {
+    let obj = null;
+    try { obj = JSON.parse(r.data); } catch (e) { obj = null; }
+    const city = (obj && obj.city) || 'unknown';
+    const date = (obj && obj.date) || String(r.updated_at).slice(0, 10);
+    const g = getGroup(r.account_id, city);
+    if (!g.rows.some((x) => x.date === date)) g.rows.push({ date, data: r.data, updatedAt: r.updated_at });
+  }
+  if (!groups.size) {
+    d.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)').run('trips_v1_from_account_courses', nowIso());
+    return;
+  }
+
+  const now = nowIso();
+  const insertTrip = d.prepare('INSERT INTO trips (trip_id, account_id, city, name, start_date, end_date, lodging, created_at, updated_at, version) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, 1)');
+  const insertCourse = d.prepare('INSERT INTO trip_courses (trip_id, date, data, updated_at) VALUES (?, ?, ?, ?)');
+  for (const g of groups.values()) {
+    const dates = g.rows.map((r) => r.date).sort();
+    const tripId = 'trip_migrated_' + uuid();
+    insertTrip.run(tripId, g.accountId, g.city, `${g.city} 여행(이전 기록)`, dates[0], dates[dates.length - 1], now, now);
+    for (const r of g.rows) insertCourse.run(tripId, r.date, r.data, r.updatedAt);
+  }
+  d.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)').run('trips_v1_from_account_courses', now);
 }
 
 export function uuid() {

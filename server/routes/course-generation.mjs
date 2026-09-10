@@ -32,6 +32,7 @@ import { assembleCourse } from '../course-assembly.mjs';
 import { trialStatus, consumeTrial } from './trial.mjs';
 import { checkEntitlement } from './entitlement.mjs';
 import { upsertAccountCourse } from './account-data.mjs';
+import { upsertTripCourse } from './trips.mjs';
 import { checkAndIncrement, hourWindow } from '../rate-limit.mjs';
 import { acquireLock, releaseLock } from '../locks.mjs';
 
@@ -44,7 +45,7 @@ function requestHash(body) {
   const material = JSON.stringify({
     city: body.city, date: body.date, origin: body.origin,
     startMinutes: body.startMinutes, budgetMinutes: body.budgetMinutes,
-    placeIds,
+    placeIds, tripId: body.tripId || null,
   });
   return crypto.createHash('sha256').update(material).digest('hex');
 }
@@ -109,6 +110,17 @@ export async function generateCourseRoute(accountId, body) {
   if (invalidReason) return { ok: false, status: 400, reason: invalidReason };
   const origin = body.origin;
   const places = body.places;
+  // 2026-09-10 재검토(5차) — 재방문 여행자 지원: 요청이 tripId를 실어
+  // 보내면(새 여행 분리 구조) 그 여행 소유권을 실제 비용이 드는 라우팅
+  // 호출 전에 먼저 확인한다 — 남의 여행이거나 없는 여행이면 유료 API를
+  // 부르지도 않고 그 자리에서 거부한다. tripId가 없으면 예전 구조
+  // (account_courses, city+date 하나짜리 계정별 일정)로 그대로 저장한다
+  // (하위 호환 — 기존 클라이언트/테스트가 안 깨지게).
+  const tripId = body.tripId ? String(body.tripId) : null;
+  if (tripId) {
+    const tripRow = openDb().prepare('SELECT account_id FROM trips WHERE trip_id = ?').get(tripId);
+    if (!tripRow || tripRow.account_id !== accountId) return { ok: false, status: 404, reason: 'trip-not-found' };
+  }
 
   const jobId = acquireLock('generation_locks', 'account_id', accountId, config.generationLockTimeoutSeconds);
   if (!jobId) {
@@ -182,7 +194,8 @@ export async function generateCourseRoute(accountId, body) {
         const consumed = consumeTrial(accountId);
         trialConsumed = !!consumed.consumed;
       }
-      upsertAccountCourse(accountId, course);
+      if (tripId) upsertTripCourse(accountId, tripId, date, course);
+      else upsertAccountCourse(accountId, course);
       success = { ok: true, status: 200, course, trialConsumed, plan: isPaid ? 'paid' : 'free' };
       storeResult(idempotencyKey, accountId, hash, 'success', success);
       db.exec('COMMIT');

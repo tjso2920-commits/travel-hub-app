@@ -28,6 +28,23 @@
  *    처리하라"). 배치 크기 자체가 서버 설정(`placeLookupBatchMaxItemsPerCall`)
  *    으로 제한된다 — 코스 후보가 너무 많으면 그 자리에서 잘라내고
  *    "나머지는 선택을 좁혀 달라"고 정직하게 알린다.
+ *
+ * 2026-09-10 재검토(5차) — ChatGPT가 실제로 재현한 캐시 버그 2건을
+ * 고쳤다:
+ * 1. **캐시 키가 지역을 안 담았다**: 같은 질의 문자열로 지역 힌트만
+ *    다르게(Tokyo → Kyoto) 조회하면, Kyoto 조회가 Tokyo 조회 결과를
+ *    그대로 돌려받았다(캐시 키가 질의 문자열만 봤기 때문). 이제 캐시
+ *    키에 `expectedArea`(결과에 실제 영향을 주는 조건)를 포함한다.
+ * 2. **동시 요청이 외부 호출을 중복으로 냈다**: 완전히 같은 질의를
+ *    동시에 두 번 보내면, 첫 번째가 아직 캐시에 결과를 쓰기 전에
+ *    두 번째가 캐시를 확인해 "없음"으로 보고 자기도 외부 호출을
+ *    했다(2회 발생). 이제 진행 중인 동일 조건 조회를 하나의 Promise로
+ *    합쳐(in-flight 병합), 두 번째 요청은 새 호출을 만들지 않고 첫
+ *    번째의 결과를 그대로 기다린다.
+ * 3. **실패/unavailable 결과가 정상 결과처럼 오래 캐시됐다**: "찾지
+ *    못함"(not-found)은 안정적인 답이라 캐시해도 되지만, 네트워크
+ *    오류·키 미설정 같은 일시적 실패는 캐시하지 않는다(다음 요청이
+ *    바로 다시 시도할 수 있어야 한다).
  */
 import { lookupPlace } from '../adapters/place-lookup.mjs';
 import { config } from '../config.mjs';
@@ -35,7 +52,14 @@ import { openDb, nowIso } from '../db.mjs';
 import { checkAndIncrement, dayWindow } from '../rate-limit.mjs';
 import { chargeCost } from '../cost-ledger.mjs';
 
-const CACHE_TTL_MS = 10 * 60 * 1000; // 10분 — 화면을 실수로 여러 번 눌러 생기는 중복만 줄인다.
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10분 — 화면을 실수로 여러 번 눌러 생기는 중복만 줄인다. Google Places API(New)의 캐시·재사용 정책 범위 안으로 의도적으로 짧게 뒀다(RELEASE_STATUS.md 참고 — 정확한 공식 한도는 이 세션이 재확인 못함).
+
+// 질의 문자열 자체는 같아도 지역 힌트가 다르면 결과가 달라야 한다
+// (동명 장소 판별 — place-lookup.mjs의 expectedArea). 캐시 키는 반드시
+// 결과에 영향을 주는 조건을 전부 포함해야 한다.
+function cacheKeyFor(query, expectedArea) {
+  return String(query).trim().toLowerCase() + '||area:' + String(expectedArea || '').trim().toLowerCase();
+}
 
 function cacheGet(key) {
   const db = openDb();
@@ -51,6 +75,21 @@ function cacheSet(key, result) {
     ON CONFLICT(query_key) DO UPDATE SET result = excluded.result, created_at = excluded.created_at
   `).run(key, JSON.stringify(result), nowIso());
 }
+// 안정적인 답만 캐시한다 — "찾지 못함"은 다시 물어봐도 어차피 같은
+// 결과일 가능성이 높지만, 네트워크 오류·설정 미비 같은 일시적 실패는
+// 정상 결과처럼 오래 재사용하면 안 된다(다음 요청이 곧바로 다시
+// 시도할 수 있어야 한다).
+function shouldCache(result) {
+  if (result && result.ok) return true;
+  return !!(result && result.reason === 'not-found');
+}
+
+// 완전히 같은 조건(질의+지역)의 조회가 동시에 여러 번 들어오면, 실제
+// 외부 호출은 하나만 나가고 나머지는 그 결과를 그대로 기다린다(동시
+// 요청 중복 호출 방지). 이 맵은 프로세스 하나 안에서만 유효하다 —
+// 여러 프로세스로 수평 확장하면 프로세스별로 각자 중복 제거를 한다
+// (cost-ledger.mjs의 "지원 운영 구성" 설명과 같은 한계).
+const inFlightLookups = new Map();
 
 /* 계정별 한도(perScope) → 전체 한도(global) 순으로 확인한다 — 계정
    한도로 거부될 요청이 전체 한도를 갉아먹지 않게(2026-09-10 재검토
@@ -68,16 +107,41 @@ function checkLimits(accountId, phaseScope, perAccountLimit, by) {
 }
 
 async function runOneLookup(accountId, query, expectedArea) {
-  const cacheKey = String(query).trim().toLowerCase();
+  const cacheKey = cacheKeyFor(query, expectedArea);
   const cached = cacheGet(cacheKey);
   if (cached) return { ok: true, result: cached, cached: true };
 
-  const charge = chargeCost({ accountId, service: 'places', sku: 'places-text-search' });
-  if (!charge.ok) return { ok: false, status: 503, reason: 'cost-budget-exceeded', detail: charge.reason };
+  // 이미 같은 조건으로 진행 중인 조회가 있으면 새 외부 호출을 내지
+  // 않고 그 결과를 그대로 기다린다(동시 요청 중복 호출 방지 — 실제로
+  // 재현된 버그의 수정).
+  const existing = inFlightLookups.get(cacheKey);
+  if (existing) {
+    const outcome = await existing;
+    if (!outcome.ok) return outcome; // 비용 한도 등으로 실패한 결과도 그대로 공유
+    return { ok: true, result: outcome.result, cached: true, deduped: true };
+  }
 
-  const result = await lookupPlace({ query, expectedArea });
-  cacheSet(cacheKey, result);
-  return { ok: true, result };
+  const promise = (async () => {
+    // 2026-09-10 재검토(5차): 실제로 외부에 나갈 요청일 때만 비용을
+    // 청구한다 — services.placeLookup이 'real'이 아니면(test/unavailable)
+    // lookupPlace()는 애초에 네트워크를 타지 않는다(어댑터 안에서
+    // 즉시 반환). 그런데도 비용을 청구하면 "실제로 나가지도 않은
+    // 호출"에 예산을 쓰는 꼴이라, routing.mjs가 실제 Google Routes
+    // 호출 경로 안에서만 비용을 청구하는 것과 같은 원칙으로 맞춘다.
+    if (config.services.placeLookup === 'real') {
+      const charge = chargeCost({ accountId, service: 'places', sku: 'places-text-search' });
+      if (!charge.ok) return { ok: false, status: 503, reason: 'cost-budget-exceeded', detail: charge.reason };
+    }
+    const result = await lookupPlace({ query, expectedArea });
+    if (shouldCache(result)) cacheSet(cacheKey, result);
+    return { ok: true, result };
+  })();
+  inFlightLookups.set(cacheKey, promise);
+  try {
+    return await promise;
+  } finally {
+    inFlightLookups.delete(cacheKey);
+  }
 }
 
 /* 단일 조회(GET /api/places/lookup) — phase는 항상 requery 한도만 받는다

@@ -43,7 +43,7 @@
 import { config } from '../config.mjs';
 import { markVerified } from '../status.mjs';
 import { fetchWithTimeout } from '../net.mjs';
-import { chargeCost } from '../cost-ledger.mjs';
+import { chargeCostBatch } from '../cost-ledger.mjs';
 
 const WALK_MIN_PLAUSIBLE_MPS = 0.3;
 const WALK_MAX_PLAUSIBLE_MPS = 2.2;
@@ -189,12 +189,20 @@ async function callGoogleRoutesAll(origin, ordered, accountId) {
   const points = [origin, ...ordered];
   const segments = splitIntoSegments(points);
 
-  for (const seg of segments) {
+  // 2026-09-10 재검토(5차) — ChatGPT가 재현한 버그 수정: 세그먼트마다
+  // chargeCost를 따로 부르면, 앞쪽 세그먼트가 예산을 통과해 먼저
+  // 기록된 뒤 뒤쪽 세그먼트에서 예산이 모자라 전체 작업을 포기해도
+  // 앞쪽 기록은 원장에 그대로 남았다(실제 호출은 0번 나갔는데 비용은
+  // 남는 모순 — 40곳/고요금1원/계정한도1원으로 재현됨). 이제 전체
+  // 세그먼트 계획을 먼저 다 세운 뒤 `chargeCostBatch` 한 번으로
+  // "전부 확인 → 전부 기록"을 하나의 DB 트랜잭션으로 처리한다 —
+  // 하나라도 예산을 넘으면 그 무엇도 기록되지 않는다.
+  const plan = segments.map((seg) => {
     const intermediateCount = seg.length - 2;
-    const sku = intermediateCount >= config.routesHighVolumeThreshold ? 'routes-compute-highvolume' : 'routes-compute';
-    const charge = chargeCost({ accountId, service: 'routes', sku });
-    if (!charge.ok) return { ok: false, reason: 'cost-budget-exceeded', detail: charge.reason };
-  }
+    return { sku: intermediateCount >= config.routesHighVolumeThreshold ? 'routes-compute-highvolume' : 'routes-compute' };
+  });
+  const charge = chargeCostBatch({ accountId, service: 'routes', charges: plan });
+  if (!charge.ok) return { ok: false, reason: 'cost-budget-exceeded', detail: charge.reason };
   // 예산 확인을 전부 통과했으니 이제 실제로 순서대로 호출한다. 이 시점
   // 이후의 실패(네트워크 오류·타임아웃 등)는 "돈은 이미 쓰기로 확정
   // 기록됐지만 결과를 못 받은" 상황이다 — cost-ledger.mjs 설계 참고.

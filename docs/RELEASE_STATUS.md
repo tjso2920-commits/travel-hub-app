@@ -3,19 +3,26 @@
 작성: 2026-09-10(1차) · 갱신: 2026-09-10(2차 — 확정 상품 반영) ·
 갱신: 2026-09-10(3차 — 결제/이메일/경로 공급자 확정, 서버 집행 구조
 재설계) · 갱신: 2026-09-10(4차 — ChatGPT가 실제로 재현한 문제 수정,
-API 비용 통제 실제 구현, 경유지 상한 반영) · 브랜치 `design-integration`
+API 비용 통제 실제 구현, 경유지 상한 반영) · 갱신: 2026-09-10(5차 —
+비용 SKU 단가 정확화, 비용 예약 원자성 강화, 장소조회 캐시·동시성
+버그 수정, 결제·타임아웃 경계 6건, **재방문 여행자 지원 신규**,
+재방문 기록 보호 동기화) · 브랜치 `design-integration`
 
-**4차 갱신 배경**: ChatGPT가 3차 결과물을 직접 코드로 재현·검토한 뒤
-구체적인 문제를 지적했다 — (1) 운영에서 경로 API 키가 없으면
-`computeWalkingRoute`가 테스트 시뮬레이터로 빠져 `routedReal:true`인
-가짜 실제 경로를 만들 수 있음(실제로 `APP_ENV=production`+키 없음
-상태에서 재현됨), (2) `/api/payment/cancel`이 계정 소유자를 대조하지
-않아 다른 계정의 주문을 취소할 수 있음, (3) 코스 생성의 체험 차감·
-결과 저장이 트랜잭션으로 묶여 있지 않음, (4) 장소 조회가 Legacy Find
-Place의 첫 후보를 그대로 확정함, (5) API 호출 비용을 서버가 전혀
-통제하지 않아 9,900원 상품에서 수천 원 이상의 비용이 발생할 수 있는
-구조, (6) Google Routes 경유지 개수 상한을 안 지킴. 이 문서는 그
-지적 하나하나에 대한 실제 코드 수정 결과를 정리한다.
+**5차 갱신 배경**: ChatGPT가 4차 결과물을 다시 코드로 재현·검토하고
+새 테스트 3건을 직접 돌려 전부 통과를 확인한 뒤, 이번엔 (1) 비용
+SKU 단가가 실제 호출 필드 기준(Text Search **Pro** 등급)이 아니라
+기억에 의존한 최저 등급으로 잘못 추정돼 있었고, (2) `chargeCost`가
+세그먼트별로 따로 불려 "실제 호출 0번인데 비용 1건이 남는" 부분기록
+버그가 있었고, (3) 장소 조회 캐시가 지역 힌트를 안 담아 도시가 다른
+동명 질의가 서로 결과를 오염시켰고 동시 요청이 중복 호출을 냈으며,
+(4) 결제·타임아웃 경계에 6가지 남은 틈(승인 응답 필드 누락 우회,
+여러 pending 주문으로 중복구매 차단 우회, 부분취소 판정 기준, 결제
+가능 판정 범위, 응답 본문 읽기 단계 타임아웃 미보호, 라우트 실패
+응답 상태 덮어쓰기)이 있다고 지적했다 — 전부 이번 세션에서 실제
+코드로 재현·수정했다(3절 표). 여기에 더해, 같은 도시·나라를
+반복 방문하는 여행자를 위한 **재방문 여행자 지원**(장소 보관함/여행
+분리, 방문 기록, 다음 여행 코스 후보 제안, 동기화 충돌 보호)을 신규
+범위로 구현했다.
 
 - **①코드 완료** — 동작에 필요한 코드가 전부 작성됐고, 외부 서비스가
   없거나 실제 HTTP 요청으로 검증까지 끝난 기능.
@@ -26,15 +33,19 @@ Place의 첫 후보를 그대로 확정함, (5) API 호출 비용을 서버가 �
 - **④사용자 설정 필요** — 코드는 있지만 실제 키가 없거나
   (EGRESS_BLOCKED로 이 세션이 발급받지 못함), 사용자가 직접 키를
   넣고 처음 검증해야 하는 항목.
+- **⑤서버 완료·화면 미연결**(5차 신규 분류) — 서버 API·DB 스키마는
+  실제 HTTP 요청으로 검증까지 끝났지만, `src/design`의 실제 사용자
+  화면(spots.js 등)이 아직 그 API를 부르지 않는 항목. "배치 서버
+  구현"과 "사용자가 편하게 쓰는 화면"을 구분하라는 지시에 따라, 이
+  상태를 ①로 부풀리지 않고 명시적으로 구분한다.
 
 **이번에도 ③(실제 연결 검증)은 늘지 않았다** — 네트워크 제약은
-3차와 동일하게 남아 있다(`docs.tosspayments.com`, `resend.com`,
+4차와 동일하게 남아 있다(`docs.tosspayments.com`, `resend.com`,
 `developers.google.com`, `mapsplatform.google.com` 전부 이번 세션에도
-다시 시도했지만 여전히 접속 불가). 4차의 진짜 변화는 **① 코드
-완료·실제 재현 테스트 통과 항목이 늘어난 것**이다 — 특히 "설정
-함수만 통과하고 실제 엔드포인트는 검증 안 됨" 같은 반쪽짜리 검증이
-없도록, 지적된 각 문제를 실제 HTTP 요청·실제 DB 상태로 재현하는
-전용 테스트를 새로 만들었다(5절).
+다시 시도했지만 여전히 접속 불가). 5차의 진짜 변화는 **① 코드
+완료·실제 재현 테스트 통과 항목이 늘어난 것**과 **재방문 여행자
+지원의 서버 쪽 전체가 새로 생긴 것(단, 화면은 아직 미연결 — ⑤)**
+이다.
 
 ---
 
@@ -81,13 +92,36 @@ Place의 첫 후보를 그대로 확정함, (5) API 호출 비용을 서버가 �
 | 한글/가나 완성형 폰트, 전송량 최적화 | **①** | `scripts/test-font-coverage.mjs` |
 | cp1_→cs1_ 저장소 마이그레이션 | **①** | `scripts/test-storage-migration.mjs` |
 | 소개 페이지 + 사전 신청 | **①** | `scripts/test-landing-page.mjs` 11개 |
+| **비용 SKU 단가 — 공식 등급·달러 단가·계산용 환율·안전 여유 분리** | **①** | `server/config.mjs`의 `buildCostEstimateMicros`, `server/test/config.test.mjs` — Text Search **Pro**($32/1000)·Routes Compute Essentials($5/1000)/Pro($10/1000) 등급을 실제 사용 필드 기준으로 반영(5차), FX는 계산용 가정치(1,400원/$)로 명시 분리, 안전 여유(`costSafetyMarginRatio`)는 예산 상한에만 적용하고 단가 자체엔 안 섞음 |
+| **비용 예약 — 세그먼트 전체를 하나의 트랜잭션으로 all-or-nothing 확정** | **①** | `server/cost-ledger.mjs`의 `chargeCostBatch`(`BEGIN IMMEDIATE`), `server/test/cost-budget-allornothing.test.mjs` — "첫 세그먼트는 예산 안에 들어도 전체 합계가 넘으면 그 무엇도 기록 안 함"을 실제로 재현·확인(5차, ChatGPT가 재현한 부분기록 버그 수정) |
+| **계정별 월간 비용 한도 신설** | **①** | `server/config.mjs`의 `costBudget.perAccountMonthlyMicros` |
+| **장소 조회 — 캐시 키에 지역 힌트 포함(동명 장소 캐시 오염 방지)** | **①** | `server/routes/places.mjs`, `server/test/reliability-and-cost.test.mjs` §6 — Tokyo/Kyoto 같은 질의·다른 지역 힌트가 서로 결과를 오염시키지 않고 각자 재조회됨을 확인(5차) |
+| **장소 조회 — 동시 중복 요청 in-flight 병합** | **①** | 〃 — 완전히 같은 조건의 동시 요청 2건이 실제 외부 호출은 1건만 나감을 확인(5차) |
+| **장소 조회 — 실패/설정미비 응답은 오래 캐시하지 않음** | **①** | `server/routes/places.mjs`의 `shouldCache` — `ok:true`·`not-found`만 캐시, `network-error`/`no-api-key-configured` 등은 캐시 안 함(5차) |
+| **장소 조회 일괄 확인 화면 연결(`/api/places/lookup-batch`)** | **①** | `src/design/spots.js`의 `daBatchLookupFlow` — "오늘 동선"에서 좌표 미확인 장소가 있을 때만 노출, 가져오기·목록열람만으로는 절대 안 뜸(5차 신규 — 배치 서버와 화면을 실제로 연결) |
+| **결제 — `paymentMatchesOrder` 필드 누락 시 무조건 통과하던 버그 수정 + paymentKey 대조 추가** | **①** | `server/adapters/payment-toss.mjs`, `server/test/reliability-and-cost.test.mjs`(a) — 주문번호·금액·통화·결제키 중 하나라도 없으면 불일치로 거부(5차) |
+| **결제 — 여러 pending 주문으로 중복구매 차단 우회 방지(confirm-time 검사)** | **①** | 〃(b) — 두 주문이 경쟁적으로 만들어져도, 이미 활성 이용권을 부여한 다른 주문이 있으면 confirm 단계에서 토스 호출 전에 거부 |
+| **결제 — 부분취소 판정을 공급자 응답(상태·잔액·누적취소액) 기준으로** | **①** | 〃(c) — 클라이언트가 부분 취소를 요청해도 공급자 응답이 잔액 0이면 전액으로 정확히 기록 |
+| **결제 — 결제 가능 여부 판정 확장(일일예산·최소생성비·라우팅불가)** | **①** | `server/adapters/payment-toss.mjs`의 `isServiceUnavailableForNewSales` — 월간 한도 완전 소진뿐 아니라 일일 한도·최소 코스 생성비 부족·운영에서 경로 키 없음까지 신규 판매 차단 사유로 봄, 새 주문만 막고 진행 중인 confirm은 안 건드림 |
+| **결제 — 이미 승인된 결제의 복구는 신규판매 차단과 분리** | **①** | 〃(e) — 같은 주문의 재확인(복구)은 차단 로직에 안 걸림을 확인 |
+| **결제 — `createOrderRoute`가 실패 응답을 200으로 덮어쓰던 버그 수정** | **①** | `server/routes/payment.mjs`(f) |
+| **타임아웃 — 응답 본문 읽기 단계까지 보호(헤더만 받고 끝나던 버그 수정)** | **①** | `server/net.mjs`의 `fetchWithTimeout`, `server/test/reliability-and-cost.test.mjs` §8(g) — 헤더 수신 후 본문 스트림이 영원히 멈추는 응답도 결국 타임아웃으로 정리됨을 재현 확인 |
+| **재방문 여행자 — 여행 분리(trips)·같은 도시 재방문 여행도 각각 저장** | **①**(서버) **⑤**(화면 미연결) | `server/routes/trips.mjs`, `server/db.mjs`(schema), `server/test/trips-and-visits.test.mjs` — 새 여행·도시 전환이 기존 기록을 절대 안 지움을 확인, 기존 city+date/단일 일정 데이터도 서버 재시작 시 손실 없이 마이그레이션(파일 DB 기반 재현 테스트로 확인) |
+| **재방문 여행자 — 방문 기록(미방문/방문함/다시가고싶음, 반복 방문 날짜·메모)** | **①**(서버) **⑤**(화면 미연결) | `server/routes/visits.mjs`, `server/test/trips-and-visits.test.mjs` — 코스에 담기만 해선 자동 방문처리 안 됨, 방문완료/취소(되돌리기) 둘 다 가능, 방문함+다시가고싶음 동시 설정 가능함을 확인 |
+| **재방문 여행자 — 다음 여행 코스 후보 제안(미방문 우선·다시가고싶음 포함·과거 미방문 이월)** | **①**(서버) **⑤**(화면 미연결) | `server/routes/next-trip-suggestions.mjs`, `server/test/next-trip-suggestions.test.mjs` — "미방문 우선"은 배제가 아니라 정렬, 사용자가 명시적으로 고른 곳은 방문 상태와 무관하게 항상 포함됨(코스 생성 자체가 방문 상태를 아예 안 봄)을 확인 |
+| **재방문 여행자 — 무료/유료 경계(기록 읽기·쓰기는 항상 무료)** | **①** | `server/test/trips-and-visits.test.mjs` §4 — 여행 여러 개 생성·도시 전환·방문 기록 읽기/쓰기를 반복해도 무료체험이 전혀 안 깎이고, 유료 이용권이 없어도 방문 기록 API가 그대로 동작함을 확인 |
+| **재방문 기록 보호 동기화 — 버전 확인 후 충돌 시 재병합(조용한 전체 덮어쓰기 방지)** | **①**(서버) **⑤**(화면 미연결) | `server/routes/trips.mjs`의 `syncTrips`, `server/routes/visits.mjs`의 `syncVisits`, `server/test/trips-visits-sync.test.mjs` — 지정된 5개 시나리오(기기A 추가 후 오래된 기기B 저장/서로 다른 여행 추가/같은 장소 다른 날짜/삭제 후 오래된 기기 재연결/계정 전환 시 데이터 격리) 전부 재현·확인 |
 
-**요약**: ChatGPT가 지적한 6가지 문제(가짜 실제경로, 결제 취소 권한
-미대조, 트랜잭션 미보장, Legacy Places API, 비용 통제 부재, 경유지
-상한 미반영) **전부 실제 코드 수정 + 재현 테스트 통과까지 이번
-세션에서 끝냈다.** 남은 것은 3차와 동일하게 네 공급자(Toss/Resend/
-Google Places/Google Routes)의 ③(실제 키 연결) — 이 세션의 네트워크
-제약 때문이며, 코드가 없어서가 아니다(2절 참고).
+**요약**: ChatGPT가 4차에서 지적한 6가지 문제에 이어, 5차에서 지적한
+비용 SKU 단가·비용 예약 부분기록·장소조회 캐시/동시성·결제 경계
+6건까지 **전부 실제 코드 수정 + 재현 테스트 통과까지 이번 세션에서
+끝냈다.** 재방문 여행자 지원(신규 범위)은 **서버 API·DB·마이그레이션
+전체가 완료 및 재현 테스트 통과**했지만, `src/design`의 실제 사용자
+화면은 아직 이 API들을 부르지 않는다(⑤) — 다음 세션에서 화면을
+연결해야 사용자가 실제로 쓸 수 있다(7절 "다음에 할 일" 참고). 남은
+③(실제 키 연결) 미검증은 4차와 동일하게 네 공급자(Toss/Resend/
+Google Places/Google Routes)의 네트워크 제약 때문이며, 코드가
+없어서가 아니다(2절 참고).
 
 ---
 
@@ -154,6 +188,27 @@ Google Places/Google Routes)의 ③(실제 키 연결) — 이 세션의 네트�
 
 ---
 
+## 3-1. 이번 5차 갱신에서 고친 문제 목록(ChatGPT 재현 기준)
+
+| # | 지적된 문제 | 고친 내용 | 재현 테스트 |
+|---|---|---|---|
+| 1 | 비용 SKU가 최저 등급으로 잘못 추정(실제는 Text Search Pro 등급) | 공식 등급·달러 단가·계산용 환율·안전 여유를 분리해 설정, 실제 요청 필드 기준으로 등급 반영 | `server/test/config.test.mjs` |
+| 2 | `chargeCost`가 세그먼트별로 따로 불려 부분기록(실제 호출 0번인데 비용 1건 남음) | `chargeCostBatch`로 전체 합계를 하나의 트랜잭션(`BEGIN IMMEDIATE`)에서 확인 후 all-or-nothing 기록 | `server/test/cost-budget-allornothing.test.mjs` |
+| 3 | 계정별 월간 비용 한도 없음 | `costBudget.perAccountMonthlyMicros` 신설 | `server/test/config.test.mjs` |
+| 4 | 장소 조회 캐시 키가 지역을 안 담아 동명 장소 캐시 오염(Tokyo→Kyoto) | 캐시 키에 `expectedArea` 포함 | `server/test/reliability-and-cost.test.mjs` §6 |
+| 5 | 동시에 같은 질의를 보내면 중복 외부 호출 발생 | in-flight 요청을 하나의 Promise로 병합 | 〃 §6 |
+| 6 | 실패/설정미비 응답이 정상 결과처럼 오래 캐시됨 | `shouldCache`로 안정적인 답(`ok`/`not-found`)만 캐시 | `server/routes/places.mjs` |
+| 7 | `/api/places/lookup-batch`가 서버엔 있지만 화면에서 안 불림 | `src/design/spots.js`의 `daBatchLookupFlow`로 "오늘 동선" 화면에 연결(가져오기·목록열람만으론 안 뜸) | `src/design/spots.js` |
+| 8 | `paymentMatchesOrder`가 필드 누락 시 검사를 건너뛰고 통과시킴 | 누락 시 불일치로 처리, `paymentKey` 대조 추가 | `server/test/reliability-and-cost.test.mjs`(a) |
+| 9 | 여러 pending 주문을 만들어 개별 confirm하면 중복구매 차단 우회 가능 | confirm-time에도 활성 이용권(다른 주문) 검사 추가 | 〃(b) |
+| 10 | 부분취소 판정을 요청값(cancelAmount)만으로 결정 | 공급자 응답의 상태·잔액·누적취소액 기준으로 판정 | 〃(c) |
+| 11 | 결제 가능 여부 판정이 월간 예산 완전소진만 봄 | 일일 한도·최소 생성비 부족·라우팅 서비스 불가까지 신규판매 차단 사유로 확장 | 〃(d) |
+| 12 | 신규판매 차단 로직이 이미 승인된 결제 복구와 안 분리됨 | 조기 `alreadyProcessed` 반환이 (b)/(d) 검사보다 먼저 오도록 구조적으로 분리 | 〃(e) |
+| 13 | `createOrderRoute`가 실패 응답의 status를 200으로 덮어씀 | 실패(`!r.ok`)면 원래 status를 그대로 반환 | 〃(f) |
+| 14 | `fetchWithTimeout`이 헤더만 받으면 타이머를 꺼서 본문 읽기 단계가 무보호 | 본문 읽기(`json`/`text`/`arrayBuffer`)도 각각 새 타이머로 보호 | 〃 §8(g) |
+
+---
+
 ## 4. 알려진 개선 여지(출시를 막지는 않지만 남겨 둔 것)
 
 - **부분 환불 정책이 아직 없다** — `docs/BUSINESS_DECISIONS.md` 5-0절에
@@ -171,6 +226,27 @@ Google Places/Google Routes)의 ③(실제 키 연결) — 이 세션의 네트�
   판별(도시 좌표 반경 등)이 필요할 수 있다.
 - 재조회 사용 패턴(월 몇 %) 가정은 여전히 임의값이다 — 체험단 운영
   중 관찰 필요.
+- **재방문 여행자 지원의 화면 연결이 아직 안 됐다**(5차 신규 — ⑤
+  분류) — `server/routes/trips.mjs`/`visits.mjs`/`next-trip-suggestions.mjs`
+  의 서버 API는 전부 완료·검증됐지만, `src/design/spots.js`가 이
+  API들을 아직 부르지 않는다. 지금은 코스 생성 요청에 `tripId`를
+  실으면(선택 사항) 그 여행 아래 저장되고, 안 실으면 예전처럼
+  계정+도시+날짜 구조(`account_courses`)로 저장되는 하위 호환
+  경로가 그대로 남아 있다 — 화면을 연결하기 전까지는 사용자가 여행
+  분리·방문 기록 기능을 전혀 쓸 수 없다는 뜻이다.
+- **방문 기록 동기화의 충돌 병합 규칙은 이번에 새로 설계한 것**이라
+  (버전 비교 + 날짜는 합집합·무덤표시, 단일 값은 최종 수정시각 기준)
+  실사용 트래픽에서 검증된 적은 없다 — 지정된 5개 시나리오는 전부
+  재현·통과했지만, 실제로 여러 기기를 오래 쓰는 사용자가 늘면 더
+  다양한 충돌 패턴이 나올 수 있다.
+- **여행 삭제 API가 없다** — 잘못 만든 여행을 지우는 기능은 이번
+  범위에 포함하지 않았다(사용자 지시에 삭제 요구가 없었고, "기존
+  기록을 절대 지우지 않는다"는 지시와 충돌 소지를 줄이기 위해 의도적
+  으로 생략). 필요해지면 별도로 논의해야 한다.
+- 기존 city+date 코스 마이그레이션(`schema_migrations`)은 **딱 한 번만
+  실행**된다 — 이미 마이그레이션이 끝난 뒤에 생기는 계정 데이터는
+  건드리지 않는다(정상 동작이지만, 운영 DB에 처음 배포할 때 반드시
+  이 마이그레이션이 실제로 한 번 실행되는지 로그로 확인해야 한다).
 
 ---
 
@@ -184,9 +260,12 @@ node server/test/generation-trial-charging-success.test.mjs # 전체 통과
 node server/test/generation-trial-charging-failure.test.mjs # 전체 통과
 node server/test/production-boot.test.mjs                   # 8개 — 전체 통과
 node server/test/provider-contracts.test.mjs                # 39개 — 전체 통과(4차: Places API(New) 계약 검증 12개 추가)
-node server/test/reliability-and-cost.test.mjs              # 43개 — 전체 통과(4차 신규 — ChatGPT 재현 문제 전용 테스트)
+node server/test/reliability-and-cost.test.mjs              # 2 시나리오(routing-missing/routing-available) 합계 60여개 — 전체 통과(5차: 결제·타임아웃 경계 6건 + 캐시 재현 테스트 추가, 시나리오 분리로 재구성)
 node server/test/routes-waypoint-limits.test.mjs            # 12개 — 전체 통과(4차 신규 — 경유지 분할·고요금 SKU)
-node server/test/cost-budget-allornothing.test.mjs          # 5개 — 전체 통과(4차 신규 — 예산 부족 시 all-or-nothing)
+node server/test/cost-budget-allornothing.test.mjs          # 5개(2 시나리오) — 전체 통과(5차: insufficient/sufficient 시나리오 분리 재작성)
+node server/test/trips-and-visits.test.mjs                  # 21개 — 전체 통과(5차 신규 — 여행 분리·방문 기록·마이그레이션·무료경계)
+node server/test/next-trip-suggestions.test.mjs              # 10개 — 전체 통과(5차 신규 — 미방문우선·다시가고싶음·이월·명시적선택)
+node server/test/trips-visits-sync.test.mjs                  # 17개 — 전체 통과(5차 신규 — 지정된 동기화 충돌 시나리오 5건)
 node scripts/test/run-all.mjs               # t1~t49, 개인용+판매용 양쪽 — 전체 통과
 node scripts/design-integration-check.mjs   # 전체 통과
 node scripts/test-storage-migration.mjs     # 전체 통과
@@ -218,3 +297,37 @@ node scripts/verify.mjs                     # 보호 블록·저장 키 무결�
 `2-course.png`는 실제 키 연결이 막혀 있어(2절 참고) 성공 응답을
 흉내 낸 장면이라는 점을 `src/design/landing.html`에 그대로 캡션으로
 밝혀 뒀다 — 4차 갱신에서도 이 캡션 원칙은 그대로 유지한다.
+
+---
+
+## 7. 다음에 할 일 — 재방문 여행자 화면 연결(5차에서 남긴 것)
+
+재방문 여행자 지원은 서버(스키마·API·마이그레이션·동기화)가 전부
+완료·재현 테스트까지 끝났지만, **사용자가 실제로 쓸 수 있으려면
+`src/design/spots.js`에 다음 화면 연결이 필요하다**(①로 표시하지 않고
+⑤로 남겨 둔 이유):
+
+1. **여행 목록·전환 화면** — 지금 도시 하나에 코스 하나만 보여주는
+   화면을, `/api/trips`로 받은 목록 중 하나를 고르는 화면으로
+   바꾼다. 같은 도시라도 서로 다른 여행이면 별도 카드/탭으로 구분해야
+   한다.
+2. **새 여행 만들기 흐름** — 지금 "도시 바꾸기"가 하던 자리에 "새
+   여행 만들기"(`POST /api/trips`)를 추가하되, 도시 전환이 곧 새 여행
+   생성으로 오해되지 않게(과거 여행이 사라진 것처럼 보이지 않게) UI
+   문구를 분명히 한다.
+3. **방문 표시 버튼** — 장소 상세/코스 화면에 "방문 완료"·"다시 가고
+   싶어요" 버튼을 추가한다(`POST /api/visits/:placeId/mark`,
+   `.../want-revisit`). 코스에 담는 것과 방문 표시는 서로 다른 버튼
+   이어야 한다(자동 방문처리 금지).
+4. **"다음 여행 코스 만들기" 진입점** — 기존 코스 생성 버튼 옆에,
+   과거 여행에서 못 가본 곳을 이월하는 옵션(`GET
+   /api/trips/next-suggestions?fromTripId=...`)을 추가한다. 새 화면을
+   따로 만들지 않고 기존 코스 생성 화면 안에 후보 목록만 얹는 방식을
+   권장한다(지시: "첫 화면 설정을 늘리지 말 것").
+5. **로그인 시 동기화 전환** — 지금의 `/api/places`, `/api/courses`
+   전체 치환 PUT과 별개로, 여행·방문 기록은 `/api/trips/sync`,
+   `/api/visits/sync`로 옮겨야 6절에서 구현한 충돌 보호가 실제로
+   적용된다(지금은 클라이언트가 이 엔드포인트를 아예 안 부른다).
+
+이 5가지를 연결하는 작업 자체는 서버 API가 이미 다 있어 새 백엔드
+설계가 필요하지 않다 — 화면 배선과 문구 작업이 중심이다.
