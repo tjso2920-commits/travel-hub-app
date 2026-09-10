@@ -10,20 +10,28 @@ API 비용 통제 실제 구현, 경유지 상한 반영) · 갱신: 2026-09-10(
 상품(무료체험 10+1/유료 50+30) 이용권 사용량 실제 집행**, 내부 비용
 안전상한, 신규판매 예산 판정에 기존 유료고객 몫 반영, **재방문
 여행자 지원을 실제 화면까지 연결**, 기존 전체치환 동기화 경로
-검증) · 브랜치 `design-integration`
+검증) · 갱신: 2026-09-10(7차 — **`/api/places` 전체치환 데이터손실을
+6차에서 발견만 하고 남겨 뒀던 것을 실제로 고침**(trips/visits와 같은
+버전 보호+보수적 병합), **신규 장소 확인 한도 우회 차단**(ChatGPT가
+재현한 우회 — 실제 확정 결과 기준으로 재판정), **하루 비용 한도와
+유료 이용권 하루 몰아쓰기 약속의 충돌 해결**, **착장 판단용 날씨 카드
+신규**(WeatherAPI.com 무료 등급)) · 브랜치 `design-integration`
 
-**6차 갱신 배경**: 5차에서 "서버 API·DB·마이그레이션은 끝났지만
-화면 연결이 안 됐다"고 ⑤로 명시했던 재방문 여행자 지원을 이번
-세션에서 `src/design/spots.js`에 실제로 연결했다(7절 5항목 전부).
-동시에 초기 테스트 상품의 실제 사용량 집계(무료체험 위치확인
-10곳+코스 1회, 유료 위치확인 50곳+코스 30회, 30일 이용권 기준)를
-서버에 새로 구현하고 구매·계정 화면에 그대로 노출했다. 기존
-`/api/places`·`/api/courses` 전체치환 동기화가 새 여행/방문 데이터를
-덮어쓰지 않는지 6가지 지정 시나리오를 실제 화면(Chromium)에서
-검증했고, 그 과정에서 **`/api/places` 자체는 여전히 버전 보호가 없어
-두 기기가 겹치면 최신 수정이 덮어써질 수 있다는 기존 구조의 한계를
-새로 발견**했다(4절, 아래 5-⑨ 표 항목 참고 — 조용히 숨기지 않고
-그대로 보고한다).
+**7차 갱신 배경**: 6차에서 "새로 발견했지만 미해결"로 남겨 뒀던
+`/api/places` 전체치환 데이터손실 문제(아래 3절 옛 123행 참고)를 이번
+세션에서 실제로 고쳤다 — trips/visits와 같은 버전 비교+보수적 병합을
+`account_places`/`account_courses`에도 적용했고, 삭제는 명시적
+`deletedIds`로만 이뤄지게 해 배열 누락으로 추측 삭제하지 않는다.
+ChatGPT가 실제로 재현한 두 번째 우회(같은 로컬 장소 식별자에 검색어만
+바꿔 보내 서로 다른 실제 장소를 무료로 확인받는 것)도 막았다 — "신규
+여부"를 클라이언트 문자열이 아니라 공급자가 실제로 돌려준 장소
+식별자로 재판정한다. 세 번째로, 계정별 하루 비용 한도(기본 500원)가
+무료/유료 구분 없이 적용돼 유료 이용권이 약속한 "하루 안에 50곳
+확인"을 11건 만에 막던 버그를 고쳤다(이용권 기간 전체 누적 한도보다
+낮게 잡히지 않게 함). 마지막으로 착장 판단용 날씨 카드를 신규로
+추가했다("오늘 동선" 화면 상단 — WeatherAPI.com 무료 등급, 서버가
+키를 들고 소비자는 절대 키를 입력하지 않음, 로그인 없이도 볼 수
+있고 이용권/비용 원장을 전혀 안 건드림). 자세한 내용은 3-2절.
 
 - **①코드 완료** — 동작에 필요한 코드가 전부 작성됐고, 외부 서비스가
   없거나 실제 HTTP 요청으로 검증까지 끝난 기능.
@@ -120,21 +128,23 @@ API 비용 통제 실제 구현, 경유지 상한 반영) · 갱신: 2026-09-10(
 | **재방문 여행자 — 코스 생성이 현재 tripId를 실어 그 여행 아래 저장** | **①**(6차) | `src/design/spots.js`의 `ensureTripForCity`/`runRealCourseGeneration` — 여행이 없는 새 도시는 조용히 하나 자동 생성(진입장벽 없음), 두 여행에서 각각 만든 코스가 서버에서 완전히 분리 저장되고 서로 안 섞임을 `GET /api/trips/:tripId/courses`로 직접 확인 |
 | **재방문 여행자 — 무료/유료 경계(기록 읽기·쓰기는 항상 무료)** | **①** | `server/test/trips-and-visits.test.mjs` §4 — 여행 여러 개 생성·도시 전환·방문 기록 읽기/쓰기를 반복해도 무료체험이 전혀 안 깎이고, 유료 이용권이 없어도 방문 기록 API가 그대로 동작함을 확인 |
 | **재방문 기록 보호 동기화 — 버전 확인 후 충돌 시 재병합(조용한 전체 덮어쓰기 방지) + 로그인/저장/로그아웃 실제 연결** | **①**(6차 — 화면 연결 완료) | `server/routes/trips.mjs`의 `syncTrips`, `server/routes/visits.mjs`의 `syncVisits`, `server/test/trips-visits-sync.test.mjs`(서버 5개 시나리오) — 클라이언트 쪽은 `src/design/spots.js`의 `daSyncPush`가 로그인 직후(`daSyncPullAndMerge`)와 매 로컬 저장마다(`daSyncPushSafe`) `/api/trips/sync`·`/api/visits/sync`를 실제로 부르도록 연결(예전엔 이 엔드포인트를 클라이언트가 아예 안 불렀다), 로그아웃 시 `foodMap.trips`/`foodMap.visits` 로컬 삭제. `scripts/test-sync-protection-screens.mjs` (b)(c)(e) — 서로 다른 기기의 여행 추가가 둘 다 보존됨, 방문 취소 후 오래된 기기 재연결에도 안 되살아남, 계정 전환/로그아웃 시 다른 계정 데이터가 안 새어나감을 실제 화면에서 확인 |
-| **⚠ 기존 `/api/places` 전체치환 동기화 — 알려진 한계(6차 신규 발견, 미해결)** | 발견됨(수정 안 함, 아래 설명 참고) | `scripts/test-sync-protection-screens.mjs` (a) — trips/visits(위 항목)와 달리 `account_places`는 버전 필드가 아예 없어 서버가 충돌을 감지 못한다. 기기 A가 장소를 수정한 뒤, 그 사실을 모르는(재로그인하지 않은) 오래된 기기 B가 자신의 무관한 변경을 저장하면 B가 들고 있던 옛 스냅샷 전체가 A의 수정을 덮어쓴다 — 실제로 재현해 확인했고, 조용히 감추지 않고 실패 테스트로 그대로 남겨 뒀다(4절에 계속) |
+| **`/api/places`·`/api/courses` 전체치환 데이터손실 — 해결됨(7차)** | **①**(7차 — 6차에서 발견만 하고 남겨 뒀던 것을 실제로 고침) | `server/routes/account-data.mjs`의 `syncPlaces`/`syncCourses` — trips/visits와 같은 버전 비교+보수적 병합을 적용(뒤처진 기기의 수정은 조용히 덮어쓰지 않고 `conflicts`로 보고). 삭제는 명시적 `deletedIds`로만 이뤄지고(배열 누락으로 추측 삭제 안 함), 이미 지워진 장소는 오래된 기기가 다시 들고 나타나도 안 되살아남(무덤 표시). `server/test/places-courses-sync.test.mjs`(16개), `scripts/test-sync-protection-screens.mjs` (a) — 이제 실제로 통과함(6차엔 여기서 실패했다) |
+| **신규 장소 확인 한도 우회 차단(7차)** | **①**(7차) | `server/entitlement-usage.mjs`의 예약(reserve)/확정(finalize) 2단계 — 예전엔 "신규 여부"를 클라이언트가 불러주는 로컬 장소 식별자만으로 판정해, 같은 식별자에 검색어만 바꿔 보내면 서로 다른 실제 장소를 무료로 확인받는 우회가 가능했다(ChatGPT가 실제로 재현: 한도 1로 두고 6곳을 확인받았는데 사용량은 1로만 기록). 이제 공급자가 실제로 돌려준 장소 식별자로 재판정한다(같은 로컬 id+다른 검색어→실제로 다른 장소면 각각 과금, 다른 로컬 id+같은 실제 장소→비과금). `server/test/place-lookup-entitlement-bypass.test.mjs`(16개, 재현 조건 3가지 전부) |
+| **하루 비용 한도와 유료 이용권 약속의 충돌 해결(7차)** | **①**(7차) | `server/cost-ledger.mjs`의 `chargeCostBatch` — 계정별 하루 비용 한도(기본 500원)가 무료/유료 구분 없이 적용돼, 위치확인 단가(약 44.8원) 기준 11건 만에 소진돼 유료 이용권의 "하루 50곳" 약속이 애초에 불가능했다. 이제 이용권 기간 전체 누적 안전상한(무료 700원/유료 3,500원)보다 낮게 잡히지 않는다 — 이용권 몫을 하루 안에 몰아 써도 되지만 총량은 여전히 이용권 기간 누적 한도가 지킨다. `server/test/paid-daily-burst-budget.test.mjs`(11개, 출고 기본값 그대로 유료 고객 50곳+코스 1회를 하루에 마침을 확인) |
+| **착장 판단용 날씨 카드(7차 신규)** | **②**(모의 검증 — WeatherAPI.com 실제 키 미연결) | `server/adapters/weather.mjs`, `server/routes/weather.mjs`(`/api/weather`), `src/design/weather-card.js` — "오늘 동선" 화면 상단에 현재 날씨·오늘 예보(최고/최저/저녁)·시간대별 강수확률/바람·규칙 기반 착장 문구를 보여준다. 로그인 불필요(이용권/비용 원장 전혀 안 건드림), 지역 단위(~1km) 캐시 공유로 도시 선택마다 새 호출 안 함, 실패 시 마지막 캐시를 시각과 함께 대체. `server/test/weather-route.test.mjs`(12개)·`weather-stale-fallback.test.mjs`(6개), `scripts/test-weather-card.mjs`(13개, 실제 Chromium) |
 
-**요약**: ChatGPT가 4차·5차에서 지적한 문제는 모두 실제 코드 수정 +
-재현 테스트 통과까지 끝났고, 이번 6차에서는 (1) 초기 테스트 상품의
-이용권 사용량(무료 10+1/유료 50+30, 30일 order 단위)을 서버에 실제로
-집행하고 구매·계정 화면에 그대로 노출했으며, (2) **5차에서 ⑤(서버
-완료·화면 미연결)로 남겨 뒀던 재방문 여행자 지원을 `src/design`
-실제 화면까지 전부 연결했다**(여행 목록/전환, 새 여행 만들기, 방문
-표시 버튼·필터, 다음 여행 이월 후보, 로그인/저장/로그아웃 동기화
-연결 — 7절 참고, 이제 전부 완료). (3) 그 과정에서 기존
-`/api/places` 전체치환 동기화에 버전 보호가 없다는 기존 구조의
-한계를 새로 발견해 감추지 않고 그대로 보고했다(4절). 남은 ③(실제 키
-연결) 미검증은 이전 차수와 동일하게 네 공급자(Toss/Resend/Google
-Places/Google Routes)의 네트워크 제약 때문이며, 코드가 없어서가
-아니다(2절 참고).
+**요약**: ChatGPT가 4차·5차·6차에서 지적한 문제는 모두 실제 코드 수정
++ 재현 테스트 통과까지 끝났다. 이번 7차에서는 (1) 6차에서 발견만
+하고 남겨 뒀던 `/api/places`·`/api/courses` 전체치환 데이터손실을
+실제로 고쳤고(trips/visits와 같은 버전 보호), (2) ChatGPT가 재현한
+신규 장소 확인 한도 우회를 막았으며(공급자의 실제 확정 결과로
+재판정), (3) 계정별 하루 비용 한도가 무료/유료 구분 없이 적용돼 유료
+이용권의 "하루 50곳" 약속을 사실상 불가능하게 만들던 버그를
+고쳤고, (4) 착장 판단용 날씨 카드를 신규로 추가했다(WeatherAPI.com
+무료 등급, 서버가 키를 들고 소비자는 입력 안 함). 남은 ③(실제 키
+연결) 미검증은 이전 차수와 동일하게 다섯 공급자(Toss/Resend/Google
+Places/Google Routes/WeatherAPI)의 네트워크 제약 때문이며, 코드가
+없어서가 아니다(2절 참고).
 
 ---
 
@@ -142,9 +152,12 @@ Places/Google Routes)의 네트워크 제약 때문이며, 코드가 없어서�
 
 ### 2-1. 실제 키로 첫 연결 확인(가장 중요 — 3차와 동일하게 여전히 미검증)
 
-- **상태**: Resend/토스페이먼츠/Google Places+Routes 네 서비스
-  모두 실제 키로 검증된 적이 없다. 이번 세션도 네 공식 문서 사이트
-  전부 접속이 막혀 있었다(EGRESS_BLOCKED).
+- **상태**: Resend/토스페이먼츠/Google Places+Routes/WeatherAPI
+  다섯 서비스 모두 실제 키로 검증된 적이 없다(WeatherAPI는 7차
+  신규). 이번 세션도 공식 문서 사이트 전부 접속이 막혀 있었다
+  (EGRESS_BLOCKED — weatherapi.com도 마찬가지로 확인 안 됨,
+  `www.weatherapi.com/pricing.aspx`·`/docs/`의 요금·형식은 ChatGPT가
+  확인해 전달한 내용 기준).
 - **확인 절차**: `docs/BUSINESS_DECISIONS.md` 6절 표대로 키를 하나씩
   넣어 가며 `/api/health`의 `services`/`verified`와 실제 화면 동작을
   확인한다.
@@ -222,6 +235,19 @@ Places/Google Routes)의 네트워크 제약 때문이며, 코드가 없어서�
 
 ---
 
+## 3-2. 이번 7차 갱신에서 고친 문제 목록(ChatGPT 재현 기준)
+
+| # | 지적된 문제 | 고친 내용 | 재현 테스트 |
+|---|---|---|---|
+| 1 | `/api/places`·`/api/courses`가 전체 삭제 후 재삽입 — 오래된 기기의 저장이 최신 수정을 덮어씀(6차에서 발견만 하고 미해결) | `account_places`/`account_courses`에 `version`/`deleted` 컬럼 추가, trips/visits와 같은 버전 비교+보수적 재병합(`syncPlaces`/`syncCourses`). 삭제는 명시적 `deletedIds`로만(배열 누락으로 추측 삭제 안 함) | `server/test/places-courses-sync.test.mjs`(16개), `scripts/test-sync-protection-screens.mjs` (a) — 이제 실제로 통과 |
+| 2 | `daSyncPush`가 일부 응답 실패를 확인 안 하고, `daLogout`이 동기화 완료 보장 없이 로컬 데이터를 삭제 | `daSyncPush`가 4개 채널(places/courses/trips/visits) 응답을 각각 확인해 성공한 채널만 반영, `daLogout`이 로그아웃 전 마지막 동기화를 시도하고 실패 시 사용자 확인을 받음. 계정 전환 중 응답 뒤섞임 방지(세션 epoch), 겹치는 push 응답 순서 보호(push-seq) | `server/test/places-courses-sync.test.mjs`, `scripts/test-sync-protection-screens.mjs` 전체 |
+| 3 | 같은 클라이언트 장소 식별자에 검색어만 바꿔 보내면 서로 다른 실제 장소를 무료로 확인받는 우회(무료 한도 1로 재현: 6곳 확인, 사용량 1로만 기록) | "신규 여부"를 클라이언트 문자열이 아니라 공급자가 실제로 돌려준 장소 식별자(real_place_id)로 재판정(예약→호출→확정 2단계). 같은 실제 장소 재사용은 계속 비과금, 다른 클라이언트 id가 같은 실제 장소로 확인돼도 비과금 | `server/test/place-lookup-entitlement-bypass.test.mjs`(16개 — 같은 id+다른 검색어, 다른 id+같은 실제 장소, 동시 성공/실패/중복 요청 전부 재현) |
+| 4 | 계정별 하루 비용 한도(500원)가 무료/유료 구분 없이 적용돼, 위치확인 단가(약 44.8원) 기준 11건 만에 소진 — 유료 이용권의 "하루 50곳" 약속이 사실상 불가능 | 이용권 기간 전체 누적 안전상한(무료 700원/유료 3,500원)보다 계정별 일일/월간 한도가 낮게 잡히지 않게 함(`chargeCostBatch`). 짧은 시간창 남용 방지는 여전히 별도(rate-limit.mjs의 횟수 기반 한도)가 맡음 | `server/test/paid-daily-burst-budget.test.mjs`(11개 — 출고 기본값 그대로 유료 고객이 하루에 50곳+코스 1회를 실제로 마침을 확인) |
+| 5 | 이용권 잔여는 있는데 내부 원가 안전상한에 걸릴 때 "cost-budget-exceeded"라는 뭉뚱그린 오류만 나감 | "이용권 자신의 원가 상한 도달"(`entitlement-cost-cap-reached`)과 "서비스 전체 운영상 일시 제한"(`cost-budget-exceeded`)을 구분해서 반환 | `server/test/cost-safety-cap.test.mjs` |
+| 6 | 착장 판단용 날씨 기능 없음(신규 요청) | "오늘 동선" 화면 상단에 날씨 카드 추가(WeatherAPI.com 무료 등급) — 현재 날씨·오늘 예보(최고/최저/저녁)·시간대별 강수확률/바람·규칙 기반 착장 문구. 로그인 불필요, 이용권/비용 원장 전혀 안 건드림, 지역 단위 캐시 공유(도시 선택마다 새 호출 안 함), 실패 시 마지막 캐시로 정직하게 대체 | `server/test/weather-route.test.mjs`(12개)·`weather-stale-fallback.test.mjs`(6개), `scripts/test-weather-card.mjs`(13개, 실제 Chromium) |
+
+---
+
 ## 4. 알려진 개선 여지(출시를 막지는 않지만 남겨 둔 것)
 
 - **부분 환불 정책이 아직 없다** — `docs/BUSINESS_DECISIONS.md` 5-0절에
@@ -245,19 +271,14 @@ Places/Google Routes)의 네트워크 제약 때문이며, 코드가 없어서�
   계정+도시+날짜 구조(`account_courses`)로 저장되는 하위 호환 경로는
   의도적으로 그대로 남겨 뒀다(마이그레이션 이전 기존 데이터·
   `tripId`를 안 보내는 외부 호출 대비).
-- **⚠ `/api/places` 전체치환 동기화에 버전 보호가 없다(6차 신규
-  발견)** — `account_courses`/`account_places`는 애초에
-  "로그인 시점에 로컬↔서버를 병합해 다시 올린다"는 전제로 설계됐지만
-  (트랜잭션은 원자적이어도 버전 필드 자체가 없다), 실제로는 이미
-  로그인한 채 오래 켜 둔 기기가 다른 기기의 최신 수정을 모르는 상태로
-  자기 변경만 저장하면 그 기기가 들고 있던 옛 스냅샷 전체가 최신
-  수정을 덮어쓸 수 있다. `scripts/test-sync-protection-screens.mjs`
-  (a)에서 실제 화면으로 재현해 확인했다(의도적으로 FAIL로 남겨 정직하게
-  기록). trips/visits(이번 6차 대상)는 버전 비교+보수적 재병합으로
-  이미 보호되지만, **장소 배열 자체를 같은 방식으로 보호하려면
-  `account_places`에 장소별 버전/수정시각 필드를 새로 설계해야 하는
-  별도 작업**이라 이번 "화면 연결" 범위에서는 고치지 않았다 — 다음
-  라운드 후보로 남긴다.
+- **(해결됨, 7차)** ~~`/api/places` 전체치환 동기화에 버전 보호가
+  없다(6차 신규 발견)~~ — 7차에서 `account_places`/`account_courses`
+  에 `version`/`deleted` 컬럼을 추가하고 trips/visits와 같은 버전
+  비교+보수적 재병합(`server/routes/account-data.mjs`의
+  `syncPlaces`/`syncCourses`)을 적용했다. 삭제는 명시적 `deletedIds`
+  로만 이뤄지고, 이미 지워진 장소는 오래된 기기가 다시 들고 나타나도
+  안 되살아난다. `scripts/test-sync-protection-screens.mjs` (a)가
+  이제 실제로 통과한다(6차엔 여기서 의도적으로 FAIL로 남겼었다).
 - **방문 기록 동기화의 충돌 병합 규칙은 이번에 새로 설계한 것**이라
   (버전 비교 + 날짜는 합집합·무덤표시, 단일 값은 최종 수정시각 기준)
   실사용 트래픽에서 검증된 적은 없다 — 지정된 5개 시나리오는 전부
@@ -295,6 +316,11 @@ node server/test/entitlement-course-limit.test.mjs           # 6개 — 전체 �
 node server/test/cost-safety-cap.test.mjs                    # 3개 — 전체 통과(6차 신규 — 내부 원가 안전상한 실제 차단)
 node server/test/new-sale-committed-budget.test.mjs          # 3개 — 전체 통과(6차 신규 — 기존 유료고객 약속 잔여몫 반영)
 node server/test/entitlement-period-month-boundary.test.mjs  # 8개 — 전체 통과(6차 신규 — 30일 이용권 달력월 경계 면역)
+node server/test/places-courses-sync.test.mjs                # 16개 — 전체 통과(7차 신규 — 버전 충돌 거부·삭제 무덤 비부활·필드 보존·코스 버전 보호)
+node server/test/place-lookup-entitlement-bypass.test.mjs    # 16개 — 전체 통과(7차 신규 — 같은id+다른검색어/다른id+같은실제장소/동시요청 3가지 재현 조건)
+node server/test/paid-daily-burst-budget.test.mjs            # 11개 — 전체 통과(7차 신규 — 출고 기본값으로 유료고객 하루 50곳+코스1회 실제 완료)
+node server/test/weather-route.test.mjs                      # 12개 — 전체 통과(7차 신규 — 로그인 불필요·이용권 미차감·지역 캐시 공유·좌표 검증)
+node server/test/weather-stale-fallback.test.mjs             # 6개 — 전체 통과(7차 신규 — 공급자 실패 시 캐시 대체)
 node scripts/test/run-all.mjs               # t1~t49, 개인용+판매용 양쪽 — 전체 통과
 node scripts/design-integration-check.mjs   # 전체 통과
 node scripts/test-storage-migration.mjs     # 전체 통과
@@ -305,9 +331,10 @@ node scripts/test-multi-day.mjs             # 28개 — 전체 통과
 node scripts/test-place-lookup.mjs          # 11개 — 전체 통과(Places API(New) 응답 형식 반영 확인)
 node scripts/test-account-sync.mjs          # 12개 — 전체 통과
 node scripts/test-revisit-flow.mjs           # 23개 — 전체 통과(6차 신규 — 여행 목록/전환·새 여행·방문 버튼/필터·이월후보·다른 기기 로그인 동기화, 실제 Chromium 화면)
-node scripts/test-sync-protection-screens.mjs # 16개 — 15개 통과·1개 의도된 실패(6차 신규 — 지정된 6개 시나리오(a)~(f)를 실제 화면에서 검증, (a)는 알려진 한계로 정직하게 실패 처리)
-node scripts/test-consumer-flow-e2e.mjs      # 16개 — 전체 통과(6차 신규 — 실제 CSV 파일 300곳 가져오기→배치 위치확인→첫 코스→여행 저장→방문 표시→같은 도시 다음 여행→미방문 우선 코스→이용권 잔여횟수까지 한 번에 이어서 확인, 300곳 가져오기 시 비용 원장 0건도 실제 파일 입력으로 재확인)
+node scripts/test-sync-protection-screens.mjs # 16개 — 전체 통과(6차 신규, 7차: (a)도 실제로 고쳐져 이제 16/16 전부 통과 — 6차엔 (a)만 의도된 실패였다)
+node scripts/test-consumer-flow-e2e.mjs      # 17개 — 전체 통과(6차 신규 — 실제 CSV 파일 300곳 가져오기→배치 위치확인→첫 코스→여행 저장→방문 표시→같은 도시 다음 여행→미방문 우선 코스→이용권 잔여횟수까지 한 번에 이어서 확인, 300곳 가져오기 시 비용 원장 0건도 실제 파일 입력으로 재확인)
 node scripts/test-landing-page.mjs          # 전체 통과
+node scripts/test-weather-card.mjs          # 13개 — 전체 통과(7차 신규 — 실제 Chromium: 비회원도 날씨 확인, 현재/예보 라벨 구분, 이용량 미차감, 모바일 스크린샷)
 node scripts/audit.mjs                      # 개인정보·하드코딩 키 잔존 검사 — 전체 통과
 node scripts/verify.mjs                     # 보호 블록·저장 키 무결성 — 전체 통과
 ```
@@ -342,6 +369,16 @@ node scripts/verify.mjs                     # 보호 블록·저장 키 무결�
 그려진다는 것만 보여준다 — 실제 iPhone Safari에서의 표시나 실제
 공급자(Toss/Resend/Google) 연결을 검증하는 게 아니다**(2절과 동일한
 구분 원칙).
+
+**7차 신규 — 착장 판단용 날씨 카드**: `docs/screenshots/after_날씨카드_오늘동선.png`
+(`scripts/test-weather-card.mjs`가 검증과 함께 캡처, 가상 지명·가상
+장소만 사용 — 실제 개인정보 없음). "오늘 동선" 화면 상단에 현재
+날씨·오늘 예보·시간대별 강수확률/바람·규칙 기반 착장 문구가 표시되고,
+카드 하단에 "테스트 데이터(예시) · 실제 공급자 연결 전"이라고 스스로
+밝히는 모습까지 그대로 담겼다(가짜 데이터를 진짜처럼 감추지 않음).
+**이 스크린샷도 화면 자체가 정상 그려진다는 것만 보여준다 — 실제
+WeatherAPI.com 연결이나 실제 iPhone Safari 표시를 검증하는 게
+아니다.**
 
 ---
 
