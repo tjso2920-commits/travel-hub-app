@@ -32,7 +32,7 @@ const ALLOWED_CHANNELS = new Set(['threads', 'instagram', 'direct', 'referral', 
 const ALLOWED_SOURCE_KINDS = new Set(['zip', 'csv', 'json']);
 const ALLOWED_RESULTS = new Set(['success', 'failure']);
 const ALLOWED_PAYMENT_RESULTS = new Set(['success', 'failure', 'cancelled']);
-const ALLOWED_TRIGGERS = new Set(['second_course', 'manual', 'time_budget_exceeded']);
+const ALLOWED_TRIGGERS = new Set(['second_course', 'new_day', 'manual', 'time_budget_exceeded']);
 
 function validateProps(name, props) {
   const schema = EVENT_SCHEMA[name];

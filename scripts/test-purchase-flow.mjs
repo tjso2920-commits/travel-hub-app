@@ -126,6 +126,25 @@ t('이용권 화면에 자동결제 여부가 명시됨', paywallText.includes('
   t('이용권 화면 노출이 서버에 측정됨', paywallEvt.length >= 1);
 }
 
+// --- 결제 실패 시에도 사용자가 갇히지 않고 이용권 화면에 그대로 남아
+// 재시도하거나 돌아갈 수 있어야 한다(2026-09-10: "결제 취소·실패
+// 후에도 작업 중인 여행 화면으로 복귀"). 서버·네트워크는 살아있는데
+// 결제 자체만 실패하는 상황을 흉내 내려고 이 엔드포인트 하나만
+// 일부러 500으로 가로챈다. ---
+const courseBeforePayFail = await p.evaluate(() => foodMap.course);
+await p.route('**/api/dev/simulate-payment', (route) => route.fulfill({ status: 500, body: '{}' }), { times: 1 });
+await p.click('#payBtn');
+await p.waitForTimeout(300);
+const afterPayFailTitle = await p.textContent('#sheetLabel');
+t('결제 실패 후에도 이용권 화면에 그대로 남아 있음(갇히지 않고 바로 재시도 가능)', afterPayFailTitle === '이용권');
+t('결제 실패는 기존 코스·진행 상태를 전혀 건드리지 않음', JSON.stringify(await p.evaluate(() => foodMap.course)) === JSON.stringify(courseBeforePayFail));
+{
+  const db = openDb();
+  const failEvt = db.prepare("SELECT * FROM events WHERE name = 'payment_result'").all().filter((e) => JSON.parse(e.props).result === 'failure');
+  t('결제 실패 이벤트도 서버에 기록됨', failEvt.length >= 1);
+}
+await p.unroute('**/api/dev/simulate-payment');
+
 // --- 결제 진행(개발용 시뮬레이션 — 서버가 스스로 서명한 웹훅을 실제
 // handleWebhook()에 흘려보낸다) ---
 await p.click('#payBtn');
@@ -146,6 +165,31 @@ await p.click('[data-start-pick="c1"]');
 await p.waitForTimeout(800);
 const secondCourse = await p.evaluate(() => foodMap.course);
 t('결제 후 실제로 두 번째 코스가 만들어짐', secondCourse && secondCourse.stops.length === 1);
+await p.evaluate(() => document.getElementById('close').click());
+
+// --- 환불 — 실제 서비스에서는 PG가 보내는 웹훅으로 이 상태가 바뀐다.
+// 클라이언트가 스스로 "환불받았다"고 선언하지 않는다 — 서버 상태가
+// 먼저 바뀌고, 클라이언트는 다음 코스 시도에서 그 사실을 그대로
+// 확인할 뿐이다(2026-09-10: "결제 승인·취소·환불·이용권 만료에 따른
+// 권한 처리"). ---
+const sessionToken = await p.evaluate(() => foodMap.session && foodMap.session.token);
+const refundRes = await fetch(apiBase + '/api/dev/simulate-payment', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
+  body: JSON.stringify({ outcome: 'refund' }),
+});
+const refundJson = await refundRes.json();
+t('환불 시뮬레이션 API 호출 성공(취소와 구분된 별개 타입)', refundRes.ok && refundJson.type === 'refund');
+const entAfterRefundRes = await fetch(apiBase + '/api/entitlement', { headers: { Authorization: `Bearer ${sessionToken}` } });
+const entAfterRefund = await entAfterRefundRes.json();
+t('환불 후 서버 이용권 상태가 즉시 free로 바뀜', entAfterRefund.plan === 'free');
+
+await p.evaluate(() => showRoute());
+await p.waitForTimeout(150);
+await p.click('[data-course-new]');
+await p.waitForTimeout(500);
+const afterRefundAttemptTitle = await p.textContent('#sheetLabel');
+t('환불 후 다음 코스 시도에서 다시 이용권 화면이 뜸(권한이 실제로 즉시 회수됨 — 캐시된 이전 상태로 통과되지 않음)', afterRefundAttemptTitle === '이용권');
 await p.evaluate(() => document.getElementById('close').click());
 
 t('최종 콘솔/런타임 오류 0', errs.length === 0);

@@ -29,8 +29,14 @@ export function handleWebhook(rawBody, signatureHeader) {
     return { ok: true, status: 200, reason: 'duplicate-event-ignored' }; // 이미 처리한 이벤트 — 성공으로 응답(PG가 재시도를 멈추게).
   }
 
+  // 2026-09-10: 확정 상품(9,900원/30일, 자동결제 없음) 기준 — 승인은
+  // 이용권을 준다. 취소·환불·만료는 전부 이용권을 회수한다는 결과는
+  // 같지만, payment_events에 실제 타입이 그대로 남아 나중에 취소/환불/
+  // 만료 비율을 구분해 볼 수 있다(권한 처리 로직 자체는 하나로 통일해
+  // 셋을 다르게 처리해야 할 이유가 아직 없다 — 다르게 처리해야 할
+  // 요구사항이 생기면 여기 분기만 늘리면 된다).
   if (event.type === 'success') grantEntitlement(event.accountId);
-  else if (event.type === 'cancel' || event.type === 'expire') revokeEntitlement(event.accountId);
+  else if (event.type === 'cancel' || event.type === 'refund' || event.type === 'expire') revokeEntitlement(event.accountId);
 
   return { ok: true, status: 200 };
 }

@@ -56,6 +56,9 @@ async function seedPlaces(withRealRoute) {
       { id: 'c4', name: '좌표없는가게', lat: null, lng: null, cat: '기타', sourceLists: [] },
     ];
     delete foodMap.course;
+    delete foodMap.courses; // 2026-09-10(멀티데이): 저장된 날짜 목록도 같이 초기화해야
+    // showRoute()가 이전 시나리오의 코스를 이 도시 것으로 찾아내 "동선
+    // 선택" 화면 대신 "저장된 코스" 화면으로 건너뛰지 않는다.
     A.saveFoodMap(foodMap);
   });
 }
@@ -157,6 +160,7 @@ await p.evaluate(() => {
     { id: 'c3', name: '전망대', lat: 33.593, lng: 130.405, cat: '관광·명소', catConfirmed: true, sourceLists: [] },
   ];
   delete foodMap.course;
+  delete foodMap.courses;
   A.saveFoodMap(foodMap);
 });
 await p.reload();
@@ -186,6 +190,7 @@ await p.evaluate(() => {
     { id: 'b3', name: '먼곳', lat: 33.750, lng: 130.550, cat: '관광·명소', catConfirmed: true, sourceLists: [] },
   ];
   delete foodMap.course;
+  delete foodMap.courses;
   A.saveFoodMap(foodMap);
 });
 await p.reload();

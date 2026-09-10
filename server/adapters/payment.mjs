@@ -37,6 +37,12 @@ export function normalizeWebhookEvent(body) {
   return {
     id: String(body.event_id || body.id || ''),
     accountId: String(body.account_id || body.merchant_uid || ''),
-    type: String(body.type || body.status || ''), // 'success' | 'cancel' | 'expire'
+    // 'success' | 'cancel' | 'refund' | 'expire' — 2026-09-10: 확정 상품은
+    // 자동결제 없는 1회성 이용권이라 "구독 취소"는 없다. 그래도 실제 PG마다
+    // 용어가 달라(결제 자체가 실패/취소된 경우 vs 이미 승인된 결제를 나중에
+    // 환불한 경우) cancel/refund를 별개 타입으로 구분해 둔다 — 둘 다 이용권을
+    // 회수한다는 결과는 같지만, payment_events.type에 실제 어느 쪽이었는지는
+    // 남아야 나중에 "취소가 많은지 환불이 많은지"를 구분해 볼 수 있다.
+    type: String(body.type || body.status || ''),
   };
 }

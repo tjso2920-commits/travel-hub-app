@@ -216,8 +216,13 @@ function showRoute() {
      course에 city를 저장하지 않아 구분할 방법이 아예 없었다). city가
      없는 예전 저장분(마이그레이션 이전)은 구분할 근거가 없어 그대로
      보여준다 — 새로 만들면 이번 수정으로 city가 붙는다. */
-  if (foodMap && foodMap.course && Array.isArray(foodMap.course.stops) && foodMap.course.stops.length
-    && (!foodMap.course.city || foodMap.course.city === city)) {
+  /* 2026-09-10(멀티데이): foodMap.course는 "마지막으로 본 코스"일 뿐이라,
+     도시를 바꿨다 돌아오면 다른 도시 걸 마지막으로 봤을 수 있다 — 이
+     도시에 저장된 날짜 목록(daCoursesForCity)에서 직접 찾아야 도시를
+     오가도 그 도시의 저장된 코스를 정확히 다시 보여줄 수 있다. */
+  const cityCourses = daCoursesForCity(city);
+  if (cityCourses.length) {
+    if (!foodMap.course || foodMap.course.city !== city) foodMap.course = cityCourses[cityCourses.length - 1];
     showSavedCourse();
     return;
   }
@@ -239,20 +244,61 @@ function daHasBuiltCourseBefore() {
   return !!(foodMap.course && Array.isArray(foodMap.course.stops) && foodMap.course.stops.length);
 }
 
+/* ── 여러 날짜 일정(로드맵 ⑫ — 유료: "여러 날짜 일정 정리") ──────────
+   2026-09-10 확정 사업 방향: 무료는 "개인화 코스 생성 성공 1회"까지고,
+   그 이후의 "추가 코스 생성·조건 변경 후 재계산·여러 날짜 일정 정리"는
+   전부 유료다. 예전엔 도시당 코스를 딱 하나(foodMap.course)만 저장할
+   수 있어서 여러 날짜를 아예 나눠 담을 수 없었다 — foodMap.courses
+   배열로 도시+날짜별 코스를 각각 저장하게 넓혔다.
+
+   foodMap.course는 그대로 "지금 보고 있는 코스"를 가리키는 포인터로
+   남겨 둔다(기존 코드·테스트가 전부 foodMap.course를 직접 본다 —
+   여기서 새로 뭘 지어내는 대신 foodMap.courses에도 같이 반영만
+   추가한다). 실제 생성·저장은 언제나 daGateThenBuildCourseSheet를
+   거치므로(추가 날짜든, 기존 날짜 재계산이든) "1회 무료, 그 다음은
+   유료"라는 규칙이 두 경우 모두에 자동으로 적용된다 — 별도로 나눠
+   구현할 필요가 없다. */
+function daUpsertCourse(entry) {
+  foodMap.courses = foodMap.courses || [];
+  const idx = foodMap.courses.findIndex((c) => c.city === entry.city && c.date === entry.date);
+  if (idx >= 0) foodMap.courses[idx] = entry; else foodMap.courses.push(entry);
+  foodMap.course = entry;
+}
+/* 예전 데이터(foodMap.courses가 아직 없던 시절 저장분)와도 호환되도록,
+   courses 배열이 비어 있어도 foodMap.course가 이 도시 것이면 최소
+   1개짜리 목록으로 봐준다 — 별도 마이그레이션 스크립트 없이도 기존
+   저장 데이터가 갑자기 "날짜가 하나도 없는" 것처럼 보이지 않는다. */
+function daCoursesForCity(cityName) {
+  let list = (foodMap.courses || []).filter((c) => c.city === cityName);
+  if (!list.length && foodMap.course && foodMap.course.city === cityName && Array.isArray(foodMap.course.stops) && foodMap.course.stops.length) {
+    list = [foodMap.course];
+  }
+  return list.slice().sort((a, b) => ((a.date || '') < (b.date || '') ? -1 : (a.date || '') > (b.date || '') ? 1 : 0));
+}
+function daNextDay(cityName) {
+  const days = daCoursesForCity(cityName);
+  const base = (days.length && days[days.length - 1].date) || A.destNow(cityName).ymd;
+  const dt = new Date(base + 'T00:00:00');
+  dt.setDate(dt.getDate() + 1);
+  return dt.toISOString().slice(0, 10);
+}
+
 /* "코스 만들기"를 실제로 누르기 전에 통과해야 하는 문. 처음 만드는
    코스는 무엇도 안 묻고 바로 통과시킨다(무료 체험 자체에 로그인을
    요구하지 않는다). 이미 한 번 만들어 봤다면 로그인 → 서버가 판정한
-   무료체험/이용권 상태를 확인한 뒤에만 통과시킨다. */
-async function daGateThenBuildCourseSheet() {
-  if (!daHasBuiltCourseBefore()) { buildCourseSheet(); return; }
+   무료체험/이용권 상태를 확인한 뒤에만 통과시킨다. opts.date가 있으면
+   그 값 그대로 buildCourseSheet에 넘긴다(기존 날짜 재계산이든, "+날짜
+   추가"로 만드는 새 날짜든 — 둘 다 같은 문을 통과해야 한다). */
+async function daGateThenBuildCourseSheet(opts) {
+  if (!daHasBuiltCourseBefore()) { buildCourseSheet(opts); return; }
   const token = A.sessionToken(foodMap);
-  if (!token) { showLoginSheet(daGateThenBuildCourseSheet); return; }
+  if (!token) { showLoginSheet(() => daGateThenBuildCourseSheet(opts)); return; }
   const trial = await A.api('/api/trial', { token });
-  if (trial.ok && trial.json && trial.json.used === false) { buildCourseSheet(); return; }
+  if (trial.ok && trial.json && trial.json.used === false) { buildCourseSheet(opts); return; }
   const ent = await A.api('/api/entitlement', { token });
-  if (ent.ok && ent.json && ent.json.plan === 'paid') { buildCourseSheet(); return; }
-  daTrackSafe('paywall_viewed', { trigger: 'second_course' });
-  showPaywallSheet(ent.ok ? ent.json.price : null);
+  if (ent.ok && ent.json && ent.json.plan === 'paid') { buildCourseSheet(opts); return; }
+  daTrackSafe('paywall_viewed', { trigger: (opts && opts.isNewDay) ? 'new_day' : 'second_course' });
+  showPaywallSheet(ent.ok ? ent.json.price : null, opts);
 }
 
 /* 로그인 — 이메일 + 매직 코드(비밀번호 없음). 성공하면 onSuccess를
@@ -302,7 +348,7 @@ function showLoginCodeSheet(email, onSuccess) {
    "결제했다"고 스스로 선언하는 게 아니라, 서버가 자체 서명한 가짜
    웹훅을 실제 웹훅 처리 코드에 흘려보내는 방식이라 서명 검증·이용권
    반영 코드 경로 자체는 실제와 동일하다(server/routes/dev.mjs 참고). */
-function showPaywallSheet(price) {
+function showPaywallSheet(price, opts) {
   const p = price || { amountKrw: 9900, periodDays: 30, autoRenew: false };
   open('이용권', `<div class="detail"><h2>더 만들려면 이용권이 필요해요</h2>` +
     `<p>무료 체험(코스 1회)은 이미 쓰셨어요. 계속 이용하시려면 아래 이용권을 확인해 주세요.</p>` +
@@ -315,8 +361,10 @@ function showPaywallSheet(price) {
     const r = await A.api('/api/dev/simulate-payment', { method: 'POST', token, body: { outcome: 'success' } });
     if (!r.ok) { daTrackSafe('payment_result', { result: 'failure' }); alert('결제를 처리하지 못했어요. 잠시 후 다시 시도해 주세요.'); return; }
     daTrackSafe('payment_result', { result: 'success' });
-    // 결제 성공 뒤에는 원래 하려던 동작(코스 새로 만들기)으로 그대로 이어간다.
-    buildCourseSheet();
+    // 결제 성공 뒤에는 원래 하려던 동작(코스 새로 만들기 또는 새 날짜
+    // 추가)으로 그대로 이어간다 — opts를 잃어버리면 날짜가 원래 의도와
+    // 다르게(예: 재계산하려던 날짜가 아니라 오늘 날짜로) 만들어진다.
+    buildCourseSheet(opts);
   };
 }
 
@@ -325,23 +373,29 @@ function showPaywallSheet(price) {
    2026-09-09 코드 검토(2차): route(오늘 동선)에는 다른 도시에서 담아 둔
    id가 도시를 바꾼 뒤에도 남아 있을 수 있다 — 지금 보고 있는 도시로
    한 번 더 걸러야 다른 도시 장소가 코스에 섞여 들어가지 않는다. */
-function buildCourseSheet() {
+function buildCourseSheet(opts) {
+  opts = opts || {};
   const list = spots.filter((p) => p.city === city && route.has(p.id));
+  const defaultDate = opts.date || A.destNow(city).ymd;
+  const dateNote = opts.isNewDay ? '<p class="inline-note">새 날짜의 코스를 만듭니다. 필요하면 날짜를 바꿔도 돼요.</p>' : '';
   open('출발지 정하기', `<div class="detail"><h2>어디서 출발할까요?</h2>` +
     `<p>${list.length}곳을 실제 방문 순서·이동시간으로 만듭니다.</p>` +
+    dateNote +
+    `<label class="xsmall" style="display:block;margin:10px 0 6px">날짜<input class="xinput" id="courseDate" type="date" value="${A.esc(defaultDate)}" style="margin-top:6px;width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit"></label>` +
     `<div class="city-options"><button class="city-option" data-start-gps><span><b>현재 위치에서 출발</b><small>브라우저 위치 권한이 필요해요</small></span><span class="city-check">›</span></button>` +
     list.map((p) => `<button class="city-option" data-start-pick="${p.id}"><span><b>${A.esc(p.name)}</b><small>${p.hasCoords ? '이 장소에서 출발' : '좌표가 없어 출발지로 못 씀'}</small></span><span class="city-check">${p.hasCoords ? '›' : '—'}</span></button>`).join('') +
     `</div><label class="xsmall" style="display:block;margin-top:6px">쓸 수 있는 시간(분, 선택)<input class="xinput" id="courseMinutes" type="number" min="30" step="10" placeholder="예: 240" style="margin-top:6px;width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit"></label></div>`);
+  const dateVal = () => { const el = $('#courseDate'); return (el && el.value) || defaultDate; };
   $('#sheetContent').querySelectorAll('[data-start-pick]').forEach((b) => {
-    b.onclick = () => { const p = spots.find((s) => s.id === b.dataset.startPick); if (p && p.hasCoords) runCourseGeneration({ lat: p.lat, lng: p.lng }, p.id); };
+    b.onclick = () => { const p = spots.find((s) => s.id === b.dataset.startPick); if (p && p.hasCoords) runCourseGeneration({ lat: p.lat, lng: p.lng }, p.id, dateVal()); };
   });
   const gpsBtn = $('[data-start-gps]');
   if (gpsBtn) gpsBtn.onclick = () => {
     if (!navigator.geolocation) { alert('이 브라우저는 위치 기능을 지원하지 않아요. 목록에서 출발지를 골라 주세요.'); return; }
     gpsBtn.textContent = '위치 확인 중…';
     navigator.geolocation.getCurrentPosition(
-      (pos) => runCourseGeneration({ lat: pos.coords.latitude, lng: pos.coords.longitude }, null),
-      () => { alert('현재 위치를 가져오지 못했어요. 목록에서 출발지를 골라 주세요.'); buildCourseSheet(); },
+      (pos) => runCourseGeneration({ lat: pos.coords.latitude, lng: pos.coords.longitude }, null, dateVal()),
+      () => { alert('현재 위치를 가져오지 못했어요. 목록에서 출발지를 골라 주세요.'); buildCourseSheet(opts); },
       { enableHighAccuracy: true, timeout: 10000 },
     );
   };
@@ -349,7 +403,7 @@ function buildCourseSheet() {
 /* 실제로 코스를 만든다 — CourseGen.generate가 도보는 실제 라우팅으로,
    실패하면 직선거리 추정으로 계산해 돌려준다(어느 쪽인지 결과에
    routedReal로 표시돼 있어 화면에서 정직하게 구분해 보여준다). */
-async function runCourseGeneration(origin, startPlaceId) {
+async function runCourseGeneration(origin, startPlaceId, dateStr) {
   const minutesInput = $('#courseMinutes');
   const budgetMinutes = minutesInput && minutesInput.value ? +minutesInput.value : null;
   /* 2026-09-09 코드 검토(2차): route에 다른 도시 id가 남아 있을 수 있어
@@ -377,6 +431,7 @@ async function runCourseGeneration(origin, startPlaceId) {
      코스가 그대로 남는다). */
   const newCourse = {
     made: new Date().toISOString().slice(0, 10),
+    date: dateStr || destNow.ymd,
     city,
     origin,
     mode: 'walking',
@@ -393,7 +448,7 @@ async function runCourseGeneration(origin, startPlaceId) {
     excludedReasons: result.excludedReasons || {},
     source: 'design',
   };
-  foodMap.course = newCourse;
+  daUpsertCourse(newCourse);
   const saved = A.saveFoodMap(foodMap);
   if (!saved) {
     /* 저장이 실패하면 저장소는 안 바뀌어 있으니, 저장소에서 다시 읽어
@@ -431,6 +486,21 @@ async function runCourseGeneration(origin, startPlaceId) {
    좌표가 없어 빠진 곳은 목록으로 따로 보여준다(조용히 안 뺌). 대중교통·
    택시·자전거는 자체 계산 없이 구글 지도로 바로 연결한다("연결된
    범위만 제공"). */
+/* 날짜 탭 — 이 도시에 저장된 날짜별 코스를 오가며 볼 수 있게 한다.
+   탭을 눌러 다른 날짜를 보는 건 언제나 무료다(이미 만들어 둔 걸 다시
+   보는 것뿐이라 서버에 묻지 않는다 — "만료 후에도 기존 장소와 코스
+   열람 유지"와 같은 원칙: 열람은 항상 열려 있다). "+ 날짜 추가"만
+   daGateThenBuildCourseSheet를 거친다(추가 코스 생성 = 유료). 승인
+   디자인의 기존 필터 pill 스타일(.filters/[data-filter])을 그대로
+   재사용한다 — 이 화면만을 위한 새 컴포넌트를 만들지 않는다. */
+function dayTabsHTML(c) {
+  const days = daCoursesForCity(city);
+  if (!days.length) return '';
+  const todayYmd = A.destNow(city).ymd;
+  return `<div class="filters" role="group" aria-label="날짜 선택">${
+    days.map((d) => `<button data-day="${A.esc(d.date || '')}" class="${d.date === c.date ? 'active' : ''}" aria-pressed="${d.date === c.date}">${A.esc(d.date || '날짜 미상')}${d.date === todayYmd ? ' · 오늘' : ''}</button>`).join('')
+  }<button data-day-new>+ 날짜 추가</button></div>`;
+}
 function showSavedCourse() {
   const c = foodMap.course;
   const stopViews = c.stops.map((s, i) => {
@@ -452,7 +522,7 @@ function showSavedCourse() {
   const timeList = excluded.filter((p) => reasons[p.id] === 'time-budget');
   const totalKm = (c.totalMeters / 1000).toFixed(1);
   const hours = Math.floor(c.walkTotal / 60), mins = c.walkTotal % 60;
-  open('오늘의 코스', `<div class="detail"><h2>${c.stops.length}곳 · 도보 이동 ${hours ? hours + '시간 ' : ''}${mins}분</h2>` +
+  open('오늘의 코스', `<div class="detail">${dayTabsHTML(c)}<h2>${c.stops.length}곳 · 도보 이동 ${hours ? hours + '시간 ' : ''}${mins}분</h2>` +
     `<p>${c.routedReal ? '실제 도보 경로 기준으로 계산했습니다.' : '실제 경로 연결에 실패해 직선거리 기준으로 추정했습니다(실제와 다를 수 있어요).'} 총 이동 거리 약 ${totalKm}km · 마지막 장소 도착 예정 ${window.CourseGen.clockLabel(c.endAt - (c.stops[c.stops.length - 1] ? c.stops[c.stops.length - 1].dwell : 0))}</p>` +
     stopViews +
     (noCoordsList.length ? `<div class="inline-note">좌표가 없어 이번 코스 계산에서 빠진 곳 ${noCoordsList.length}곳: ${noCoordsList.map((p) => A.esc(p.name)).join(', ')}. 위치를 확인하면 다음 코스에 포함할 수 있어요.</div>` : '') +
@@ -652,8 +722,21 @@ $('#sheetContent').onclick = (e) => {
      출발지 화면을 취소하거나 코스 생성이 실패하면 이전 코스가 사라진
      채로 남았다. 이제 기존 코스는 그대로 두고 게이트를 거쳐 출발지
      화면으로만 넘어간다 — 실제로 새 코스가 완성돼 저장에 성공했을
-     때만(runCourseGeneration) 교체된다. */
-  if (b.hasAttribute('data-course-new')) daGateThenBuildCourseSheet();
+     때만(runCourseGeneration) 교체된다. "새로 만들기"는 지금 보고
+     있는 그 날짜를 다시 계산하는 것이다 — 날짜를 안 넘기면 오늘
+     날짜로 새로 만들어져 같은 날짜가 두 개로 갈라진다. */
+  if (b.hasAttribute('data-course-new')) return daGateThenBuildCourseSheet({ date: foodMap.course && foodMap.course.date });
+  /* 날짜 탭 전환 — 이미 만들어 둔 걸 다시 보여줄 뿐이라 게이트를 아예
+     안 거친다(서버에 묻지 않는다, 항상 무료). */
+  if (b.dataset.day) {
+    const found = daCoursesForCity(city).find((c2) => c2.date === b.dataset.day);
+    if (found) { foodMap.course = found; showSavedCourse(); }
+    return;
+  }
+  /* "+ 날짜 추가" — 진짜 새 날짜라 daGateThenBuildCourseSheet가 "추가
+     코스 생성"으로 다룬다(무료 체험 이후엔 유료). 이미 있는 날짜
+     다음날로 기본값을 잡아 준다(여행 계획이 보통 이어지는 방향이라). */
+  if (b.hasAttribute('data-day-new')) return daGateThenBuildCourseSheet({ date: daNextDay(city), isNewDay: true });
 };
 function resolveDup(aId, bId, action) {
   const result = A.resolveDup(foodMap.places, aId, bId, action);
@@ -664,18 +747,23 @@ function resolveDup(aId, bId, action) {
      손대지 않는다. 여기서 옮겨 두지 않으면 합친 뒤 "저장된 코스"를
      다시 열었을 때 이미 없어진 장소를 가리키는 조용한 참조 오류가
      남는다. saveFoodMap을 부르기 전에 옮겨야 이번 저장에 같이 반영된다. */
-  if (result.survivorId && result.mergedId && foodMap.course) {
+  if (result.survivorId && result.mergedId) {
     const from = result.mergedId, to = result.survivorId;
-    if (Array.isArray(foodMap.course.stops)) {
-      foodMap.course.stops.forEach((s) => { if (s.id === from) s.id = to; });
-    }
-    if (Array.isArray(foodMap.course.excludedIds)) {
-      foodMap.course.excludedIds = foodMap.course.excludedIds.map((id) => (id === from ? to : id));
-    }
-    if (foodMap.course.excludedReasons && foodMap.course.excludedReasons[from] !== undefined) {
-      foodMap.course.excludedReasons[to] = foodMap.course.excludedReasons[from];
-      delete foodMap.course.excludedReasons[from];
-    }
+    /* 2026-09-10(멀티데이): 이제 코스가 여러 개(foodMap.courses, 날짜별로)
+       있을 수 있다 — 합쳐진 장소가 그중 아무 날짜에나 들어 있을 수 있으니
+       전부 훑어야 한다. foodMap.course는 courses 배열 안의 항목과 같은
+       참조일 때가 많지만(daUpsertCourse가 그렇게 만든다), 저장 전 예전
+       데이터처럼 배열이 비어 있고 course만 있는 경우도 있어 Set으로 모아
+       중복 없이 둘 다 처리한다. */
+    const targets = new Set([...(foodMap.courses || []), foodMap.course].filter(Boolean));
+    targets.forEach((crs) => {
+      if (Array.isArray(crs.stops)) crs.stops.forEach((s) => { if (s.id === from) s.id = to; });
+      if (Array.isArray(crs.excludedIds)) crs.excludedIds = crs.excludedIds.map((id) => (id === from ? to : id));
+      if (crs.excludedReasons && crs.excludedReasons[from] !== undefined) {
+        crs.excludedReasons[to] = crs.excludedReasons[from];
+        delete crs.excludedReasons[from];
+      }
+    });
   }
   const saved = A.saveFoodMap(foodMap);
   if (!saved) {

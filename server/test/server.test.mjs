@@ -36,6 +36,8 @@ async function api(method, path, { body, token, rawBody, headers } = {}) {
 {
   const r = await api('GET', '/api/health');
   t('헬스체크 200 + 테스트 모드 표시', r.status === 200 && r.json.testMode === true);
+  t('헬스체크 — 서비스별 상태도 각각 표시(이 테스트 실행에선 키가 전혀 없어 셋 다 test)',
+    r.json.services && r.json.services.placeLookup === 'test' && r.json.services.payment === 'test' && r.json.services.email === 'test');
 }
 
 // --- 인증되지 않은 요청은 보호된 라우트에서 401 ---
@@ -205,6 +207,36 @@ let tokenB;
   t('취소 시뮬레이션도 지원됨', simCancel.status === 200);
   const afterCancelSim = await api('GET', '/api/entitlement', { token: tokenB });
   t('취소 시뮬레이션 뒤 다시 free로 전환됨', afterCancelSim.json.plan === 'free');
+
+  // --- 환불·만료도 취소와 별개 타입으로 처리된다(2026-09-10 — 확정
+  // 상품: 9,900원/30일, 자동결제 없음. "결제 승인·취소·환불·만료"를
+  // 각각 구분해 처리하라는 지시사항 반영). ---
+  const simSuccessAgain = await api('POST', '/api/dev/simulate-payment', { token: tokenB, body: { outcome: 'success' } });
+  t('환불 검증 준비 — 재결제 시뮬레이션 성공', simSuccessAgain.status === 200);
+  const beforeRefund = await api('GET', '/api/entitlement', { token: tokenB });
+  t('환불 전에는 다시 paid 상태', beforeRefund.json.plan === 'paid');
+  const simRefund = await api('POST', '/api/dev/simulate-payment', { token: tokenB, body: { outcome: 'refund' } });
+  t('환불 시뮬레이션 성공(취소와 구분된 별개 타입)', simRefund.status === 200 && simRefund.json.type === 'refund');
+  const afterRefund = await api('GET', '/api/entitlement', { token: tokenB });
+  t('환불 뒤 free로 전환됨(취소와 결과는 같지만 원인이 구분되어 기록됨)', afterRefund.json.plan === 'free');
+
+  const simSuccessForExpire = await api('POST', '/api/dev/simulate-payment', { token: tokenB, body: { outcome: 'success' } });
+  t('만료 검증 준비 — 재결제 시뮬레이션 성공', simSuccessForExpire.status === 200);
+  const simExpire = await api('POST', '/api/dev/simulate-payment', { token: tokenB, body: { outcome: 'expire' } });
+  t('만료 시뮬레이션 성공(취소·환불과 구분된 별개 타입)', simExpire.status === 200 && simExpire.json.type === 'expire');
+  const afterExpire = await api('GET', '/api/entitlement', { token: tokenB });
+  t('만료 뒤 free로 전환됨', afterExpire.json.plan === 'free');
+
+  // 결제 관련 웹훅 이벤트는 실제로 각각 타입이 다르게 DB에 남는지도
+  // 확인한다(같은 결과로 뭉뚱그려지지 않고, 나중에 취소/환불/만료
+  // 비율을 구분해 볼 수 있어야 한다는 요구사항 그대로).
+  const { openDb } = await import('../db.mjs');
+  const { accountForToken } = await import('../auth.mjs');
+  const db = openDb();
+  const types = db.prepare('SELECT type FROM payment_events WHERE account_id = ? ORDER BY received_at').all(accountForToken(tokenB));
+  const typeList = types.map((r) => r.type);
+  t('결제 이벤트 기록에 success·cancel·refund·expire가 각각 구분되어 남음',
+    typeList.includes('success') && typeList.includes('cancel') && typeList.includes('refund') && typeList.includes('expire'));
 }
 
 // --- 측정 이벤트 — 화이트리스트에 없는 이벤트·속성·값은 거부되고,

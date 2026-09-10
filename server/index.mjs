@@ -146,7 +146,11 @@ async function handle(req, res) {
       return sendJson(res, result.status, result);
     }
     if (req.method === 'GET' && pathname === '/api/health') {
-      return sendJson(res, 200, { ok: true, testMode: config.testMode });
+      // 2026-09-10: 서비스별 연결 상태를 각각 보여준다 — "전체가 실제
+      // 모드"라는 뭉뚱그린 답만으로는 예를 들어 결제만 실제로 연결되고
+      // 이메일은 아직 테스트인 상태를 구분할 수 없다(services.* 참고,
+      // config.mjs 상단 설명). testMode는 참고용 요약값으로만 남긴다.
+      return sendJson(res, 200, { ok: true, testMode: config.testMode, services: config.services });
     }
     sendJson(res, 404, { ok: false, reason: 'not-found' });
   } catch (e) {

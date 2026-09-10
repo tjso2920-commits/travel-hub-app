@@ -25,6 +25,6 @@ async function smtpAdapter({ to, subject, body }) {
 }
 
 export async function sendEmail(params) {
-  if (config.testMode || config.adapters.email !== 'smtp') return testAdapter(params);
+  if (config.services.email !== 'real') return testAdapter(params);
   return smtpAdapter(params);
 }

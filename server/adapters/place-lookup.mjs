@@ -9,6 +9,10 @@
  * 정규화)를 전부 그대로 타지만, 외부 네트워크 대신 미리 정해 둔 값을
  * 돌려준다 — 실제 서비스 전환은 googleAdapter의 fetch URL을 실 API로
  * 바꾸는 것만 남는다(요청/응답 정규화 로직은 이미 완성돼 있다).
+ *
+ * 2026-09-10: real/test 판정은 오직 `config.services.placeLookup`만
+ * 본다 — 결제·이메일 키가 있는지 없는지와 완전히 무관하다(config.mjs
+ * 상단 설명 참고 — "서비스별로 독립적으로 관리").
  */
 import { config } from '../config.mjs';
 
@@ -56,6 +60,6 @@ async function googleAdapter({ query }) {
 }
 
 export async function lookupPlace(params) {
-  if (config.testMode || config.adapters.placeLookup !== 'google') return testAdapter(params);
+  if (config.services.placeLookup !== 'real') return testAdapter(params);
   return googleAdapter(params);
 }
