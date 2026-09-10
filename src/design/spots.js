@@ -124,9 +124,9 @@ function detail(id) {
         'ambiguous-search': '저장된 링크가 특정 장소가 아니라 검색 링크라, 어떤 곳을 저장한 건지부터 확인이 필요해요.',
         'no-evidence': '저장된 링크가 없어서 위치를 확인할 근거가 아직 없어요.',
       }[p.lookupState] || '저장된 정보만으로는 정확한 위치를 확인할 수 없어요.';
-      cityBlock += `<div class="inline-note">${lookupMsg} 자동 조회는 아직 연결되지 않았습니다.` +
+      cityBlock += `<div class="inline-note">${lookupMsg}` +
         (p.url ? `<br><a class="text-button" href="${A.esc(p.url)}" target="_blank" rel="noopener noreferrer">Google 지도에서 직접 열어 확인하기 ↗</a>` : '') +
-        `</div>`;
+        `<br><button class="text-button" data-lookup-place="${id}" style="padding:6px 0">서버로 위치 후보 찾아보기 ↗</button></div>`;
     }
     if (p.dupCandidateIds && p.dupCandidateIds.length) {
       const others = p.dupCandidateIds.map((did) => spots.find((s) => s.id === did)).filter(Boolean);
@@ -156,6 +156,44 @@ function catAssignSheet(id) {
 }
 function finishCatAssign(id, cat) {
   A.setCat(foodMap.places, id, cat);
+  const saved = A.saveFoodMap(foodMap);
+  if (!saved) {
+    foodMap = A.loadFoodMap();
+    alert('저장에 실패했어요. 브라우저 저장 공간을 확인해 주세요.');
+    return;
+  }
+  refreshFromStorage();
+  updateCity();
+  detail(id);
+}
+/* 실제 위치 확인 — 저장된 식별자만으로는 좌표를 못 만든 장소를 서버의
+   장소 조회 프록시(/api/places/lookup, server/adapters/place-lookup.mjs)
+   로 이름 기반 후보 검색을 해본다(로드맵 ⑦ — 소비자에게 API 키를 요구
+   하지 않는다는 원칙대로 클라이언트는 키를 전혀 안 들고 있다). 이름
+   검색은 다른 곳을 잘못 짚을 수 있으므로 절대 자동으로 좌표를 덮어쓰지
+   않는다 — 반드시 사람이 "맞아요"를 눌러야 반영된다("불확실한 후보
+   확인"). 서버가 아직 테스트 어댑터(가짜 좌표)로 도는 상태여도 이
+   화면·API 호출 코드 경로 자체는 실제 요청→응답→확인 흐름 그대로다 —
+   실 Google Places 키가 연결되면 어댑터만 바뀌고 이 코드는 안 바뀐다. */
+async function daLookupCandidateSheet(id) {
+  const p = spots.find((x) => x.id === id); if (!p) return;
+  open('위치 확인', '<div class="detail"><h2>서버에서 후보를 찾는 중…</h2><p>잠시만요.</p></div>');
+  const q = [p.name, p.area].filter(Boolean).join(' ').trim() || p.name;
+  const r = await A.api('/api/places/lookup?q=' + encodeURIComponent(q));
+  if (!r.ok || !r.json || r.json.ok === false || typeof r.json.lat !== 'number') {
+    open('위치 확인', `<div class="detail"><h2>후보를 찾지 못했어요.</h2><p><b>${A.esc(p.name)}</b>에 대한 위치 후보를 서버에서 찾지 못했습니다. 구글 지도에서 직접 열어 확인해 주세요.</p><button class="primary" data-dismiss>돌아가기</button></div>`);
+    return;
+  }
+  const cand = r.json;
+  open('위치 확인', `<div class="detail"><h2>이 위치가 맞나요?</h2><p><b>${A.esc(cand.name || p.name)}</b><br>위도 ${cand.lat.toFixed(5)}, 경도 ${cand.lng.toFixed(5)}</p>` +
+    `<p class="inline-note">이름으로 찾은 후보일 뿐 확정된 위치가 아닙니다 — 실제로 저장하신 곳이 맞는지 꼭 확인한 뒤에만 저장해 주세요.</p>` +
+    `<button class="primary" data-lookup-confirm="${A.esc(id)}|${cand.lat}|${cand.lng}|${A.esc(cand.placeId || '')}">맞아요 · 이 위치로 저장</button>` +
+    `<button class="text-button" data-dismiss>아니에요 · 취소</button></div>`);
+}
+function finishLookupConfirm(id, lat, lng, placeId) {
+  const p = foodMap.places.find((x) => x.id === id); if (!p) return;
+  p.lat = lat; p.lng = lng;
+  if (placeId && !p.placeId) p.placeId = placeId; // 이미 있던 강한 식별자는 절대 안 덮는다(daMerge 규칙과 일관).
   const saved = A.saveFoodMap(foodMap);
   if (!saved) {
     foodMap = A.loadFoodMap();
@@ -710,6 +748,11 @@ $('#sheetContent').onclick = (e) => {
   if (b.dataset.remove) { route.delete(b.dataset.remove); showRoute(); }
   if (b.dataset.citySingle) return cityAssignSheet([b.dataset.citySingle]);
   if (b.dataset.catEdit) return catAssignSheet(b.dataset.catEdit);
+  if (b.dataset.lookupPlace) return daLookupCandidateSheet(b.dataset.lookupPlace);
+  if (b.dataset.lookupConfirm) {
+    const [pid, lat, lng, placeId] = b.dataset.lookupConfirm.split('|');
+    return finishLookupConfirm(pid, +lat, +lng, placeId);
+  }
   if (b.dataset.dupMerge) { const [x, y] = b.dataset.dupMerge.split('|'); return resolveDup(x, y, 'merge'); }
   if (b.dataset.dupDismiss) { const [x, y] = b.dataset.dupDismiss.split('|'); return resolveDup(x, y, 'dismiss'); }
   /* 2026-09-09 코드 검토(2차, 로드맵 ⑨): 처음 만드는 코스는 무료

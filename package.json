@@ -21,6 +21,7 @@
     "server-config-test": "node server/test/config.test.mjs",
     "purchase-flow-check": "node scripts/test-purchase-flow.mjs",
     "multi-day-check": "node scripts/test-multi-day.mjs",
+    "place-lookup-check": "node scripts/test-place-lookup.mjs",
     "landing-page-check": "node scripts/test-landing-page.mjs"
   },
   "devDependencies": {

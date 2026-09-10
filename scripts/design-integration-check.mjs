@@ -212,7 +212,7 @@ await p.evaluate((id) => { detail(id); }, lookupTarget);
 await p.waitForTimeout(150);
 const lookupDetail = await p.textContent('#sheetContent');
 t('축약 링크는 "추가 조회 필요"로 구분 표시됨(좌표 없음과 다르게)', lookupDetail.includes('축약 링크'));
-t('자동 조회 대신 지도에서 직접 열어보라고 안내(API 키 요구 없음)', lookupDetail.includes('직접 열어'));
+t('지도에서 직접 열어 확인하는 안내도 함께 제공(API 키 요구 없음)', lookupDetail.includes('직접 열어'));
 const apiKeyInputExists = await p.evaluate(() => !!document.querySelector('input[type="password"]'));
 t('화면 어디에도 API 키 입력창이 없음', apiKeyInputExists === false);
 await p.evaluate(() => document.getElementById('close').click());
