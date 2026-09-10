@@ -2,32 +2,37 @@
 /**
  * 최소 백엔드 진입점 — 로드맵 ⑧(유료 출시 준비) 실제 구현.
  *
- * 2026-09-09 코드 검토: "서버가 필요하다는 게 맞지만, 실 운영 계정이
- * 없다는 이유로 실제 구현 가능한 서버 코드·DB 스키마·테스트 작성을
- * 멈추지 말 것." 이 파일이 그 결과물이다 — 프레임워크 없이 Node
- * 내장 http만으로 만들었다(외부 패키지 설치 없이 바로 실행·테스트
- * 가능해야 한다는 판단). 실제 운영 규모가 커지면 Express 등으로
- * 옮길 수 있지만, 지금 트래픽 규모에서는 과설계다.
- *
  * 실행: node server/index.mjs (기본 포트 8787, PORT 환경변수로 변경)
  * 테스트: node server/test/server.test.mjs
  *
- * 이 서버는 사전 배포(pre-production) 상태다 — 아래가 전부 테스트
- * 모드(가짜 어댑터)로 동작하며, 실제 운영에 필요한 것은 문서 맨 끝
- * "실제 전환에 필요한 것"에 한 번에 정리돼 있다.
+ * 2026-09-10 재검토(3차) — "무료체험과 유료 계산을 서버에서 집행하고,
+ * 운영에서 테스트 기능을 확실히 차단하라." 이번 갱신으로:
+ * - 개인화 코스 생성 자체가 서버 라우트(POST /api/course/generate)로
+ *   옮겨졌다(routes/course-generation.mjs) — 브라우저가 계산하고
+ *   나중에 소진만 알리는 예전 구조를 버렸다.
+ * - 개발용 결제 시뮬레이션(/api/dev/simulate-payment)은 이제
+ *   `config.appEnv !== 'production'`일 때만 **라우트 자체를 등록**한다
+ *   (권한 검사로 막는 게 아니라 애초에 존재하지 않게 한다 — "키가
+ *   빠졌다고 다시 열리면 안 된다"는 지시 반영).
+ * - 실제 토스페이먼츠 주문/승인/취소, 실제 장소 조회 인증·한도, 계정별
+ *   서버 저장(장소·날짜별 일정) 라우트가 추가됐다.
  */
 import http from 'node:http';
-import { config } from './config.mjs';
+import { config, assertBootReady } from './config.mjs';
 import { openDb } from './db.mjs';
-import { requestLoginCode, verifyLoginCode, accountForToken } from './auth.mjs';
+import { requestLoginCode, verifyLoginCode, accountForToken, logout } from './auth.mjs';
 import { getCourse, saveCourse } from './routes/course.mjs';
 import { trialStatus, consumeTrial } from './routes/trial.mjs';
 import { checkEntitlement } from './routes/entitlement.mjs';
 import { handleWebhook } from './routes/webhook.mjs';
+import { handleTossWebhook } from './routes/webhook-toss.mjs';
 import { lookupPlaceRoute } from './routes/places.mjs';
 import { recordEvent } from './routes/events.mjs';
-import { simulatePayment } from './routes/dev.mjs';
 import { joinWaitlist } from './routes/waitlist.mjs';
+import { generateCourseRoute } from './routes/course-generation.mjs';
+import { getPlaces, putPlaces, getCourses, putCourses } from './routes/account-data.mjs';
+import { paymentConfigRoute, createOrderRoute, confirmOrderRoute, cancelOrderRoute } from './routes/payment.mjs';
+import { getVerifiedStatus } from './status.mjs';
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -41,13 +46,6 @@ function readBody(req) {
   });
 }
 
-/* CORS — 클라이언트(정적 페이지)와 이 서버가 다른 출처에 있을 수
-   있다(예: GitHub Pages + 별도 API 서버, 또는 이번 서버 테스트처럼
-   file:// 페이지가 http://localhost API를 부르는 경우). 모든 응답에
-   허용 헤더를 싣고, 브라우저가 상태 변경 요청 전에 보내는 preflight
-   (OPTIONS)에 204로 답한다. 이 API는 공개 엔드포인트라 자격증명
-   쿠키를 안 쓴다(세션은 Authorization 헤더의 베어러 토큰) — 그래서
-   출처를 '*'로 열어도 안전하다. */
 function withCors(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
@@ -67,10 +65,15 @@ function bearerToken(req) {
   return m ? m[1] : null;
 }
 
-/* 세션이 필요한 라우트 공통 처리 — account_id는 항상 여기서만 나온다.
-   요청 본문의 account_id 같은 필드는 라우트 핸들러들이 아예 읽지
-   않는다(routes/course.mjs 주석 참고 — 남의 계정을 사칭하는 걸 막는
-   유일하고 확실한 방법은 "클라이언트가 준 식별자를 신뢰하지 않는" 것). */
+function clientIp(req) {
+  // 리버스 프록시 뒤에 배포하면 X-Forwarded-For를 봐야 실제 클라이언트
+  // IP가 나온다 — 프록시 설정에 따라 헤더 이름이 다를 수 있어 배포
+  // 환경이 정해지면 이 함수만 맞추면 된다.
+  const fwd = req.headers['x-forwarded-for'];
+  if (fwd) return String(fwd).split(',')[0].trim();
+  return req.socket && req.socket.remoteAddress;
+}
+
 function requireAccount(req, res) {
   const accountId = accountForToken(bearerToken(req));
   if (!accountId) { sendJson(res, 401, { ok: false, reason: 'unauthorized' }); return null; }
@@ -84,14 +87,43 @@ async function handle(req, res) {
   try {
     if (req.method === 'POST' && pathname === '/api/auth/request-code') {
       const body = JSON.parse((await readBody(req)) || '{}');
-      const result = await requestLoginCode(body.email);
+      const result = await requestLoginCode(body.email, clientIp(req));
       return sendJson(res, result.ok ? 200 : 400, result);
     }
     if (req.method === 'POST' && pathname === '/api/auth/verify-code') {
       const body = JSON.parse((await readBody(req)) || '{}');
       const result = verifyLoginCode(body.email, body.code);
-      return sendJson(res, result.ok ? 200 : 400, result);
+      return sendJson(res, result.ok ? 200 : (result.reason === 'locked' ? 429 : 400), result);
     }
+    if (req.method === 'POST' && pathname === '/api/auth/logout') {
+      const result = logout(bearerToken(req));
+      return sendJson(res, 200, result);
+    }
+
+    // 계정별 서버 저장 — 장소 보관함·날짜별 일정(2026-09-10 신규).
+    if (req.method === 'GET' && pathname === '/api/places') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      return sendJson(res, 200, getPlaces(accountId));
+    }
+    if (req.method === 'PUT' && pathname === '/api/places') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const result = putPlaces(accountId, body.places);
+      return sendJson(res, result.status || 200, result);
+    }
+    if (req.method === 'GET' && pathname === '/api/courses') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      return sendJson(res, 200, getCourses(accountId));
+    }
+    if (req.method === 'PUT' && pathname === '/api/courses') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const result = putCourses(accountId, body.courses);
+      return sendJson(res, result.status || 200, result);
+    }
+    // 예전 단일 코스 저장(로드맵 ⑧ 최초 설계) — 클라이언트가 실제로
+    // 부르지 않게 됐지만(멀티데이 도입 이후 /api/courses가 그 자리를
+    // 대신한다), 기존 테스트·하위 호환을 위해 남겨 둔다.
     if (req.method === 'GET' && pathname === '/api/course') {
       const accountId = requireAccount(req, res); if (!accountId) return;
       return sendJson(res, 200, getCourse(accountId));
@@ -102,6 +134,15 @@ async function handle(req, res) {
       const result = saveCourse(accountId, body.course);
       return sendJson(res, result.ok ? 200 : 400, result);
     }
+
+    // 개인화 코스 생성 — 인증 필수, 서버가 전부 집행(2026-09-10 신규).
+    if (req.method === 'POST' && pathname === '/api/course/generate') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const result = await generateCourseRoute(accountId, body);
+      return sendJson(res, result.status || (result.ok ? 200 : 400), result);
+    }
+
     if (req.method === 'GET' && pathname === '/api/trial') {
       const accountId = requireAccount(req, res); if (!accountId) return;
       return sendJson(res, 200, trialStatus(accountId));
@@ -115,10 +156,14 @@ async function handle(req, res) {
       const result = checkEntitlement(accountId);
       return sendJson(res, result.ok ? 200 : 404, result);
     }
+
+    // 장소 조회 — 이제 인증 필수 + 계정별/서비스 전체 한도(2026-09-10).
     if (req.method === 'GET' && pathname === '/api/places/lookup') {
-      const result = await lookupPlaceRoute(url.searchParams.get('q'));
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      const result = await lookupPlaceRoute(accountId, url.searchParams.get('q'), url.searchParams.get('phase'));
       return sendJson(res, result.status, result.ok ? result.result : result);
     }
+
     if (req.method === 'POST' && pathname === '/api/waitlist') {
       const body = JSON.parse((await readBody(req)) || '{}');
       const result = joinWaitlist({ email: body.email, channel: body.channel });
@@ -126,35 +171,70 @@ async function handle(req, res) {
     }
     if (req.method === 'POST' && pathname === '/api/events') {
       const body = JSON.parse((await readBody(req)) || '{}');
-      // 로그인 전(예: channel_inflow)에도 이벤트가 발생하므로 계정 인증은
-      // 선택이다 — 있으면 참고용으로만 같이 기록한다(개인정보 아님, 그냥
-      // 어느 계정 흐름인지 뒤에 파악할 때 쓰는 내부 식별자일 뿐).
       const accountId = accountForToken(bearerToken(req));
       const result = recordEvent({ name: body.name, props: body.props, accountId });
       return sendJson(res, result.status, result);
     }
-    if (req.method === 'POST' && pathname === '/api/dev/simulate-payment') {
+
+    // 실제 결제(토스페이먼츠) — 주문 생성 → 위젯 → 승인 확인 → 취소.
+    if (req.method === 'GET' && pathname === '/api/payment/config') {
+      const result = paymentConfigRoute();
+      return sendJson(res, result.status, result);
+    }
+    if (req.method === 'POST' && pathname === '/api/payment/order') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      const result = createOrderRoute(accountId);
+      return sendJson(res, result.status, result);
+    }
+    if (req.method === 'POST' && pathname === '/api/payment/confirm') {
       const accountId = requireAccount(req, res); if (!accountId) return;
       const body = JSON.parse((await readBody(req)) || '{}');
+      const result = await confirmOrderRoute(accountId, body);
+      return sendJson(res, result.status, result);
+    }
+    if (req.method === 'POST' && pathname === '/api/payment/cancel') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const result = await cancelOrderRoute(body);
+      return sendJson(res, result.status, result);
+    }
+    if (req.method === 'POST' && pathname === '/api/webhook/toss') {
+      const raw = await readBody(req);
+      const result = await handleTossWebhook(raw);
+      return sendJson(res, result.status, result);
+    }
+
+    // 개발용 결제 시뮬레이션 — production에서는 이 블록 자체가 실행되지
+    // 않는다(아래 참고). 라우트가 아예 없으니 어떤 요청을 보내도 404다.
+    if (!config.isProd && req.method === 'POST' && pathname === '/api/dev/simulate-payment') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const { simulatePayment } = await import('./routes/dev.mjs');
       const result = simulatePayment(accountId, body.outcome);
       return sendJson(res, result.status, result);
     }
-    if (req.method === 'POST' && pathname === '/api/webhook/payment') {
+    if (!config.isProd && req.method === 'POST' && pathname === '/api/webhook/payment') {
       const raw = await readBody(req);
       const sig = req.headers['x-webhook-signature'];
       const result = handleWebhook(raw, sig);
       return sendJson(res, result.status, result);
     }
+
     if (req.method === 'GET' && pathname === '/api/health') {
-      // 2026-09-10: 서비스별 연결 상태를 각각 보여준다 — "전체가 실제
-      // 모드"라는 뭉뚱그린 답만으로는 예를 들어 결제만 실제로 연결되고
-      // 이메일은 아직 테스트인 상태를 구분할 수 없다(services.* 참고,
-      // config.mjs 상단 설명). testMode는 참고용 요약값으로만 남긴다.
-      return sendJson(res, 200, { ok: true, testMode: config.testMode, services: config.services });
+      // "키 존재"(services.*)와 "실제로 연결해 본 적 있는지"(verified)를
+      // 구분해서 보여준다(2026-09-10: "상태 표시는 키 존재와 실제 연결
+      // 확인을 구분하라").
+      return sendJson(res, 200, {
+        ok: true,
+        appEnv: config.appEnv,
+        testMode: config.testMode,
+        services: config.services,
+        verified: getVerifiedStatus(),
+      });
     }
     sendJson(res, 404, { ok: false, reason: 'not-found' });
   } catch (e) {
-    sendJson(res, 500, { ok: false, reason: 'internal-error', message: config.testMode ? String(e && e.message) : undefined });
+    sendJson(res, 500, { ok: false, reason: 'internal-error', message: !config.isProd ? String(e && e.message) : undefined });
   }
 }
 
@@ -165,8 +245,15 @@ export function createServer() {
 
 // 직접 실행됐을 때만 리스닝 시작(테스트에서는 createServer()만 불러 쓴다).
 if (import.meta.url === `file://${process.argv[1]}`) {
+  const ready = assertBootReady(config);
+  if (!ready.ok) {
+    console.error('서버 시작 거부 — 운영(production) 환경에 필수 설정이 없습니다:');
+    ready.missing.forEach((m) => console.error('  - ' + m));
+    console.error('docs/BUSINESS_DECISIONS.md 6절을 참고해 환경변수를 채운 뒤 다시 시작하세요.');
+    process.exit(1);
+  }
   const server = createServer();
   server.listen(config.port, () => {
-    console.log(`서버 시작: http://localhost:${config.port} (${config.testMode ? 'TEST 모드 — 가짜 어댑터' : '운영 모드'})`);
+    console.log(`서버 시작: http://localhost:${config.port} (환경: ${config.appEnv})`);
   });
 }

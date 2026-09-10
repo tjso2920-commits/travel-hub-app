@@ -16,6 +16,7 @@ import { chromium } from 'playwright';
 
 process.env.DB_PATH = ':memory:';
 process.env.FORCE_TEST_MODE = 'true';
+process.env.ROUTING_TEST_FORCE = 'success';
 const { createServer } = await import('../server/index.mjs');
 const { openDb } = await import('../server/db.mjs');
 const { sentEmailsForTest } = await import('../server/adapters/email.mjs');
@@ -38,7 +39,6 @@ await p.goto('file://' + process.cwd() + '/src/design/index.html');
 await p.waitForTimeout(300);
 
 await p.evaluate(() => {
-  foodMap.lic = { name: 'q', date: '2026-01-01' };
   foodMap.places = [
     { id: 'c1', name: '출발점', lat: 33.590, lng: 130.400, cat: '카페·디저트', catConfirmed: true, sourceLists: [] },
     { id: 'c2', name: '두번째곳', lat: 33.591, lng: 130.401, cat: '맛집·식당', catConfirmed: true, sourceLists: [] },
@@ -51,12 +51,30 @@ await p.evaluate(() => {
 await p.reload();
 await p.waitForTimeout(300);
 
-// --- 1일차 코스(무료 체험) ---
+// --- 2026-09-10 재검토(3차): 실제 데이터는 첫 코스부터 로그인이
+// 필요하다 — 멀티데이 검증 이전에 먼저 로그인부터 마친다. ---
+const testEmail = 'multiday-tester@example.com';
 await p.evaluate(() => { ['c1', 'c2'].forEach((id) => route.add(id)); });
 await p.evaluate(() => showRoute());
 await p.waitForTimeout(150);
 await p.click('[data-build-course]');
 await p.waitForTimeout(200);
+const loginTitle = await p.textContent('#sheetLabel');
+t('실제 데이터는 첫 코스부터 로그인부터 요구함', loginTitle === '로그인');
+await p.fill('#loginEmail', testEmail);
+await p.click('#loginSendBtn');
+await p.waitForTimeout(200);
+{
+  const emailSent = sentEmailsForTest.filter((e) => e.to === testEmail).pop();
+  const code = emailSent.body.match(/(\d{6})/)[1];
+  await p.fill('#loginCode', code);
+  await p.click('#loginVerifyBtn');
+  await p.waitForFunction(() => document.getElementById('sheetLabel').textContent !== '코드 확인', { timeout: 5000 });
+}
+const afterLoginForDay1 = await p.textContent('#sheetLabel');
+t('로그인 성공 뒤 곧바로 출발지 화면(첫 코스는 여전히 무료)', afterLoginForDay1 === '출발지 정하기');
+
+// --- 1일차 코스(무료 체험) ---
 const day1Default = await p.inputValue('#courseDate');
 t('출발지 화면에 날짜 입력이 있고 기본값이 채워져 있음', !!day1Default);
 await p.click('[data-start-pick="c1"]');
@@ -79,26 +97,16 @@ t('"+ 날짜 추가" 버튼이 있음', hasAddDayBtn);
   t('여기까지 course_generated 이벤트 1건만 기록됨(날짜 탭 자체는 아직 안 건드림)', before === 1);
 }
 
-// --- "+ 날짜 추가"는 daHasBuiltCourseBefore=true라 로그인부터 요구한다 ---
+// --- "+ 날짜 추가" — 이미 로그인돼 있으니 곧바로 출발지 화면이 뜨고,
+// 실제 생성을 시도한 순간 서버가 402를 돌려줘야 이용권 화면으로 이어진다. ---
 await p.click('[data-day-new]');
 await p.waitForTimeout(200);
-const afterAddDayTitle = await p.textContent('#sheetLabel');
-t('"+ 날짜 추가"도 두 번째 이후 코스 생성이라 로그인을 요구함', afterAddDayTitle === '로그인');
-
-// --- 로그인 ---
-const testEmail = 'multiday-tester@example.com';
-await p.fill('#loginEmail', testEmail);
-await p.click('#loginSendBtn');
-await p.waitForTimeout(200);
-const emailSent = sentEmailsForTest.filter((e) => e.to === testEmail).pop();
-const code = emailSent.body.match(/(\d{6})/)[1];
-await p.fill('#loginCode', code);
-await p.click('#loginVerifyBtn');
-await p.waitForFunction(() => document.getElementById('sheetLabel').textContent !== '코드 확인', { timeout: 5000 });
-
-// --- 로그인 후 이용권 화면 — trigger가 'new_day'로 구분되어 기록됐는지 ---
+const addDayBuildTitle = await p.textContent('#sheetLabel');
+t('"+ 날짜 추가"도 로그인된 상태라 곧바로 출발지 화면', addDayBuildTitle === '출발지 정하기');
+await p.click('[data-start-pick="c1"]');
+await p.waitForTimeout(500);
 const afterLoginTitle = await p.textContent('#sheetLabel');
-t('로그인 후 "+ 날짜 추가"는 이용권 화면으로 이어짐', afterLoginTitle === '이용권');
+t('두 번째 날짜 생성 시도는 서버가 402를 돌려줘 이용권 화면으로 이어짐', afterLoginTitle === '이용권');
 {
   const db = openDb();
   const paywallEvts = db.prepare("SELECT props FROM events WHERE name = 'paywall_viewed'").all().map((r) => JSON.parse(r.props));
@@ -160,8 +168,11 @@ await p.waitForTimeout(150);
 const afterRefundTabSwitch = await p.evaluate(() => foodMap.course.date);
 t('환불 후에도 다른 날짜 탭 전환이 계속 무료로 동작함', afterRefundTabSwitch === day2Default);
 
-// --- 환불 후 새 날짜 추가는 다시 이용권을 요구함 ---
+// --- 환불 후 새 날짜 추가는 다시 이용권을 요구함(실제 생성 시도 때
+// 서버가 402를 돌려줘야 반응적으로 이용권 화면이 뜬다) ---
 await p.click('[data-day-new]');
+await p.waitForTimeout(200);
+await p.click('[data-start-pick="c1"]');
 await p.waitForTimeout(500);
 const afterRefundAddDayTitle = await p.textContent('#sheetLabel');
 t('환불 후 "+ 날짜 추가"는 다시 이용권 화면을 띄움(권한이 실제로 회수됨)', afterRefundAddDayTitle === '이용권');

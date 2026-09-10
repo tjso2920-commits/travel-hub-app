@@ -15,6 +15,7 @@
  * 상단 설명 참고 — "서비스별로 독립적으로 관리").
  */
 import { config } from '../config.mjs';
+import { markVerified } from '../status.mjs';
 
 /* 테스트 어댑터 — 이름에 "역"·"타워"가 들어가면 그럴듯한 좌표를 만들어
    돌려주고, 그 외엔 "찾지 못함"으로 정직하게 답한다. 실제 조회 성공/
@@ -37,7 +38,7 @@ function testAdapter({ query }) {
    없는 이 개발 환경에서는 절대 호출되지 않는다(config.testMode가
    항상 우선한다 — placeLookup()이 그 분기를 담당). */
 async function googleAdapter({ query }) {
-  const key = process.env.GOOGLE_PLACES_API_KEY;
+  const key = config.google.placesKey;
   if (!key) return { ok: false, reason: 'no-api-key-configured' };
   const url = `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(query)}&inputtype=textquery&fields=geometry,name,place_id&key=${key}`;
   try {
@@ -46,6 +47,7 @@ async function googleAdapter({ query }) {
     const data = await res.json();
     const cand = data.candidates && data.candidates[0];
     if (!cand) return { ok: false, reason: 'not-found' };
+    markVerified('placeLookup');
     return {
       ok: true,
       lat: cand.geometry.location.lat,
@@ -60,6 +62,9 @@ async function googleAdapter({ query }) {
 }
 
 export async function lookupPlace(params) {
-  if (config.services.placeLookup !== 'real') return testAdapter(params);
-  return googleAdapter(params);
+  if (config.services.placeLookup === 'real') return googleAdapter(params);
+  // 2026-09-10: 운영인데 키가 없으면(unavailable) 조용히 가짜 좌표로
+  // 넘어가지 않는다 — 정직하게 "이 기능은 지금 못 씀"이라고 답한다.
+  if (config.isProd) return { ok: false, reason: 'place-lookup-unavailable' };
+  return testAdapter(params);
 }

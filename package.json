@@ -19,10 +19,15 @@
     "server": "node server/index.mjs",
     "server-test": "node server/test/server.test.mjs",
     "server-config-test": "node server/test/config.test.mjs",
+    "server-v2-test": "node server/test/server-v2.test.mjs",
+    "server-production-boot-test": "node server/test/production-boot.test.mjs",
+    "server-provider-contracts-test": "node server/test/provider-contracts.test.mjs",
+    "server-trial-charging-test": "node server/test/generation-trial-charging-success.test.mjs && node server/test/generation-trial-charging-failure.test.mjs",
     "purchase-flow-check": "node scripts/test-purchase-flow.mjs",
     "multi-day-check": "node scripts/test-multi-day.mjs",
     "place-lookup-check": "node scripts/test-place-lookup.mjs",
-    "landing-page-check": "node scripts/test-landing-page.mjs"
+    "landing-page-check": "node scripts/test-landing-page.mjs",
+    "account-sync-check": "node scripts/test-account-sync.mjs"
   },
   "devDependencies": {
     "jsdom": "^24.1.3",

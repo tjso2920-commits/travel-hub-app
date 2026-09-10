@@ -11,6 +11,7 @@ import { chromium } from 'playwright';
 process.env.DB_PATH = ':memory:';
 process.env.FORCE_TEST_MODE = 'true';
 const { createServer } = await import('../server/index.mjs');
+const { sentEmailsForTest } = await import('../server/adapters/email.mjs');
 
 let fail = 0; const t = (n, c) => { console.log((c ? 'PASS ' : 'FAIL ') + n); if (!c) fail++; };
 
@@ -45,15 +46,33 @@ await p.evaluate(() => {
 await p.reload();
 await p.waitForTimeout(300);
 
-// --- 후보를 찾는 경우 ---
+// --- 서버 조회는 이제 로그인이 필요하다(비용 보호 — 로그인 없이는
+// /api/places/lookup을 아예 호출할 수 없다). 로그인 화면을 거친 뒤에는
+// 원래 하려던 동작(후보 조회)을 곧바로 이어가야 한다(다른 로그인
+// 게이트들과 같은 패턴 — daGateThenBuildCourseSheet 등). ---
 await p.evaluate(() => detail('nf1'));
 await p.waitForTimeout(150);
 const beforeLookupHtml = await p.textContent('#sheetContent');
 t('위치 미확인 장소 상세에 "서버로 위치 후보 찾아보기" 버튼이 있음', beforeLookupHtml.includes('서버로 위치 후보 찾아보기'));
 await p.click('[data-lookup-place="nf1"]');
-await p.waitForTimeout(400);
+await p.waitForTimeout(200);
+const loginPromptTitle = await p.textContent('#sheetLabel');
+t('로그인 전에는 위치 후보 조회 대신 로그인 화면이 뜸', loginPromptTitle === '로그인');
+const testEmail = 'place-lookup-tester@example.com';
+await p.fill('#loginEmail', testEmail);
+await p.click('#loginSendBtn');
+await p.waitForTimeout(200);
+const emailSent = sentEmailsForTest.filter((e) => e.to === testEmail).pop();
+const code = emailSent.body.match(/(\d{6})/)[1];
+await p.fill('#loginCode', code);
+await p.click('#loginVerifyBtn');
+await p.waitForFunction(() => document.getElementById('sheetLabel').textContent !== '코드 확인', { timeout: 5000 });
+await p.waitForTimeout(300);
+
+// --- 후보를 찾는 경우 — 로그인 성공 직후 원래 하려던 조회가 곧바로
+// 이어져 별도 재클릭 없이 후보 화면으로 넘어가야 한다. ---
 const candTitle = await p.textContent('#sheetLabel');
-t('후보 조회 후 확인 화면으로 전환됨', candTitle === '위치 확인');
+t('로그인 성공 뒤 원래 하려던 위치 후보 조회로 곧바로 이어짐', candTitle === '위치 확인');
 const candHtml = await p.textContent('#sheetContent');
 t('후보 화면에 위도/경도가 표시되고, 확정이 아니라는 안내가 함께 있음', /위도 .* 경도/.test(candHtml) && candHtml.includes('확정된 위치가 아닙니다'));
 t('"맞아요"를 누르기 전까지는 아직 장소에 좌표가 반영 안 됨', (await p.evaluate(() => foodMap.places.find((x) => x.id === 'nf1').lat)) == null);

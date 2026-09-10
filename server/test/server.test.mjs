@@ -7,6 +7,11 @@
  */
 process.env.DB_PATH = ':memory:';
 process.env.FORCE_TEST_MODE = 'true';
+// 2026-09-10 재검토(3차)로 로그인 코드 요청 쿨다운이 생겼다 — 이 테스트는
+// 같은 이메일로 짧은 간격에 여러 번 재로그인하는 시나리오를 실제로
+// 검증하므로 쿨다운을 0으로 꺼둔다(실사용 남용 방지 기능 자체는
+// server/test/rate-limit.test.mjs에서 따로 검증한다).
+process.env.LOGIN_CODE_COOLDOWN_SECONDS = '0';
 
 const { createServer } = await import('../index.mjs');
 const { sentEmailsForTest } = await import('../adapters/email.mjs');
@@ -177,13 +182,17 @@ let tokenB;
   t('취소 웹훅 이후 다시 free로 전환됨', afterCancel.json.plan === 'free');
 }
 
-// --- 장소 조회 프록시 — API 키 없이, 서버가 대신 조회 ---
+// --- 장소 조회 프록시 — API 키 없이, 서버가 대신 조회. 2026-09-10부터
+// 인증 필수(로그인 없이 호출 가능했던 문제를 고쳤다 — rate-limit.test.mjs
+// 에서 한도·인증 자체는 더 자세히 검증한다). ---
 {
-  const empty = await api('GET', '/api/places/lookup?q=');
+  const noAuth = await api('GET', '/api/places/lookup?q=' + encodeURIComponent('후쿠오카역'));
+  t('로그인 없이는 장소 조회도 401', noAuth.status === 401);
+  const empty = await api('GET', '/api/places/lookup?q=', { token: tokenA });
   t('빈 질의는 400', empty.status === 400);
-  const r = await api('GET', '/api/places/lookup?q=' + encodeURIComponent('후쿠오카역'));
+  const r = await api('GET', '/api/places/lookup?q=' + encodeURIComponent('후쿠오카역'), { token: tokenA });
   t('장소 조회는 항상 응답을 줌(성공 또는 정직한 실패)', r.status === 200 && typeof r.json.ok === 'boolean');
-  const r2 = await api('GET', '/api/places/lookup?q=' + encodeURIComponent('후쿠오카역'));
+  const r2 = await api('GET', '/api/places/lookup?q=' + encodeURIComponent('후쿠오카역'), { token: tokenA });
   t('같은 질의는 같은 결과(테스트 어댑터 결정론적 — 재현 가능한 테스트)', JSON.stringify(r.json) === JSON.stringify(r2.json));
 }
 

@@ -2,36 +2,20 @@
 /**
  * 서버 설정 — 로드맵 ⑧(유료 출시 준비) 실제 구현.
  *
- * 2026-09-09 코드 검토: "실 계정·크리덴셜이 없다는 이유로 실제로 구현
- * 가능한 서버 코드·DB 스키마·테스트 작성 자체를 멈추지 말 것." 이 파일이
- * 그 경계를 긋는다 — 실제 운영에 필요한 값(결제대행사 시크릿, 실 place
- * lookup API 키, 실 이메일 발송 키)은 전부 환경변수로만 읽고, 값이 없으면
- * 그 서비스만 TEST_MODE로 자동 전환해 어댑터가 가짜(하지만 실제 코드
- * 경로를 그대로 타는) 응답을 준다. 실 크리덴셜을 코드에 박아 넣지 않는다
- * — 이 저장소 어디에도 실제 비밀값이 없어야 한다.
- *
- * 2026-09-10 재검토 반영 — "서비스별 연결 상태를 독립적으로 관리하고,
- * 운영 모드에서 키가 없다고 가짜로 조용히 대체하지 말 것": 예전 버전은
- * `PAYMENT_PG_SECRET`과 `GOOGLE_PLACES_API_KEY`가 **둘 다** 있어야만 전체를
- * 실제 모드로 봤다 — 그 결과 실제 Google 키를 넣어도 결제 키가 아직 없으면
- * 장소 조회까지 계속 조용히 가짜 좌표를 돌려주는 상태가 됐다(실제로 이런
- * 구성이 되는데도 겉으로는 "왜 아직도 가짜 좌표가 나오지" 원인을 알기
- * 어려웠다 — 그게 "조용한 대체"다). 이제 서비스마다(placeLookup/payment/
- * email) 자기 크리덴셜 유무만으로 독립적으로 real/test를 판정한다 — 다른
- * 서비스 상태와 무관하다. 전체 `testMode`는 "셋 다 test일 때만 true"인
- * 참고용 요약값으로만 남긴다(개별 분기에는 절대 안 쓴다 — services.<이름>을
- * 직접 본다).
- *
- * 가격은 절대 숫자로 박지 않는다 — 여기 설정값 하나로만 바꾼다(코드
- * 검토 지시사항: "가격은 설정 가능한 값으로 유지"). 지금 적힌 9900원/
- * 30일은 첫 출시 확정 상품(BUSINESS_DECISIONS.md 참고)이지만, 실제
- * 서버에 적용하려면 여전히 환경변수로 넣어야 한다(코드에 숫자를 박지
- * 않는다는 원칙은 확정 후에도 유지).
- *
- * 테스트 용이성을 위해 "process.env를 읽어 설정 객체를 만드는" 부분을
- * buildConfig(env) 순수 함수로 분리했다 — 서버 테스트가 실제 프로세스를
- * 여러 개 띄우지 않고도 "키가 하나만 있을 때/전혀 없을 때/전부 있을 때"
- * 조합별로 services 판정이 서로 독립적인지 직접 검증할 수 있다.
+ * 2026-09-10 재검토(3차) 반영 — "명시적인 development/test/production
+ * 환경을 도입하고 production에서는 키가 없는 기능을 unavailable로
+ * 처리하거나 필수 설정 누락으로 시작을 거부하라." 예전 버전은 "키가
+ * 있으면 real, 없으면 test"만 판정했다 — production에 실수로 키를 안
+ * 넣고 배포해도 서버가 조용히 test 어댑터로 도는 사고가 가능했다.
+ * 이제는 세 가지 명시적 환경(APP_ENV)이 있고:
+ *   - development/test: 예전처럼 키 유무로 real/test를 판정한다(로컬
+ *     개발 편의 유지).
+ *   - production: 키가 없는 서비스는 'test'가 아니라 **'unavailable'**
+ *     이다 — 가짜 응답을 절대 안 주고, 그 기능만 정직하게 막힌다.
+ *     그리고 결제·이메일처럼 이게 없으면 서비스 자체가 의미 없는
+ *     핵심 크리덴셜은 아예 **서버 시작을 거부한다**(assertBootReady 참고,
+ *     index.mjs가 실제 리스닝 직전에 부른다 — config.mjs를 그냥
+ *     import만 해도 되는 테스트 코드는 안 건드린다).
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -39,13 +23,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
-/* 서비스 하나의 real/test 판정 — 오직 그 서비스 자신의 크리덴셜 유무에만
-   좌우된다(다른 서비스 상태를 절대 안 본다 — 이게 "독립적으로 관리"의
-   핵심이다). FORCE_TEST_MODE=true는 예외적으로 전부 test로 묶는다(로컬
-   개발·테스트 실행 중에 실수로 환경에 남아 있는 실제 키를 건드리지
-   않기 위한 안전장치). adapterOverride가 명시적으로 'test'면 실제 키가
-   있어도 test로 둔다(스테이징에서 일부러 가짜로 돌리고 싶을 때 쓴다). */
-function serviceMode(forceTest, keyPresent, adapterOverride) {
+function serviceModeDev(forceTest, keyPresent, adapterOverride) {
   if (forceTest) return 'test';
   if (adapterOverride === 'test') return 'test';
   return keyPresent ? 'real' : 'test';
@@ -54,51 +32,110 @@ function serviceMode(forceTest, keyPresent, adapterOverride) {
 export function buildConfig(env) {
   env = env || {};
   const forceTest = env.FORCE_TEST_MODE === 'true';
+  // APP_ENV를 명시하지 않으면 안전한 쪽(운영 아님)으로 기본값을 둔다 —
+  // "설정을 깜빡해서 실수로 운영 모드가 되는" 사고보다 "설정을 깜빡해서
+  // 실수로 개발 모드로 남는" 쪽이 훨씬 덜 위험하다(전자는 보안 사고,
+  // 후자는 그냥 배포가 정상 동작 안 하는 것으로 바로 티가 난다).
+  const appEnv = env.APP_ENV || (forceTest ? 'test' : 'development');
+  const isProd = appEnv === 'production';
 
-  const services = {
-    placeLookup: serviceMode(forceTest, !!env.GOOGLE_PLACES_API_KEY, env.PLACE_LOOKUP_ADAPTER),
-    payment: serviceMode(forceTest, !!env.PAYMENT_PG_SECRET, env.PAYMENT_ADAPTER),
-    email: serviceMode(forceTest, !!env.EMAIL_API_KEY, env.EMAIL_ADAPTER),
-  };
+  const hasPlaceKey = !!env.GOOGLE_PLACES_API_KEY;
+  const hasRoutesKey = !!env.GOOGLE_ROUTES_API_KEY;
+  const hasPaymentSecret = !!env.PAYMENT_PG_SECRET;
+  const hasTossClientKey = !!env.TOSS_CLIENT_KEY;
+  const hasEmailKey = !!env.EMAIL_API_KEY;
+  const webhookSecretIsDefault = !env.PAYMENT_WEBHOOK_SECRET || env.PAYMENT_WEBHOOK_SECRET === 'test-webhook-secret-not-for-production';
+
+  let services;
+  if (isProd) {
+    // 운영에서는 절대 가짜 응답을 안 준다 — 키가 없으면 그 기능은
+    // 'unavailable'이지 'test'가 아니다(조용한 대체 금지).
+    services = {
+      placeLookup: hasPlaceKey ? 'real' : 'unavailable',
+      routing: hasRoutesKey ? 'real' : 'unavailable',
+      payment: hasPaymentSecret && hasTossClientKey ? 'real' : 'unavailable',
+      email: hasEmailKey ? 'real' : 'unavailable',
+    };
+  } else {
+    services = {
+      placeLookup: serviceModeDev(forceTest, hasPlaceKey, env.PLACE_LOOKUP_ADAPTER),
+      routing: serviceModeDev(forceTest, hasRoutesKey, env.ROUTING_ADAPTER),
+      payment: serviceModeDev(forceTest, hasPaymentSecret && hasTossClientKey, env.PAYMENT_ADAPTER),
+      email: serviceModeDev(forceTest, hasEmailKey, env.EMAIL_ADAPTER),
+    };
+  }
 
   return {
-    // 서비스별 실제 판정 — 어댑터 코드는 반드시 이 값만 보고 real/test를 고른다.
+    appEnv,
+    isProd,
     services,
-    // 참고용 요약값. 개별 분기에 쓰지 않는다 — 셋 다 test일 때만 true라서,
-    // "payment만 실제 연결됐는지" 같은 질문에는 이 값으로 답할 수 없다
-    // (그런 질문엔 services.payment를 본다).
-    testMode: forceTest || Object.values(services).every((m) => m === 'test'),
+    // 참고용 요약값(운영에서는 "전부 unavailable이 아니면 test는 아니다"는
+    // 의미가 없어지므로, development/test에서만 의미 있게 쓴다).
+    testMode: !isProd && (forceTest || Object.values(services).every((m) => m === 'test')),
     port: Number(env.PORT || 8787),
     dbPath: env.DB_PATH || path.join(HERE, 'data', 'app.db'),
 
-    // 가격 — 설정값 하나로만 바꾼다. 첫 출시 확정 상품: 9,900원/30일,
-    // 자동결제 없음(BUSINESS_DECISIONS.md 참고). 실제 서버에는 여전히
-    // 환경변수로 넣어야 한다 — 코드에 숫자를 박지 않는다.
     price: {
       amountKrw: Number(env.PRICE_AMOUNT_KRW || 9900),
       periodDays: Number(env.PRICE_PERIOD_DAYS || 30),
-      autoRenew: env.PRICE_AUTO_RENEW === 'true', // 기본값: 자동결제 아님(명시적 동의 없이 켜지 않는다)
+      autoRenew: env.PRICE_AUTO_RENEW === 'true',
     },
 
-    // 무료체험: "계정당 개인화 코스 생성 성공 1회". 서버가 판정한다 —
-    // 클라이언트는 참고 표시만 한다.
     freeTrialLimit: Number(env.FREE_TRIAL_LIMIT || 1),
+    sessionTtlSeconds: Number(env.SESSION_TTL_SECONDS || 60 * 60 * 24 * 30),
+    loginCodeTtlSeconds: Number(env.LOGIN_CODE_TTL_SECONDS || 60 * 10),
 
-    // 세션 만료(초) — 로그인 코드로 발급되는 베어러 토큰의 수명.
-    sessionTtlSeconds: Number(env.SESSION_TTL_SECONDS || 60 * 60 * 24 * 30), // 30일
+    // 로그인 코드 남용 방지(2026-09-10 신규 — "이메일/IP 기준 제한").
+    loginCodeCooldownSeconds: Number(env.LOGIN_CODE_COOLDOWN_SECONDS || 30),
+    loginMaxVerifyAttempts: Number(env.LOGIN_MAX_VERIFY_ATTEMPTS || 5),
+    loginLockoutSeconds: Number(env.LOGIN_LOCKOUT_SECONDS || 600),
 
-    // 로그인 코드(매직 코드) 만료(초).
-    loginCodeTtlSeconds: Number(env.LOGIN_CODE_TTL_SECONDS || 60 * 10), // 10분
+    // 코스 생성 시도 한도(성공/실패 무관 — 남용 방지). 제안값이며 실제
+    // 관찰 데이터로 조정해야 한다(BUSINESS_DECISIONS.md 3-3절).
+    generationRateLimitPerHour: Number(env.GENERATION_RATE_LIMIT_PER_HOUR || 10),
 
-    // 레거시 참고 필드 — 실제 분기는 services.*를 쓴다. 어떤 어댑터
-    // 이름을 요청했는지 로그·디버깅용으로만 남겨 둔다.
+    // 장소 조회 한도 — 초기 대량 정리(import)와 이후 재조회(requery)를
+    // 분리한다. 기본값은 "후쿠오카 160~300곳을 한 번에 정리하는" 실제
+    // 시나리오를 막지 않도록 여유 있게 잡았다(2026-09-10: "위치 조회
+    // 하루 30회" 같은 낮은 값은 채택하지 않는다는 지시 반영) — 그래도
+    // 확정 수치가 아니라 제안값이라 전부 환경변수로 바꿀 수 있게 했다.
+    placeLookupImportDailyLimit: Number(env.PLACE_LOOKUP_IMPORT_DAILY_LIMIT || 400),
+    placeLookupRequeryDailyLimit: Number(env.PLACE_LOOKUP_REQUERY_DAILY_LIMIT || 60),
+    placeLookupGlobalDailyCap: Number(env.PLACE_LOOKUP_GLOBAL_DAILY_CAP || 5000),
+
     adapters: {
       placeLookup: env.PLACE_LOOKUP_ADAPTER || 'test',
+      routing: env.ROUTING_ADAPTER || 'test',
       payment: env.PAYMENT_ADAPTER || 'test',
       email: env.EMAIL_ADAPTER || 'test',
     },
 
     webhookSecret: env.PAYMENT_WEBHOOK_SECRET || 'test-webhook-secret-not-for-production',
+    webhookSecretIsDefault,
+
+    // 테스트 전용 — routing 서비스가 test 모드일 때 성공/실패를 강제로
+    // 고정한다(장소조회 test 어댑터의 결정론적 해시 패턴과 같은 목적,
+    // 다만 이건 값 하나로 명시적으로 고를 수 있게 했다 — 코스 생성
+    // 테스트에서 "실제 경로 성공"/"실패→추정" 두 경로를 매번 좌표를
+    // 역산하지 않고 바로 고를 수 있어야 하기 때문). production에서는
+    // services.routing이 애초에 'test'가 될 수 없어 이 값은 절대 안 쓰인다.
+    routingTestForce: env.ROUTING_TEST_FORCE || null,
+
+    toss: {
+      clientKey: env.TOSS_CLIENT_KEY || '',
+      secretKey: env.PAYMENT_PG_SECRET || '',
+      apiBase: env.TOSS_API_BASE || 'https://api.tosspayments.com',
+    },
+    resend: {
+      apiKey: env.EMAIL_API_KEY || '',
+      from: env.EMAIL_FROM || 'travel hub <onboarding@resend.dev>',
+      apiBase: env.RESEND_API_BASE || 'https://api.resend.com',
+    },
+    google: {
+      placesKey: env.GOOGLE_PLACES_API_KEY || '',
+      routesKey: env.GOOGLE_ROUTES_API_KEY || '',
+      routesApiBase: env.GOOGLE_ROUTES_API_BASE || 'https://routes.googleapis.com',
+    },
   };
 }
 
@@ -107,4 +144,25 @@ export const config = buildConfig(process.env);
 export function ensureDataDir() {
   const dir = path.dirname(config.dbPath);
   fs.mkdirSync(dir, { recursive: true });
+}
+
+/* 운영 시작 직전에만 부른다(index.mjs의 "직접 실행됐을 때"에서만 —
+   config.mjs를 import만 하는 테스트 코드는 이 함수를 안 부르니 영향
+   없다). 여기서 던지면 서버가 아예 안 뜬다 — "필수 설정 누락으로 시작을
+   거부하라"는 지시를 문자 그대로 구현한 것이다. 결제·이메일·웹훅
+   시크릿은 핵심 크리덴셜이라 없으면 서버 자체를 안 띄운다. 장소 조회·
+   도보 경로 키는 없어도 서버는 뜨되(정직한 대체/미제공으로 동작),
+   그 기능만 'unavailable'이다 — 둘 다 없어도 "코스 자체를 못 만드는
+   건 아니고 정직하게 추정으로 대체"되는 기존 원칙과 일관된다. */
+export function assertBootReady(cfg) {
+  cfg = cfg || config;
+  if (!cfg.isProd) return { ok: true };
+  const missing = [];
+  if (cfg.services.payment !== 'real') missing.push('PAYMENT_PG_SECRET, TOSS_CLIENT_KEY(토스페이먼츠)');
+  if (cfg.webhookSecretIsDefault) missing.push('PAYMENT_WEBHOOK_SECRET(기본값 그대로 두면 안 됨)');
+  if (cfg.services.email !== 'real') missing.push('EMAIL_API_KEY(Resend)');
+  if (missing.length) {
+    return { ok: false, missing };
+  }
+  return { ok: true };
 }

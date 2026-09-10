@@ -1,0 +1,161 @@
+'use strict';
+/**
+ * 공급자 계약(요청/응답 모양) 검증 — 실제 네트워크를 부르지 않고
+ * global.fetch를 가로채 "우리 코드가 문서대로 된 요청을 만드는지,
+ * 문서대로 된 응답을 정확히 해석하는지"만 확인한다.
+ *
+ * **중요한 한계 고지**: 이 세션은 tosspayments/resend/google 공식 문서에
+ * 직접 접속하지 못해(EGRESS_BLOCKED), 아래 "문서대로"라는 말은 전부
+ * 학습된 지식 기준이다 — 실제 키를 넣기 전 사람이 현재 문서와 대조해야
+ * 한다(각 어댑터 파일 상단 주석에도 같은 경고가 있다). 이 테스트가
+ * 통과한다고 실제 서비스 연결이 검증된 게 아니다 — 우리 코드가 "우리가
+ * 이해한 계약"대로 동작한다는 것만 보장한다.
+ *
+ * 실행: node server/test/provider-contracts.test.mjs
+ */
+process.env.DB_PATH = ':memory:';
+process.env.APP_ENV = 'development';
+process.env.GOOGLE_ROUTES_API_KEY = 'fake-routes-key';
+process.env.PAYMENT_PG_SECRET = 'fake-secret-key';
+process.env.TOSS_CLIENT_KEY = 'fake-client-key';
+process.env.EMAIL_API_KEY = 'fake-resend-key';
+
+const { config } = await import('../config.mjs');
+
+let fail = 0; const t = (n, c) => { console.log((c ? 'PASS ' : 'FAIL ') + n); if (!c) fail++; };
+
+t('사전 조건 — 이 테스트는 실제 real 모드에서 어댑터 코드를 태운다(payment)', config.services.payment === 'real');
+t('사전 조건 — routing도 real', config.services.routing === 'real');
+t('사전 조건 — email도 real', config.services.email === 'real');
+
+function mockFetchOnce(handler) {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return handler(String(url), init);
+  };
+  return { calls, restore: () => { globalThis.fetch = originalFetch; } };
+}
+function jsonResponse(status, body) {
+  return { ok: status >= 200 && status < 300, status, json: async () => body };
+}
+
+async function ensureAccount(id) {
+  const { openDb } = await import('../db.mjs');
+  const db = openDb();
+  db.prepare('INSERT OR IGNORE INTO accounts (id, email, created_at, plan) VALUES (?, ?, ?, ?)').run(id, id + '@example.com', new Date().toISOString(), 'free');
+}
+
+// ============================================================
+// Resend — POST https://api.resend.com/emails, Bearer 인증
+// ============================================================
+{
+  const { sendEmail } = await import('../adapters/email.mjs');
+  const mock = mockFetchOnce((url) => jsonResponse(200, { id: 'email_123' }));
+  const r = await sendEmail({ to: 'user@example.com', subject: '로그인 코드', body: '코드: 123456' });
+  mock.restore();
+  t('Resend — 엔드포인트가 문서 기준 URL(api.resend.com/emails)', mock.calls[0].url === 'https://api.resend.com/emails');
+  t('Resend — POST 메서드 사용', mock.calls[0].init.method === 'POST');
+  t('Resend — Authorization: Bearer 헤더로 API 키를 보냄', mock.calls[0].init.headers.Authorization === 'Bearer fake-resend-key');
+  const sentBody = JSON.parse(mock.calls[0].init.body);
+  t('Resend — 본문에 to가 배열로 들어감', Array.isArray(sentBody.to) && sentBody.to[0] === 'user@example.com');
+  t('Resend — 본문에 from/subject가 들어감', !!sentBody.from && sentBody.subject === '로그인 코드');
+  t('Resend — 성공 응답의 id를 그대로 반환', r.ok === true && r.id === 'email_123');
+}
+{
+  const { sendEmail } = await import('../adapters/email.mjs');
+  const mock = mockFetchOnce(() => jsonResponse(422, { message: 'invalid from address', name: 'validation_error' }));
+  const r = await sendEmail({ to: 'user@example.com', subject: 'x', body: 'y' });
+  mock.restore();
+  t('Resend — 실패 응답(4xx)은 ok:false로 정직하게 반환', r.ok === false && r.status === 422);
+}
+
+// ============================================================
+// 토스페이먼츠 — POST /v1/payments/confirm, Basic 인증(시크릿키:)
+// ============================================================
+{
+  const { createOrder, confirmPayment } = await import('../adapters/payment-toss.mjs');
+  await ensureAccount('acc_1');
+  const order = createOrder('acc_1');
+  t('주문 생성 — 서버가 orderId·금액을 authoritative하게 만들어 둠', !!order.orderId && order.amount === config.price.amountKrw);
+
+  const mock = mockFetchOnce((url, init) => {
+    return jsonResponse(200, { status: 'DONE', orderId: order.orderId, totalAmount: order.amount, paymentKey: 'pay_key_1' });
+  });
+  const r = await confirmPayment({ accountId: 'acc_1', orderId: order.orderId, paymentKey: 'pay_key_1', amount: order.amount });
+  mock.restore();
+  t('토스 승인 — 엔드포인트가 문서 기준 경로(/v1/payments/confirm)', mock.calls[0].url.endsWith('/v1/payments/confirm'));
+  t('토스 승인 — Basic 인증 헤더를 시크릿키로 구성함', mock.calls[0].init.headers.Authorization === 'Basic ' + Buffer.from('fake-secret-key:').toString('base64'));
+  const sentBody = JSON.parse(mock.calls[0].init.body);
+  t('토스 승인 — 본문에 paymentKey/orderId/amount를 보냄', sentBody.paymentKey === 'pay_key_1' && sentBody.orderId === order.orderId && sentBody.amount === order.amount);
+  t('토스 승인 — 실제로 서버가 정한 금액을 그대로 씀(클라이언트가 준 값이 아니라 order.amount)', sentBody.amount === order.amount);
+  t('승인 성공 시 ok:true', r.ok === true);
+}
+{
+  // 서버가 authoritative하게 정한 금액과 다른 금액으로 confirm을
+  // 시도하면 토스 API를 부르지도 않고 즉시 거부해야 한다(위조 방지).
+  const { createOrder, confirmPayment } = await import('../adapters/payment-toss.mjs');
+  await ensureAccount('acc_2');
+  const order = createOrder('acc_2');
+  const mock = mockFetchOnce(() => jsonResponse(200, { status: 'DONE' }));
+  const r = await confirmPayment({ accountId: 'acc_2', orderId: order.orderId, paymentKey: 'pay_key_2', amount: 1 });
+  mock.restore();
+  t('금액이 서버 기록과 다르면 토스 API를 아예 안 부르고 거부(위조 방지)', r.ok === false && r.reason === 'amount-mismatch' && mock.calls.length === 0);
+}
+{
+  // 다른 계정의 주문을 승인하려 하면 거부.
+  const { createOrder, confirmPayment } = await import('../adapters/payment-toss.mjs');
+  await ensureAccount('acc_owner');
+  await ensureAccount('acc_intruder');
+  const order = createOrder('acc_owner');
+  const mock = mockFetchOnce(() => jsonResponse(200, { status: 'DONE' }));
+  const r = await confirmPayment({ accountId: 'acc_intruder', orderId: order.orderId, paymentKey: 'pk', amount: order.amount });
+  mock.restore();
+  t('다른 계정 소유의 주문은 승인할 수 없음(계정 사칭 방지)', r.ok === false && r.reason === 'order-account-mismatch' && mock.calls.length === 0);
+}
+
+// ============================================================
+// Google Routes — POST /directions/v2:computeRoutes, WALK 모드
+// ============================================================
+{
+  const { computeWalkingRoute } = await import('../adapters/routing.mjs');
+  const origin = { lat: 33.590, lng: 130.400 };
+  const places = [{ id: 'p1', lat: 33.591, lng: 130.401 }, { id: 'p2', lat: 33.593, lng: 130.405 }];
+  const mock = mockFetchOnce((url, init) => jsonResponse(200, {
+    routes: [{ legs: [{ distanceMeters: 500, duration: '400s' }, { distanceMeters: 800, duration: '650s' }] }],
+  }));
+  const r = await computeWalkingRoute(origin, places);
+  mock.restore();
+  t('Google Routes — 엔드포인트가 문서 기준 경로(directions/v2:computeRoutes)', mock.calls[0].url.includes('/directions/v2:computeRoutes'));
+  t('Google Routes — X-Goog-Api-Key 헤더로 키를 보냄', mock.calls[0].init.headers['X-Goog-Api-Key'] === 'fake-routes-key');
+  t('Google Routes — X-Goog-FieldMask 헤더가 있음(없으면 응답이 비어 온다고 알려짐)', !!mock.calls[0].init.headers['X-Goog-FieldMask']);
+  const sentBody = JSON.parse(mock.calls[0].init.body);
+  t('Google Routes — travelMode가 WALK', sentBody.travelMode === 'WALK');
+  t('Google Routes — optimizeWaypointOrder를 쓰지 않음(방문 순서는 우리가 직접 정함)', sentBody.optimizeWaypointOrder === false);
+  t('실제 응답 legs를 그대로 실제 경로로 인정(routedReal=true)', r.routedReal === true);
+  t('구간 수가 정거장 수와 일치', r.legs.length === 2);
+}
+{
+  // 말이 안 되는 속도(자동차 프로필 오응답 의심) 응답은 실제 경로로 인정하지 않는다.
+  const { computeWalkingRoute } = await import('../adapters/routing.mjs');
+  const origin = { lat: 33.590, lng: 130.400 };
+  const places = [{ id: 'p1', lat: 33.591, lng: 130.401 }];
+  const mock = mockFetchOnce(() => jsonResponse(200, { routes: [{ legs: [{ distanceMeters: 5000, duration: '10s' }] }] }));
+  const r = await computeWalkingRoute(origin, places);
+  mock.restore();
+  t('말이 안 되는 속도의 응답은 실제 경로로 인정 안 함(routedReal=false)', r.routedReal === false && r.fallbackReason === 'implausible-speed');
+}
+{
+  // API 호출 실패 시 정직하게 추정으로 대체한다.
+  const { computeWalkingRoute } = await import('../adapters/routing.mjs');
+  const origin = { lat: 33.590, lng: 130.400 };
+  const places = [{ id: 'p1', lat: 33.591, lng: 130.401 }];
+  const mock = mockFetchOnce(() => jsonResponse(500, {}));
+  const r = await computeWalkingRoute(origin, places);
+  mock.restore();
+  t('API 호출 실패 시 성공한 척 안 하고 추정으로 대체', r.routedReal === false);
+}
+
+console.log(fail ? `\n실패 ${fail}건` : '\n전체 통과');
+process.exit(fail ? 1 : 0);
