@@ -238,6 +238,30 @@ let tokenB;
   t('로그인 전(가져오기 시작 등)에도 이벤트 기록 가능(계정 인증 필수 아님)', noAuthEvt.status === 200);
 }
 
+// --- 사전 신청(로드맵 ⑪ 소개 페이지) — 이메일만 받는다, 중복 신청은
+// 조용히 성공(사용자에게 "이미 신청됨" 오류를 보여줄 필요 없음),
+// waitlist_signup 이벤트도 events 화이트리스트를 그대로 탄다. ---
+{
+  const { waitlistCountForTest } = await import('../routes/waitlist.mjs');
+  const before = waitlistCountForTest();
+
+  const bad = await api('POST', '/api/waitlist', { body: { email: 'not-an-email' } });
+  t('사전 신청 — 잘못된 이메일 형식 거부', bad.status === 400);
+
+  const ok1 = await api('POST', '/api/waitlist', { body: { email: 'Waitlist-User@Example.com', channel: 'threads' } });
+  t('사전 신청 — 정상 이메일 접수 성공', ok1.status === 200 && ok1.json.ok === true);
+  t('사전 신청 — 실제로 한 행 늘어남', waitlistCountForTest() === before + 1);
+
+  const ok2 = await api('POST', '/api/waitlist', { body: { email: 'waitlist-user@example.com', channel: 'instagram' } });
+  t('사전 신청 — 같은 이메일 중복 신청도 오류 없이 성공(사용자 입장에서 실패로 안 보임)', ok2.status === 200 && ok2.json.ok === true);
+  t('사전 신청 — 중복 신청은 새 행을 만들지 않음(대소문자 정규화 포함)', waitlistCountForTest() === before + 1);
+
+  const evt = await api('POST', '/api/events', { body: { name: 'waitlist_signup', props: { channel: 'threads' } } });
+  t('사전 신청 완료 이벤트도 기존 화이트리스트로 검증됨', evt.status === 200);
+  const badEvt = await api('POST', '/api/events', { body: { name: 'waitlist_signup', props: { channel: '아무값' } } });
+  t('사전 신청 이벤트도 허용된 채널값만 통과', badEvt.status === 400);
+}
+
 server.close();
 console.log(fail ? `\n실패 ${fail}건` : '\n전체 통과');
 process.exit(fail ? 1 : 0);

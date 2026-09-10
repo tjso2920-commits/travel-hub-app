@@ -412,6 +412,73 @@ DB를 계속 재사용해 이전 실행의 "결제 완료" 상태가 다음 실�
 이메일 발송은 테스트 어댑터(실제 발송 안 함), 이 흐름 자체가 아직
 실제로 배포된 페이지에는 연결돼 있지 않다(로컬 서버로만 검증).
 
+### 1-B-10. 소개 페이지 + 사전 신청 실제 구현 (신규, 로드맵 ⑪) — 그리고 발견한 것: 기존 `src/landing.html`과의 충돌
+
+새 파일 `src/design/landing.html`을 만들었다. 승인 디자인(`src/design/`)의
+색·글꼴 토큰을 그대로 쓰고, 실제 앱 화면을 Playwright로 캡처한
+스크린샷 2장(`src/design/assets/marketing/1-collection.png`,
+`2-course.png`)을 넣었다. 이메일 하나만 받는 사전 신청 폼이 있고,
+제출하면 새로 만든 `POST /api/waitlist`로 실제로 전송된다.
+
+**꼭 밝혀야 할 것 — 스크린샷 2장 중 하나는 예시 데이터로 만든
+장면이다**: 코스 결과 화면(`2-course.png`)은 이 샌드박스에서
+`router.project-osrm.org`로 나가는 실제 네트워크 요청이 프록시에서
+막혀 있어서(1-B-2에서 이미 보고한 것과 같은 제약), 실제 도보 경로
+성공 응답을 `page.route()`로 흉내 내어 캡처했다. 소개 페이지 문구에
+"위 장면은 실제 걷기 경로 계산 기능을 예시 데이터로 보여준 것으로,
+이 코스 결과는 모든 인터넷 환경에서 검증되지는 않았습니다"라고 그
+자리에서 바로 정직하게 밝혀 뒀다 — 캡션 없이 "실제 화면"이라고만
+보여주면 실제로 확인 안 된 걸 확인된 것처럼 보이게 만드는 과장이 될
+수 있어서다.
+
+**신청 항목은 이메일 하나뿐**: 이름·연락처·주소는 아예 입력창이
+없다. 신청 목적("출시 안내·초기 체험 모집에만 사용")을 폼 바로
+아래 문구로 명시했다.
+
+**서버 미연결 상태를 성공으로 위장하지 않는다**: 다른 화면들과 같은
+원칙(1-B-8·1-B-9)을 그대로 따른다 — `window.API_BASE`가 아예
+설정 안 된 정적 페이지 단독 열람 상태에서 신청 버튼을 누르면, 조용히
+"신청됨"으로 보여주는 대신 "신청 접수 서버가 아직 연결되지 않았어요"
+라고 정직하게 알린다.
+
+**측정**: 진입 시 `channel_inflow`, 신청 성공 시 `waitlist_signup`
+(속성은 `channel` 하나뿐)을 기존 이벤트 화이트리스트 방식 그대로
+클라이언트(`src/design/analytics.js`)·서버(`server/routes/events.mjs`)
+양쪽에 추가했다 — 새 이벤트라고 해서 자유 텍스트 필드를 만들지 않았다.
+
+**서버**: `server/routes/waitlist.mjs`(`joinWaitlist`) + `waitlist`
+테이블(이메일에 UNIQUE 제약, 중복 신청은 `ON CONFLICT DO NOTHING`으로
+조용히 성공 처리 — 사용자에게 "이미 신청하셨습니다" 같은 오류를 보여줄
+필요가 없는 흐름이라 일부러 이렇게 했다).
+
+**검증**: `scripts/test-landing-page.mjs`(실제 서버 + 실제 Chromium,
+11개 시나리오 — 서버 미연결 시 정직한 실패 문구, 형식 오류 이메일이
+서버까지 안 가고 화면에서 막히는지, 정상 신청이 실제로 DB·이벤트에
+남는지, 콘솔 오류 0 확인) + `server/test/server.test.mjs`에 사전 신청
+엔드포인트 시나리오 7개 추가. 전체 회귀(`scripts/test/run-all.mjs`
+98개 + 기존 `test-*.mjs` 전부 + `audit.mjs`/`verify.mjs`)도 다시 돌려
+전부 통과 확인했다.
+
+**중요한 발견 — 사업 방향 결정이 필요함, 내가 임의로 처리하지 않음**:
+저장소에 이미 `src/landing.html`이라는 소개 페이지가 있었다. 열어
+보니 지금 만들고 있는 제품과 근본적으로 다른 제품을 설명하고 있다.
+
+| | 기존 `src/landing.html` | 이번에 새로 만든 `src/design/landing.html` |
+|---|---|---|
+| 브랜드 | "별표털기" | "travel hub" (현재 `src/design/index.html` 워드마크와 일치) |
+| 가격 모델 | "9,900원 · 한 번 결제 · 구독 아님" | 구독 가설(30일 단위, 자동결제 기본 꺼짐) — `9,900원/30일`은 `docs/BUSINESS_DECISIONS.md`에서 밝히듯 아직 ChatGPT/사용자 확정 전 가설일 뿐 |
+| 서버·로그인 | "서버가 없어서 보낼 곳도 없습니다. 회원가입도 로그인도 없습니다" | 실제 서버(`server/`)와 이메일 로그인이 이번 세션에 구현됨 |
+| 기능 범위 | AI 번역, 일본어 회화팩, 날씨, 환율까지 포함 | 장소 보관 + 도보 코스 생성 + 결제만(위 기능들은 없음) |
+
+**이 표는 어느 쪽이 맞다고 판단한 게 아니다.** 가격·구독 여부·
+브랜드명·기능 범위는 지시사항에 따라 내가 단독으로 정할 수 없는
+영역이라, 기존 파일을 덮어쓰거나 지우지 않고 그대로 남겨 뒀다.
+`docs/BUSINESS_DECISIONS.md`에 결정이 필요한 항목으로 다시 정리해
+올렸다 — ChatGPT/사용자가 브랜드·가격·기능 범위를 확정하면, 둘 중
+살릴 페이지를 고르거나 새로 합치는 작업을 그다음에 진행하면 된다.
+그 전까지는 `src/landing.html`도 `src/design/landing.html`도 실제로
+공개 배포되지 않은 상태다(로컬/브랜치 안에만 있음).
+
 ## 1. 추가 코드 검토 6개 항목 — 문제·원인·수정 (4차, 위 1-B로 일부 정정됨)
 
 ### ① daMerge: origin\* 필드가 없는 기존 레코드를 무조건 덮어쓰던 버그
@@ -808,6 +875,22 @@ localStorage 구조다. 무료체험 1회 제한·결제 웹훅·환불 등을 �
   scripts/test-zip-import.mjs
   scripts/test-course-generation.mjs
   scripts/shot-round3-flows.mjs  이번 라운드 스크린샷 스크립트
+```
+
+**5차 갱신(1-B) 변경 파일 — 로드맵 ⑪ 소개 페이지 (1-B-10)**:
+
+```
+수정
+  src/design/analytics.js        waitlist_signup 이벤트 스키마 추가(클라이언트)
+  server/routes/events.mjs       waitlist_signup 이벤트 스키마·검증 추가(서버)
+  server/db.mjs                  waitlist 테이블 추가
+  server/index.mjs               POST /api/waitlist 라우트 연결
+  server/test/server.test.mjs    사전 신청 엔드포인트 시나리오 7개 추가
+신규
+  src/design/landing.html        소개 페이지 + 사전 신청 폼(승인 디자인 토큰 사용)
+  src/design/assets/marketing/1-collection.png, 2-course.png   실제 화면 캡처(1-B-10 참고 — 2-course.png는 예시 데이터로 캡처했다고 페이지에 명시)
+  server/routes/waitlist.mjs     joinWaitlist/waitlistCountForTest
+  scripts/test-landing-page.mjs  소개 페이지 종단 검증(실제 서버+Chromium, 11개 시나리오)
 ```
 
 `src/index.html`(생성물)은 위 `personal.html` 변경을 반영해 다시

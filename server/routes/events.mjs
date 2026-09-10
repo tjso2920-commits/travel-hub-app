@@ -25,6 +25,7 @@ const EVENT_SCHEMA = {
   paywall_viewed: { props: ['trigger'] }, // 'second_course'|'manual' 등 짧은 분류값
   payment_started: { props: ['amount_krw', 'period_days'] },
   payment_result: { props: ['result'] }, // 'success'|'failure'|'cancelled'
+  waitlist_signup: { props: ['channel'] }, // 소개 페이지 사전 신청 완료(로드맵 ⑪)
 };
 
 const ALLOWED_CHANNELS = new Set(['threads', 'instagram', 'direct', 'referral', 'unknown']);
@@ -56,6 +57,7 @@ function validateProps(name, props) {
     if (!Number.isInteger(p.period_days) || p.period_days <= 0) return { ok: false, reason: 'invalid-period' };
   }
   if (name === 'payment_result' && !ALLOWED_PAYMENT_RESULTS.has(p.result)) return { ok: false, reason: 'invalid-result' };
+  if (name === 'waitlist_signup' && !ALLOWED_CHANNELS.has(p.channel)) return { ok: false, reason: 'invalid-channel' };
 
   // 값 하나하나가 너무 긴 자유 텍스트가 아닌지도 본다(숫자·불리언·허용된
   // 열거값 외에는 전부 여기서 걸린다 — 위 개별 검사를 통과한 값들은

@@ -1,0 +1,182 @@
+<!doctype html><html lang="ko"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#f7f6f2">
+<title>travel hub · 사전 신청</title>
+<link rel="stylesheet" href="korean-fonts.css?v=2">
+<style>
+/* 2026-09-10: 로드맵 ⑪ 소개 페이지. src/design/index.html(승인 디자인)이
+   쓰는 색·글꼴 토큰을 그대로 가져다 쓴다(spots.css 전체를 링크하지 않고
+   토큰만 복제한 이유: 그쪽은 앱 그리드/시트 레이아웃 전용 클래스가 많아
+   이 페이지 클래스와 이름이 겹칠 위험이 있다 — 대신 폰트는 korean-fonts.css를
+   그대로 링크해 같은 파일을 재사용한다). */
+@font-face{font-family:'Nunito Sans';font-style:normal;font-weight:400;font-display:swap;src:url('assets/fonts/latin-400.woff2') format('woff2')}
+@font-face{font-family:'Nunito Sans';font-style:normal;font-weight:500;font-display:swap;src:url('assets/fonts/latin-500.woff2') format('woff2')}
+@font-face{font-family:'Nunito Sans';font-style:normal;font-weight:600;font-display:swap;src:url('assets/fonts/latin-600.woff2') format('woff2')}
+@font-face{font-family:'Nunito Sans';font-style:normal;font-weight:800;font-display:swap;src:url('assets/fonts/latin-800.woff2') format('woff2')}
+:root{color-scheme:light;--paper:#f7f6f2;--ink:#335563;--muted:#7c8585;--blue:#4388a5;--teal:#52aaa8;--line:#e5e6e1;--font:'Nunito Sans','Noto Sans KR',-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo',sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:#eaece8;color:var(--ink);font:16px/1.6 var(--font)}
+button,input{font:inherit;-webkit-tap-highlight-color:transparent}
+button{cursor:pointer;border:0;color:inherit;background:none;touch-action:manipulation}
+a{color:var(--blue)}
+button:focus-visible,a:focus-visible,input:focus-visible{outline:3px solid #e7ac61;outline-offset:3px}
+[hidden]{display:none!important}
+.lp{max-width:640px;margin:auto;background:var(--paper);min-height:100vh;padding:0 24px 64px}
+.lp-head{display:flex;align-items:center;justify-content:center;height:80px}
+.lp-word{font-size:26px;font-weight:800;letter-spacing:-1.5px;color:#6e9eaf}
+.lp-word span{color:var(--teal);font-size:34px}
+.lp-hero{text-align:center;padding:20px 0 30px}
+.lp-eyebrow{font-size:12px;letter-spacing:2px;color:var(--muted);margin:0 0 12px}
+.lp-hero h1{font-size:32px;line-height:1.4;letter-spacing:-1px;margin:0 0 14px;font-weight:600}
+.lp-hero h1 b{color:var(--blue);font-weight:600}
+.lp-hero p{font-size:15px;color:#728b86;margin:0 auto;max-width:440px}
+.lp-shots{display:flex;flex-direction:column;gap:28px;margin:36px 0}
+.lp-shot{background:#fffefa;border-radius:22px;padding:14px;box-shadow:0 8px 24px #354f5014}
+.lp-shot img{width:100%;border-radius:14px;display:block;background:#e8ede8}
+.lp-shot p{font-size:13px;color:#8a9d98;margin:12px 4px 2px;line-height:1.6}
+.lp-status{background:#eaf0ed;border-radius:20px;padding:22px 20px;margin:30px 0}
+.lp-status h2{font-size:16px;margin:0 0 12px;font-weight:600}
+.lp-status ul{margin:0;padding-left:18px;color:#5f7a75;font-size:14px;line-height:2}
+.lp-status .tag{display:inline-block;font-size:11px;border-radius:20px;padding:2px 9px;margin-left:6px;vertical-align:1px}
+.tag-live{background:#dcece2;color:#3d8563}
+.tag-dev{background:#f3e9d8;color:#a3742e}
+.lp-note{font-size:12px;color:#93a29e;background:#f0f4ee;border-radius:14px;padding:12px 15px;margin-top:14px;line-height:1.7}
+.lp-form{margin:34px 0}
+.lp-form h2{font-size:19px;font-weight:600;margin:0 0 8px}
+.lp-form>p{font-size:14px;color:#7c9290;margin:0 0 18px}
+.lp-row{display:flex;gap:10px}
+.lp-row input{flex:1;min-width:0;background:white;border:1px solid #e5e6e1;border-radius:16px;padding:14px 18px;font-size:15px;color:var(--ink);min-height:48px}
+.lp-row input::placeholder{color:#a3adab}
+.lp-row button{background:var(--blue);color:white;border-radius:16px;padding:0 22px;font-size:15px;font-weight:600;min-height:48px;white-space:nowrap}
+.lp-row button:disabled{opacity:.5;cursor:default}
+.lp-consent{font-size:12px;color:#8b9c98;margin:12px 2px 0;line-height:1.6}
+.lp-msg{font-size:14px;margin-top:14px;padding:12px 15px;border-radius:14px;display:none}
+.lp-msg.show{display:block}
+.lp-msg.ok{background:#e2f0e6;color:#3d7a52}
+.lp-msg.err{background:#fbecec;color:#b45050}
+.lp-foot{text-align:center;font-size:12px;color:#9aabaa;margin-top:40px;line-height:1.8}
+.lp-foot a{color:#7d9a9a;text-decoration:underline}
+@media(max-width:480px){.lp-hero h1{font-size:26px}.lp-row{flex-direction:column}.lp-row button{padding:14px}}
+</style>
+</head><body>
+<div class="lp">
+  <header class="lp-head"><span class="lp-word">travel hub<span>·</span></span></header>
+
+  <section class="lp-hero">
+    <p class="lp-eyebrow">EARLY ACCESS</p>
+    <h1>구글맵에 저장만 해두고<br>못 가본 곳들을, <b>여행 코스</b>로.</h1>
+    <p>구글맵 컬렉션을 가져오면 저장한 장소들을 한곳에 모아 보여주고,
+       그중 고른 곳들로 걸어서 도는 하루 코스를 만들어 봐요.</p>
+  </section>
+
+  <section class="lp-shots" aria-label="화면 미리보기">
+    <figure class="lp-shot">
+      <img src="assets/marketing/1-collection.png" width="1024" height="768" loading="lazy" alt="구글맵에서 가져온 장소들이 카드 형태로 모여 있는 컬렉션 화면">
+      <p>가져온 장소를 도시별로 모아 카드로 보여주는 실제 화면입니다.</p>
+    </figure>
+    <figure class="lp-shot">
+      <img src="assets/marketing/2-course.png" width="1024" height="768" loading="lazy" alt="선택한 장소들을 걸어서 도는 순서로 배치한 코스 결과 화면">
+      <p>고른 장소들을 걷는 순서로 배치한 코스 화면입니다. 위 장면은 실제
+         걷기 경로 계산 기능을 예시 데이터로 보여준 것으로, 이 코스 결과는
+         모든 인터넷 환경에서 검증되지는 않았습니다 — 경로 계산이 어려운
+         경우 도보 시간 없이 방문 순서만으로도 코스가 만들어집니다.</p>
+    </figure>
+  </section>
+
+  <section class="lp-status">
+    <h2>지금 어디까지 만들어져 있나요</h2>
+    <ul>
+      <li>구글맵 내보내기(Takeout) ZIP 가져오기 <span class="tag tag-live">동작</span></li>
+      <li>도시·장소 자동 정리, 사진·장소 유형 표시 <span class="tag tag-live">동작</span></li>
+      <li>걸어서 도는 코스 만들기(가용 시간 반영) <span class="tag tag-live">동작</span></li>
+      <li>이메일 로그인, 무료 체험 1회, 결제 <span class="tag tag-dev">개발 중</span></li>
+    </ul>
+    <p class="lp-note">"개발 중" 표시는 코드는 준비돼 있지만 실제 결제·이메일
+      발송 계정이 아직 연결되지 않아 정식 서비스로는 열리지 않았다는
+      뜻입니다. 화면에 나온 숫자·후기는 전부 저희가 실제로 확인한 것만
+      싣습니다 — 사용자 수나 후기는 아직 없어서 표시하지 않았습니다.</p>
+  </section>
+
+  <section class="lp-form">
+    <h2>먼저 써보고 싶다면</h2>
+    <p>이메일만 남겨주시면 실제로 열릴 때 가장 먼저 알려드려요.
+       초기 체험 인원으로 참여하고 싶다는 말씀도 이 이메일로 받습니다.</p>
+    <form id="waitlistForm" novalidate>
+      <div class="lp-row">
+        <input id="waitlistEmail" type="email" inputmode="email" autocomplete="email" placeholder="이메일 주소" aria-label="이메일 주소" required>
+        <button type="submit" id="waitlistSubmit">신청하기</button>
+      </div>
+      <p class="lp-consent">이메일 주소는 출시 안내와 초기 체험 모집에만 씁니다. 다른 목적으로 쓰지 않고, 이름·연락처·주소는 받지 않습니다.</p>
+    </form>
+    <p class="lp-msg" id="waitlistMsg" role="status"></p>
+  </section>
+
+  <p class="lp-foot">이미 써보고 싶다면 <a href="./index.html">샘플 화면 먼저 둘러보기 ↗</a></p>
+</div>
+
+<script src="analytics.js?v=1"></script>
+<script>
+'use strict';
+/* 2026-09-10: 이 페이지는 앱 화면(spots.js 등)과 달리 foodMap을 쓰지
+   않는다 — 로그인 없이 이메일 하나만 받는 별도 흐름이라, 기존
+   import-adapter.js를 불러올 이유가 없다(불필요한 의존을 늘리지
+   않는다). analytics.js만 그대로 재사용해 같은 이벤트 화이트리스트를
+   쓴다. */
+(function () {
+  function track(name, props) {
+    if (window.Analytics) window.Analytics.track(name, props).catch(function () {});
+  }
+  track('channel_inflow', { channel: window.Analytics ? window.Analytics.classifyChannel() : 'unknown' });
+
+  function apiBase() { return (typeof window !== 'undefined' && window.API_BASE) || ''; }
+  function isServerConfigured() { return typeof window !== 'undefined' && window.API_BASE !== undefined; }
+
+  var form = document.getElementById('waitlistForm');
+  var emailInput = document.getElementById('waitlistEmail');
+  var submitBtn = document.getElementById('waitlistSubmit');
+  var msg = document.getElementById('waitlistMsg');
+
+  function showMsg(text, kind) {
+    msg.textContent = text;
+    msg.className = 'lp-msg show ' + kind;
+  }
+
+  form.addEventListener('submit', async function (e) {
+    e.preventDefault();
+    var email = emailInput.value.trim();
+    if (!email || !email.includes('@')) { showMsg('이메일 주소를 다시 확인해 주세요.', 'err'); return; }
+    if (!isServerConfigured()) {
+      /* 이 정적 페이지 혼자서는 신청을 저장할 서버가 없다 — 아직 서버가
+         실제로 연결되기 전 상태를 조용히 실패로 위장하지 않고 그대로
+         알린다(다른 화면들과 같은 원칙 — DESIGN_INTEGRATION_REPORT.md
+         1-B-8 참고). */
+      showMsg('신청 접수 서버가 아직 연결되지 않았어요. 잠시 후 다시 시도해 주세요.', 'err');
+      return;
+    }
+    submitBtn.disabled = true;
+    var channel = window.Analytics ? window.Analytics.classifyChannel() : 'unknown';
+    try {
+      var res = await fetch(apiBase() + '/api/waitlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email, channel: channel }),
+      });
+      var json = null;
+      try { json = await res.json(); } catch (e2) {}
+      if (res.ok && json && json.ok) {
+        showMsg('신청 완료! 열리면 이 메일로 가장 먼저 알려드릴게요.', 'ok');
+        track('waitlist_signup', { channel: channel });
+        form.reset();
+      } else {
+        showMsg('신청을 접수하지 못했어요. 잠시 후 다시 시도해 주세요.', 'err');
+      }
+    } catch (e3) {
+      showMsg('네트워크 문제로 접수하지 못했어요. 잠시 후 다시 시도해 주세요.', 'err');
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+})();
+</script>
+</body></html>

@@ -82,6 +82,12 @@ function migrate(d) {
       account_id TEXT,
       occurred_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS waitlist (
+      id TEXT PRIMARY KEY,
+      email TEXT UNIQUE NOT NULL,
+      channel TEXT,
+      created_at TEXT NOT NULL
+    );
   `);
 }
 

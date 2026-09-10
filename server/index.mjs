@@ -27,6 +27,7 @@ import { handleWebhook } from './routes/webhook.mjs';
 import { lookupPlaceRoute } from './routes/places.mjs';
 import { recordEvent } from './routes/events.mjs';
 import { simulatePayment } from './routes/dev.mjs';
+import { joinWaitlist } from './routes/waitlist.mjs';
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -117,6 +118,11 @@ async function handle(req, res) {
     if (req.method === 'GET' && pathname === '/api/places/lookup') {
       const result = await lookupPlaceRoute(url.searchParams.get('q'));
       return sendJson(res, result.status, result.ok ? result.result : result);
+    }
+    if (req.method === 'POST' && pathname === '/api/waitlist') {
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const result = joinWaitlist({ email: body.email, channel: body.channel });
+      return sendJson(res, result.status, result);
     }
     if (req.method === 'POST' && pathname === '/api/events') {
       const body = JSON.parse((await readBody(req)) || '{}');

@@ -20,6 +20,7 @@ const EVENT_SCHEMA = {
   paywall_viewed: { props: ['trigger'] },
   payment_started: { props: ['amount_krw', 'period_days'] },
   payment_result: { props: ['result'] },
+  waitlist_signup: { props: ['channel'] },
 };
 
 function validate(name, props) {
