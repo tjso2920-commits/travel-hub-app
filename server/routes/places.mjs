@@ -51,7 +51,7 @@ import { config } from '../config.mjs';
 import { openDb, nowIso } from '../db.mjs';
 import { checkAndIncrement, dayWindow } from '../rate-limit.mjs';
 import { chargeCost } from '../cost-ledger.mjs';
-import { reservePlaceLookupSlot, releasePlaceLookupSlot, periodCostStatus } from '../entitlement-usage.mjs';
+import { reservePlaceLookupSlot, finalizePlaceLookupResult, periodCostStatus } from '../entitlement-usage.mjs';
 
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10분 — 화면을 실수로 여러 번 눌러 생기는 중복만 줄인다. Google Places API(New)의 캐시·재사용 정책 범위 안으로 의도적으로 짧게 뒀다(RELEASE_STATUS.md 참고 — 정확한 공식 한도는 이 세션이 재확인 못함).
 
@@ -108,25 +108,41 @@ function checkLimits(accountId, phaseScope, perAccountLimit, by) {
 }
 
 /* 2026-09-10 재검토(6차) — "이용권 횟수와 실제 비용 원장 분리"(2절
-   지시). placeId(클라이언트가 들고 있는 장소 식별자)를 이 함수까지
+   지시). placeId(클라이언트가 들고 있는 로컬 장소 식별자)를 이 함수까지
    반드시 넘겨야, 이 계정이 이 장소를 신규로 확인하는 건지(이용권
    차감 대상) 아니면 이미 확인된 장소를 재사용/재조회하는 건지(미차감,
-   비용만 발생 가능)를 서버가 판별할 수 있다. 예약(reserve)은 실제
-   외부 호출 전에 낙관적으로 이뤄지고, 최종 결과가 실패면 되돌린다
-   (release) — "실패·추정 결과는 미차감"을 지킨다. */
+   비용만 발생 가능)를 서버가 판별할 수 있다.
+
+   2026-09-10 재검토(7차) — ChatGPT가 재현한 우회(같은 로컬 placeId에
+   서로 다른 검색어를 보내 서로 다른 실제 장소 6곳을 확인받고도 사용량은
+   1로만 기록됨)를 고쳤다. 예전엔 "신규 여부"를 클라이언트가 불러주는
+   placeId 문자열만으로 판정했다 — 실제로 어떤 장소가 확정됐는지와
+   전혀 대조하지 않았기 때문에, 같은 문자열을 계속 재사용하면서 검색
+   조건만 바꾸는 것으로 무제한 우회가 가능했다.
+
+   이제는 두 단계로 나눈다(entitlement-usage.mjs 참고):
+   1) reservePlaceLookupSlot — 외부 호출 **전**. 완전히 같은 로컬
+      슬롯+완전히 같은 검색 조건(cacheKeyFor로 계산한 지문)이 이미
+      기록돼 있으면 그 자리에서 "신규 아님"으로 통과(진짜 반복
+      재조회). 그 외엔 "신규일 수 있다"고 보고 한도부터 확인한 뒤
+      잠정 예약한다.
+   2) finalizePlaceLookupResult — 외부 호출 결과가 돌아온 **후**.
+      실패면 잠정 예약을 되돌린다. 성공이면 공급자가 실제로 돌려준
+      real_place_id를 이 계정이 이미 확인한 적 있는지 다시 확인해,
+      이미 있으면(다른 로컬 id·다른 검색 조건으로 확인된 것이어도)
+      잠정 예약을 되돌린다("다른 id + 같은 실제 장소"는 비과금).
+      처음 보는 real_place_id면 잠정 예약을 그대로 확정한다. */
 async function runOneLookup(accountId, query, expectedArea, placeId) {
-  const reservation = reservePlaceLookupSlot(accountId, placeId);
+  const cacheKey = cacheKeyFor(query, expectedArea);
+  const reservation = reservePlaceLookupSlot(accountId, placeId, cacheKey);
   if (!reservation.ok) {
     return { ok: false, status: 402, reason: reservation.reason, used: reservation.used, limit: reservation.limit };
   }
-  const releaseIfNeeded = (outcomeOk, resultOk) => {
-    if (reservation.isNew && (!outcomeOk || !resultOk)) releasePlaceLookupSlot(accountId, placeId, reservation.period);
-  };
+  const finalize = (result) => finalizePlaceLookupResult(accountId, placeId, reservation, result);
 
-  const cacheKey = cacheKeyFor(query, expectedArea);
   const cached = cacheGet(cacheKey);
   if (cached) {
-    releaseIfNeeded(true, cached.ok);
+    finalize(cached);
     return { ok: true, result: cached, cached: true };
   }
 
@@ -136,7 +152,7 @@ async function runOneLookup(accountId, query, expectedArea, placeId) {
   const existing = inFlightLookups.get(cacheKey);
   if (existing) {
     const outcome = await existing;
-    releaseIfNeeded(outcome.ok, outcome.ok && outcome.result.ok);
+    finalize(outcome.ok ? outcome.result : { ok: false });
     if (!outcome.ok) return outcome; // 비용 한도 등으로 실패한 결과도 그대로 공유
     return { ok: true, result: outcome.result, cached: true, deduped: true };
   }
@@ -163,7 +179,7 @@ async function runOneLookup(accountId, query, expectedArea, placeId) {
   inFlightLookups.set(cacheKey, promise);
   try {
     const outcome = await promise;
-    releaseIfNeeded(outcome.ok, outcome.ok && outcome.result.ok);
+    finalize(outcome.ok ? outcome.result : { ok: false });
     return outcome;
   } finally {
     inFlightLookups.delete(cacheKey);

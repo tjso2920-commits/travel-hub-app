@@ -93,7 +93,11 @@ t('잔여 횟수도 월경계와 무관하게 정확히 계산됨(한도 5 - 사
 const lookupJan = await api('GET', '/api/places/lookup?q=역&placeId=jan-place-1', { token });
 t('1월 장소 확인 성공', lookupJan.status === 200);
 db.prepare('UPDATE entitlement_usage SET updated_at = ? WHERE account_id = ? AND period_id = ?').run('2026-01-26T00:00:00.000Z', acc, orderId);
-db.prepare("UPDATE entitlement_place_confirmed SET confirmed_at = ? WHERE account_id = ? AND place_id = 'jan-place-1'").run('2026-01-26T00:00:00.000Z', acc);
+// 2026-09-10 재검토(7차) — entitlement_place_confirmed의 키가 클라이언트
+// 로컬 placeId('jan-place-1')가 아니라 공급자가 실제로 돌려준
+// real_place_id로 바뀌었다(2절 우회 수정). 이 시점엔 이 계정의 확인
+// 기록이 이 조회 하나뿐이라 account_id만으로 특정해도 안전하다.
+db.prepare('UPDATE entitlement_place_confirmed SET confirmed_at = ? WHERE account_id = ?').run('2026-01-26T00:00:00.000Z', acc);
 
 const lookupFeb = await api('GET', '/api/places/lookup?q=타워&placeId=feb-place-1', { token });
 t('2월 장소 확인도 같은 이용권 기간으로 이어서 누적됨', lookupFeb.status === 200);

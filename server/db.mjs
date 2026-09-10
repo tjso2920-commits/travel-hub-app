@@ -315,17 +315,43 @@ function migrate(d) {
       updated_at TEXT NOT NULL,
       PRIMARY KEY (account_id, period_id)
     );
-    /* entitlement_place_confirmed: 이 계정이 이 장소(place_id)를 실제로
-       처음 확인한 적이 있는지 — 계정당 영구(기간과 무관) 기록. "이미
-       위치가 확인된 기존 장소를 재사용/재조회하는 것은 신규 장소 한도를
-       또 깎지 않는다"는 지시를 정확히 지키는 근거표: 여기 행이 있으면
-       그 장소는 어느 기간에 다시 조회돼도 절대 신규로 안 센다. */
+    /* entitlement_place_confirmed: 이 계정이 이 "실제" 장소(공급자가
+       확정해 돌려준 real_place_id — 예: Google Places의 place.id)를
+       실제로 처음 확인한 적이 있는지 — 계정당 영구(기간과 무관) 기록.
+       "이미 위치가 확인된 기존 장소를 재사용/재조회하는 것은 신규 장소
+       한도를 또 깎지 않는다"는 지시를 정확히 지키는 근거표: 여기 행이
+       있으면 그 real_place_id는 어느 기간에 다시 조회돼도, 어느 클라
+       이언트 로컬 id로 다시 나타나도 절대 신규로 안 센다.
+       2026-09-10 재검토(7차) — 예전엔 이 표의 키가 클라이언트가 그냥
+       불러주는 문자열(로컬 place id)이었다. 그러면 "같은 로컬 id로 서로
+       다른 검색어를 보내 서로 다른 실제 장소를 확인해도 사용량이 1번만
+       올라가는" 우회가 가능했다(클라이언트 문자열은 실제로 어떤 장소가
+       확정됐는지와 아무 강제 연결이 없었기 때문). 이제 이 표는 반드시
+       공급자가 실제로 돌려준 식별자로만 채워지고, "신규인지" 판정은
+       외부 호출 결과가 돌아온 뒤(entitlement-usage.mjs의 finalize 단계)
+       에만 확정된다 — 호출 전에는 잠정 예약만 한다. */
     CREATE TABLE IF NOT EXISTS entitlement_place_confirmed (
       account_id TEXT NOT NULL REFERENCES accounts(id),
-      place_id TEXT NOT NULL,
+      real_place_id TEXT NOT NULL,
       first_period_id TEXT NOT NULL,
       confirmed_at TEXT NOT NULL,
-      PRIMARY KEY (account_id, place_id)
+      PRIMARY KEY (account_id, real_place_id)
+    );
+    /* entitlement_place_local_link: 클라이언트의 로컬 place id 하나가
+       "마지막으로 어떤 검색 조건(query_fingerprint)으로, 어떤 실제
+       장소(real_place_id)를 확인했는지"의 캐시. 과금 판정의 근거표가
+       아니다(그건 위 entitlement_place_confirmed) — 오직 "완전히 같은
+       로컬 슬롯에 완전히 같은 검색 조건이 다시 들어오면, 외부 호출
+       결과를 기다릴 것도 없이 이미 신규가 아님을 안다"는 빠른 경로용
+       캐시일 뿐이다. 검색 조건이 조금이라도 달라지면 이 캐시를 못 믿고
+       다시 확인 절차(예약→호출→실제 식별자로 재판정)를 거친다. */
+    CREATE TABLE IF NOT EXISTS entitlement_place_local_link (
+      account_id TEXT NOT NULL REFERENCES accounts(id),
+      local_place_id TEXT NOT NULL,
+      real_place_id TEXT,
+      query_fingerprint TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (account_id, local_place_id)
     );
   `);
 
