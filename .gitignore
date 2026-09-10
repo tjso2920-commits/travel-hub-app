@@ -11,6 +11,9 @@ dist/
 .DS_Store
 *.log
 
+# 서버 런타임 DB(테스트는 :memory:를 쓴다 — 이 파일은 로컬 실행 산출물일 뿐)
+server/data/
+
 # 편집기
 .vscode/
 .idea/
