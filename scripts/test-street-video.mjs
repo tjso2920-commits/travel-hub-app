@@ -154,7 +154,33 @@ t('최종 콘솔/런타임 오류 0', errs.length === 0);
 console.log('\n※ 위 2~7번은 이 테스트가 직접 주입한 합성(가짜) 영상 픽스처로 구조·표시 로직만 확인한 것이다.');
 console.log('※ 실제 방송 존재·임베드 가능 여부·카메라 각도(옷차림이 보이는지)는 이번 세션에서 검증하지 못했다 — src/design/street-video.js의 STREET_VIDEOS는 빈 표로 배포되어 실제 서비스에서는 모든 도시에서 버튼이 숨겨진다. 실제 영상 등록은 사람이 직접 방송을 확인한 뒤 별도로 진행해야 한다.');
 
-console.log(fail ? `\n실패 ${fail}건` : '\n전체 통과');
+// 합성 데이터 모바일 스크린샷 — 버튼·패널 구조가 실제로 어떻게
+// 보이는지만 보여준다(실제 방송 화면이 아니라 iframe이 로드를
+// 시도하는 자리와 표시 문구를 보여줄 뿐 — youtube.com/iframe_api
+// 요청은 이 테스트에서 계속 막아 뒀다).
 await b.close();
+const b2 = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+const p2 = await b2.newPage({ viewport: { width: 390, height: 844 } });
+p2.on('dialog', (d) => d.dismiss());
+await p2.route('https://www.youtube.com/iframe_api', (route) => route.abort());
+await p2.addInitScript((base) => { window.API_BASE = base; }, apiBase);
+await p2.goto('file://' + process.cwd() + '/src/design/index.html');
+await p2.waitForTimeout(200);
+await p2.evaluate(() => {
+  window.StreetVideo.STREET_VIDEOS['후쿠오카'] = [{
+    videoId: 'TEST0FAKE01', title: '(합성 데이터) 예시 픽스처', channel: '(합성) 예시 채널',
+    filmingLocation: '(합성) 예시 촬영지', tzId: 'Asia/Tokyo',
+    sourceUrl: 'https://www.youtube.com/watch?v=TEST0FAKE01',
+  }];
+});
+await p2.evaluate(() => showRoute());
+await p2.waitForTimeout(150);
+await p2.click('.street-video-button');
+await p2.waitForTimeout(150);
+await p2.screenshot({ path: 'docs/screenshots/after_현지거리영상_합성데이터.png' });
+console.log('스크린샷 저장 완료: docs/screenshots/after_현지거리영상_합성데이터.png(합성 데이터 — 실제 방송·실제 영상 미검증, 구조만 표시)');
+
+console.log(fail ? `\n실패 ${fail}건` : '\n전체 통과');
+await b2.close();
 server.close();
 process.exit(fail ? 1 : 0);
