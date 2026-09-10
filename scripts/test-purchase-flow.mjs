@@ -65,7 +65,13 @@ t('실제 데이터는 첫 코스부터 로그인부터 요구함(샘플만 예�
 
 // --- 로그인 진행 ---
 const testEmail = 'purchase-flow-tester@example.com';
-const placesBeforeLogin = await p.evaluate(() => JSON.stringify(foodMap.places));
+// 2026-09-10 재검토(8차) — version 필드는 이제 로그인(서버 최초 동기화)
+// 순간 0(아직 서버에 없음)에서 서버가 실제로 발급한 값(보통 1)으로
+// 정당하게 바뀐다("서버가 버전을 발급한다"는 8차 수정 그대로의 결과) —
+// 그래서 원본 JSON을 그대로 비교하면 이 필드 하나 때문에 항상 다르게
+// 나온다. 이 검사의 진짜 목적("로그인이 장소 데이터 자체를 안
+// 지운다")에 맞게 version/updatedAt을 뺀 내용만 비교한다.
+const placesBeforeLogin = await p.evaluate(() => JSON.stringify(foodMap.places.map(({ version, updatedAt, ...rest }) => rest)));
 await p.fill('#loginEmail', testEmail);
 await p.click('#loginSendBtn');
 await p.waitForTimeout(200);
@@ -80,7 +86,7 @@ await p.waitForFunction(() => document.getElementById('sheetLabel').textContent 
 const afterLoginTitle = await p.textContent('#sheetLabel');
 t('로그인 성공 뒤 원래 하려던 동작(출발지 정하기)을 곧바로 이어감', afterLoginTitle === '출발지 정하기');
 t('로그인 후에도 이미 가져온 장소가 그대로 남아 있음(로그인이 로컬 데이터를 안 지움)',
-  (await p.evaluate(() => JSON.stringify(foodMap.places))) === placesBeforeLogin);
+  (await p.evaluate(() => JSON.stringify(foodMap.places.map(({ version, updatedAt, ...rest }) => rest)))) === placesBeforeLogin);
 
 // --- 첫(무료) 코스 생성 ---
 await p.click('[data-start-pick="c1"]');

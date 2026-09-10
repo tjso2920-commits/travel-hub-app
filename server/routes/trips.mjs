@@ -134,10 +134,16 @@ export function syncTrips(accountId, incomingTrips) {
         db.prepare('INSERT INTO trips (trip_id, account_id, city, name, start_date, end_date, lodging, created_at, updated_at, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)')
           .run(incoming.tripId, accountId, String(incoming.city), incoming.name || null, incoming.startDate || null, incoming.endDate || null, lodgingJson, now, now);
       } else {
-        const incomingVersion = Number(incoming.version) || 0;
-        if (incomingVersion < existing.version) {
+        // 2026-09-10 재검토(8차) — ChatGPT가 account_places에서 재현한
+        // 것과 같은 결함이 여기도 있었다: "기준 버전보다 크거나 같으면
+        // 통과"는 서버가 이미 그 버전으로 올라간 뒤에도 같은 버전을
+        // 다시 주장하는 요청을 통과시킨다. 정확히 같을 때만 수락한다
+        // (`===`) — 클라이언트가 실제로 지금 서버 값을 보고 수정한
+        // 경우만 정의상 존재할 수 있는 값이다.
+        const baseVersion = Number(incoming.version) || 0;
+        if (baseVersion !== existing.version) {
           conflicted = true;
-          conflicts.push({ tripId: incoming.tripId, reason: 'stale-version', serverVersion: existing.version });
+          conflicts.push({ tripId: incoming.tripId, reason: 'stale-base-version', serverVersion: existing.version, serverTrip: serializeTrip(existing) });
         } else {
           db.prepare('UPDATE trips SET city = ?, name = ?, start_date = ?, end_date = ?, lodging = ?, updated_at = ?, version = version + 1 WHERE trip_id = ?')
             .run(String(incoming.city), incoming.name || null, incoming.startDate || null, incoming.endDate || null, lodgingJson, now, incoming.tripId);

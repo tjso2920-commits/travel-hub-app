@@ -77,6 +77,45 @@ daTrackSafe('channel_inflow', { channel: window.Analytics ? window.Analytics.cla
    않고(안 잃음) 성공한 것만 반영한다. 반환값(성공 여부)은 daLogout이
    "동기화가 실제로 끝났는지"를 판단하는 데 쓴다. */
 let daSyncPushSeq = 0;
+
+/* 2026-09-10 재검토(8차) — 알림용 토스트. 이미 index.html에 있는
+   #toast 요소(승인 디자인이 만들어 둔 것, 지금까지는 아무도 안 씀)를
+   그대로 쓴다 — 새 UI 요소를 만들지 않는다. 충돌 자동 재병합처럼
+   사용자가 몰라도 되지만 알면 좋은 일이 있을 때만 짧게 띄운다(막는
+   확인창이 아니라 지나가는 안내 — "확인 제공"의 가벼운 형태). */
+let _toastTimer = null;
+function daToast(msg) {
+  const el = document.getElementById('toast');
+  if (!el) return;
+  el.textContent = msg;
+  el.hidden = false;
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { el.hidden = true; }, 4000);
+}
+
+/* 2026-09-10 재검토(8차) — 장소 동기화 충돌(서버 기준 버전과 이 기기의
+   기준 버전이 다름) 3-way 재병합. base=이 기기가 이 장소를 마지막으로
+   서버와 맞췄을 때의 내용, mine=지금 이 기기의 로컬 내용,
+   theirs=서버가 돌려준 지금 값. 규칙: 내가 실제로 고친 필드는 절대
+   잃지 않는다(같은 필드를 서버 쪽도 고쳤어도 내 값을 지킨다) — 내가
+   안 건드린 필드는 서버의 최신 값을 그대로 받아들인다. 이렇게 하면
+   "서버 데이터와 내 미저장 수정 둘 다 보존"이 대부분의 실제 상황
+   (서로 다른 필드를 고침)에서 정확히 맞아떨어지고, 정말 같은 필드를
+   양쪽이 고친 드문 경우에도 최소한 내 수정이 조용히 사라지진 않는다. */
+function daRemergePlaceConflict(mine, base, theirs) {
+  if (!mine) return theirs;
+  if (!base) return { ...theirs }; // 기준 내용을 모르면(극히 드묾) 서버 값을 그대로 신뢰한다.
+  const merged = { ...theirs };
+  for (const key of Object.keys(mine)) {
+    if (key === 'id' || key === 'version' || key === 'updatedAt') continue;
+    if (JSON.stringify(mine[key]) !== JSON.stringify(base[key])) merged[key] = mine[key];
+  }
+  merged.id = mine.id;
+  merged.version = theirs.version; // 다음 시도의 기준 버전 — 서버가 방금 알려준 값.
+  merged.updatedAt = new Date().toISOString();
+  return merged;
+}
+
 async function daSyncPush(token) {
   if (!token) return { placesOk: true, coursesOk: true, tripsOk: true, visitsOk: true, allOk: true };
   const epochAtStart = sessionEpoch;
@@ -92,9 +131,17 @@ async function daSyncPush(token) {
   const tripsPayload = (foodMap.trips || []).map((t) => ({
     ...t, courses: (foodMap.courses || []).filter((c) => c.tripId === t.tripId),
   }));
-  const pendingDeletedIds = (foodMap.deletedPlaceIds || []).slice();
+  const pendingDeleted = (foodMap.deletedPlaceIds || []).slice(); // [{id, baseVersion}]
+  // 2026-09-10 재검토(8차) — "저장 중 추가 수정" 보호: 이 요청을 보내는
+  // 바로 이 순간의 장소 내용을 스냅샷으로 고정해 둔다. await 하는 동안
+  // (네트워크 왕복) 사용자가 같은 장소를 또 고치면, 응답이 왔을 때
+  // "그 사이 내가 또 뭘 바꿨는지"를 이 스냅샷과 비교해 알아낼 수 있다
+  // — 그렇게 하지 않으면 서버 응답으로 통째로 덮어쓸 때 이 요청이
+  // 나간 "이후"에 생긴 새 로컬 수정을 조용히 잃어버린다.
+  const outgoingPlaces = (foodMap.places || []).map((p) => ({ ...p }));
+  const requestSnapshot = new Map(outgoingPlaces.map((p) => [p.id, A.placeContentKey(p)]));
   const [placesRes, coursesRes, tripsRes, visitsRes] = await Promise.all([
-    A.api('/api/places', { method: 'PUT', token, body: { places: foodMap.places || [], deletedIds: pendingDeletedIds } }),
+    A.api('/api/places', { method: 'PUT', token, body: { places: outgoingPlaces, deletedIds: pendingDeleted } }),
     A.api('/api/courses', { method: 'PUT', token, body: { courses: (foodMap.courses || []).filter((c) => !c.tripId) } }),
     A.api('/api/trips/sync', { method: 'POST', token, body: { trips: tripsPayload } }),
     A.api('/api/visits/sync', { method: 'POST', token, body: { visits: foodMap.visits || [] } }),
@@ -113,17 +160,53 @@ async function daSyncPush(token) {
   const visitsOk = !!(visitsRes.ok && visitsRes.json && Array.isArray(visitsRes.json.visits));
   // 서버가 실제로 받아 병합한 전체 목록을 그대로 돌려준다 — 로컬을 그
   // 결과로 맞춘다(trips/visits와 동일한 패턴). 실패한 것은 로컬을 그대로
-  // 두고(잃지 않음) 다음 daSyncPushSafe 호출 때 다시 시도된다 —
-  // deletedPlaceIds도 places 저장이 실제로 성공했을 때만 비운다(성공을
-  // 확인하기 전에 지우면, 서버에 못 들어간 삭제가 다음 저장 때 조용히
-  // 사라진다).
+  // 두고(잃지 않음) 다음 daSyncPushSafe 호출 때 다시 시도된다.
   if (placesOk) {
-    foodMap.places = placesRes.json.places;
-    // 서버가 확정한 값을 그대로 받아들인 것 — 지금 이 기기에서 새로
-    // 고친 게 아니므로, 다음 저장 때 이 반영 자체를 또 하나의 수정으로
-    // 오인해 버전을 이중으로 올리지 않게 기준선을 여기서 조용히 맞춘다.
+    const conflicts = Array.isArray(placesRes.json.conflicts) ? placesRes.json.conflicts : [];
+    const editConflictById = new Map(conflicts.filter((c) => c.placeId && c.serverPlace && c.reason !== 'stale-base-version-delete').map((c) => [c.placeId, c]));
+    let remergedAny = false;
+    // 2026-09-10 재검토(8차) — "단순히 서버 값을 받아 로컬 수정까지
+    // 조용히 없애지 않기." 서버가 승인한 전체 배열을 그대로 덮어쓰지
+    // 않고, 각 장소마다 "요청 시점 이후 로컬이 더 바뀌었는지"(저장 중
+    // 추가 수정) 또는 "충돌로 반려됐는지"를 확인해 필요하면 3-way
+    // 재병합한다.
+    const merged = placesRes.json.places.map((serverPlace) => {
+      const mine = (foodMap.places || []).find((p) => p.id === serverPlace.id);
+      if (!mine) return serverPlace;
+      const conflict = editConflictById.get(serverPlace.id);
+      const baseKey = requestSnapshot.get(serverPlace.id);
+      const mineKey = A.placeContentKey(mine);
+      const changedDuringFlight = baseKey !== undefined && mineKey !== baseKey;
+      if (!conflict && !changedDuringFlight) return serverPlace; // 가장 흔한 경우 — 그대로 받아들인다.
+      const base = A.getPlaceBaseline(serverPlace.id);
+      remergedAny = true;
+      return daRemergePlaceConflict(mine, base, conflict ? conflict.serverPlace : serverPlace);
+    });
+    foodMap.places = merged;
+    // 서버가 확정한 값(또는 그 위에 재병합한 값)을 새 기준으로 삼는다
+    // — 지금 이 기기에서 "또" 고친 게 아니라 방금 확정된 값이므로,
+    // 다음 저장 때 이 반영 자체를 새 수정으로 오인하지 않게 한다.
     A.resyncPlacesBaseline(foodMap.places);
-    foodMap.deletedPlaceIds = (foodMap.deletedPlaceIds || []).filter((id) => !pendingDeletedIds.includes(id));
+
+    // 삭제 요청 중 기준 버전이 안 맞아 반려된 것은(그 사이 다른 기기가
+    // 실제로 그 장소를 고쳤다는 뜻) 큐에서 지우지 않고, 서버가 알려준
+    // 최신 버전을 새 기준으로 삼아 다음 시도 때 다시 붙는다 — 이
+    // 기기의 삭제 의도 자체는 잃지 않는다.
+    const deleteConflictById = new Map(conflicts.filter((c) => c.reason === 'stale-base-version-delete' && c.serverPlace).map((c) => [c.placeId, c]));
+    const carriedOver = pendingDeleted.map((item) => {
+      const dc = deleteConflictById.get(item.id);
+      return dc ? { id: item.id, baseVersion: dc.serverPlace.version } : null;
+    }).filter(Boolean);
+    const stillNew = (foodMap.deletedPlaceIds || []).filter((d) => !pendingDeleted.some((pd) => pd.id === d.id));
+    foodMap.deletedPlaceIds = [...carriedOver, ...stillNew];
+
+    if (remergedAny) {
+      daToast('다른 기기의 수정과 함께 자동으로 합쳐진 장소가 있어요.');
+      // 재병합한 값과 반려된 삭제는 다음 사용자 조작을 기다리지 않고
+      // 곧바로 한 번 더 시도한다(fire-and-forget — 이 호출 자체를
+      // 막지 않는다).
+      setTimeout(() => daSyncPushSafe(), 0);
+    }
   }
   if (coursesOk) {
     // account_courses는 tripId 없는 레거시 코스만 담당한다 — trip에
@@ -1514,10 +1597,16 @@ function resolveDup(aId, bId, action) {
      오래된 기기가 나중에 그 id를 다시 들고 나타났을 때 "이 기기가
      이 장소를 아직 모른다"와 구분이 안 돼 되살아날 수 있다
      (server/routes/account-data.mjs의 syncPlaces 참고 — 무덤 표시는
-     명시적으로 알려온 id만 지운다). */
+     명시적으로 알려온 id만 지운다).
+     2026-09-10 재검토(8차) — 삭제도 기준 버전 대조를 받는다(그 사이
+     다른 기기가 이 장소를 실제로 고쳤으면 조용히 지우지 않기 위해).
+     A.resolveDup가 배열에서 빼기 직전에 잡아 둔 mergedVersion을
+     그대로 기준 버전으로 싣는다. */
   if (result.mergedId) {
     foodMap.deletedPlaceIds = foodMap.deletedPlaceIds || [];
-    if (!foodMap.deletedPlaceIds.includes(result.mergedId)) foodMap.deletedPlaceIds.push(result.mergedId);
+    if (!foodMap.deletedPlaceIds.some((d) => d.id === result.mergedId)) {
+      foodMap.deletedPlaceIds.push({ id: result.mergedId, baseVersion: result.mergedVersion || 0 });
+    }
   }
   const saved = A.saveFoodMap(foodMap);
   if (!saved) {

@@ -175,8 +175,17 @@ export function syncVisits(accountId, incomingVisits) {
       continue;
     }
 
-    if (incomingVersion >= existing.version) {
-      // 이 기기가 서버와 같거나 더 최신 상태에서 보낸 값 — 그대로
+    // 2026-09-10 재검토(8차) — account_places에서 재현된 것과 같은
+    // 결함: "기준 버전보다 크거나 같으면 통과"는 두 기기가 같은
+    // 원본(같은 버전)에서 각자 다른 방문 날짜를 추가했을 때 나중
+    // 요청이 먼저 요청의 날짜를 통째로 덮어쓸 수 있게 한다(그 사이
+    // 서버 값은 이미 바뀌었는데, "내가 그 버전을 실제로 봤다"는
+    // 보장이 없는 값을 그대로 믿었기 때문). 정확히 같을 때만("나는
+    // 지금 서버가 들고 있는 값을 보고 수정했다") 단순 반영하고, 그
+    // 외에는 전부 아래 else(합집합+무덤표시 보수적 병합)로 보낸다 —
+    // 날짜 데이터는 절대 단순 덮어쓰기하지 않는다는 원칙을 지킨다.
+    if (incomingVersion === existing.version) {
+      // 이 기기가 서버와 정확히 같은 상태에서 보낸 값 — 그대로
       // 신뢰한다(서버 무덤 표시는 안전판으로 그대로 유지).
       upsertRow(db, {
         account_id: accountId, place_id: placeId,

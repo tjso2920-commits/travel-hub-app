@@ -67,11 +67,11 @@ function directSession(accountId) {
     stored2.name === '최신 이름' && stored2.note === '최신 메모' && stored2.lat === 33.6 && stored2.lng === 130.5 && stored2.cat === '맛집·식당');
   const newerVersion = stored2.version;
 
-  // 오래된 기기가 v1(뒤처진 버전)을 그대로 다시 올린다.
-  const staleAttempt = { ...v1, name: '오래된 기기가 우기는 이름', version: v1.version };
+  // 오래된 기기가 v1(뒤처진 기준 버전)을 그대로 다시 올린다.
+  const staleAttempt = { ...v1, name: '오래된 기기가 우기는 이름', version: storedV1.version };
   const r3 = await api('PUT', '/api/places', { token, body: { places: [staleAttempt] } });
   t('뒤처진 버전의 수정은 conflicts로 보고됨(조용히 무시되지 않음)',
-    r3.json.conflicts.some((c) => c.placeId === 'p1' && c.reason === 'stale-version'));
+    r3.json.conflicts.some((c) => c.placeId === 'p1' && c.reason === 'stale-base-version'));
   const stored3 = r3.json.places.find((p) => p.id === 'p1');
   t('뒤처진 기기의 수정이 최신 값을 덮어쓰지 않음(이름·메모·좌표·분류 전부 그대로 보존)',
     stored3.name === '최신 이름' && stored3.note === '최신 메모' && stored3.lat === 33.6 && stored3.lng === 130.5 && stored3.cat === '맛집·식당');
@@ -86,21 +86,23 @@ function directSession(accountId) {
 {
   const acc = directAccount('places-delete@example.com');
   const token = directSession(acc);
-  await api('PUT', '/api/places', { token, body: { places: [{ id: 'keep1', name: '남는 곳', version: 1 }, { id: 'gone1', name: '합쳐져 사라질 곳', version: 1 }] } });
+  const rInit = await api('PUT', '/api/places', { token, body: { places: [{ id: 'keep1', name: '남는 곳', version: 0 }, { id: 'gone1', name: '합쳐져 사라질 곳', version: 0 }] } });
+  const gone1Version = rInit.json.places.find((p) => p.id === 'gone1').version;
 
   // 배열에서 그냥 빠뜨리는 것("전체 치환"의 옛 방식)만으로는 안 지워진다
   // — deletedIds 없이 keep1만 다시 보내도 gone1이 그대로 남아 있어야
   // 한다(배열에 없다고 추측해서 지우면 안 된다는 원칙 확인).
-  const rOmit = await api('PUT', '/api/places', { token, body: { places: [{ id: 'keep1', name: '남는 곳', version: 1 }] } });
+  const rOmit = await api('PUT', '/api/places', { token, body: { places: [{ id: 'keep1', name: '남는 곳', version: rInit.json.places.find((p) => p.id === 'keep1').version }] } });
   t('배열에서 빠뜨리기만 해서는 지워지지 않음(추측 삭제 금지)', rOmit.json.places.some((p) => p.id === 'gone1'));
 
-  // 실제로 deletedIds로 명시해서 지운다(예: 중복 병합).
-  const rDelete = await api('PUT', '/api/places', { token, body: { places: [], deletedIds: ['gone1'] } });
+  // 실제로 deletedIds로 명시해서 지운다(예: 중복 병합) — 8차부터
+  // 삭제도 기준 버전을 함께 보낸다({id, baseVersion}).
+  const rDelete = await api('PUT', '/api/places', { token, body: { places: [], deletedIds: [{ id: 'gone1', baseVersion: gone1Version }] } });
   t('deletedIds로 명시하면 실제로 지워짐', !rDelete.json.places.some((p) => p.id === 'gone1'));
   t('명시적으로 지운 뒤에도 남은 장소는 그대로 있음', rDelete.json.places.some((p) => p.id === 'keep1'));
 
-  // 이 사실을 모르는 오래된 기기가 gone1을 여전히 들고 다시 저장한다.
-  const rResurrect = await api('PUT', '/api/places', { token, body: { places: [{ id: 'gone1', name: '되살아나려는 시도', version: 1 }] } });
+  // 이 사실을 모르는 오래된 기기가 gone1을 여전히 들고(옛 기준 버전으로) 다시 저장한다.
+  const rResurrect = await api('PUT', '/api/places', { token, body: { places: [{ id: 'gone1', name: '되살아나려는 시도', version: gone1Version }] } });
   t('지워진 장소는 오래된 기기가 다시 들고 나타나도 되살아나지 않음', !rResurrect.json.places.some((p) => p.id === 'gone1'));
   t('되살리려는 시도는 conflicts로 보고됨', rResurrect.json.conflicts.some((c) => c.placeId === 'gone1' && c.reason === 'deleted-elsewhere'));
 
@@ -115,7 +117,7 @@ function directSession(accountId) {
 {
   const acc = directAccount('courses-version@example.com');
   const token = directSession(acc);
-  const c1 = { city: '테스트시티', date: '2026-01-01', stops: [{ id: 'x' }], version: 1 };
+  const c1 = { city: '테스트시티', date: '2026-01-01', stops: [{ id: 'x' }], version: 0 };
   const r1 = await api('PUT', '/api/courses', { token, body: { courses: [c1] } });
   const stored1 = r1.json.courses[0];
   t('첫 코스 저장 성공', r1.status === 200 && stored1.stops.length === 1);
@@ -125,7 +127,7 @@ function directSession(accountId) {
   const stored2 = r2.json.courses.find((c) => c.date === '2026-01-01');
   t('최신 버전 코스 수정은 반영됨(스톱 2개)', stored2.stops.length === 2);
 
-  const staleC = { ...c1, stops: [{ id: 'z' }], version: c1.version };
+  const staleC = { ...c1, stops: [{ id: 'z' }], version: stored1.version };
   const r3 = await api('PUT', '/api/courses', { token, body: { courses: [staleC] } });
   t('뒤처진 버전의 코스 수정은 conflicts로 보고됨', r3.json.conflicts.some((c) => c.city === '테스트시티' && c.date === '2026-01-01'));
   const stored3 = r3.json.courses.find((c) => c.date === '2026-01-01');
