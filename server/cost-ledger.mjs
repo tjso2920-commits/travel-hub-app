@@ -49,6 +49,17 @@ function sumSince(whereAccountId, sinceIso) {
   return row.total;
 }
 
+/* 2026-09-10 재검토(6차) — 계정의 "이용권 기간"(무료체험 평생 1회 또는
+   유료 이용권 주문 하나) 안에서 누적된 실제 원가. 달력 일/월과 무관하게
+   그 period_id로 남은 기록만 더한다 — 30일 이용권이 달력월을 넘어가도
+   이 합계는 안 흔들린다(같은 period_id로 계속 누적될 뿐). */
+export function periodCostMicros(accountId, periodId) {
+  if (!accountId || !periodId) return 0;
+  const db = openDb();
+  const row = db.prepare('SELECT COALESCE(SUM(estimated_cost_micros),0) AS total FROM cost_ledger WHERE account_id = ? AND period_id = ?').get(accountId, periodId);
+  return row.total;
+}
+
 export function skuCostMicros(sku) {
   const map = {
     'places-text-search': config.costEstimate.placesTextSearchMicros,
@@ -66,7 +77,16 @@ export function skuCostMicros(sku) {
    개인 한도를 초과한 요청이 전체 한도를 소모하지 않도록"). 하나라도
    막히면 즉시 ROLLBACK하고 그 무엇도 기록하지 않는다 — 앞선 항목이
    먼저 "통과"했다고 미리 기록해 두지 않는다(부분 기록 버그 재현 방지). */
-export function chargeCostBatch({ accountId, service, charges }) {
+/* 2026-09-10 재검토(6차) — periodId/periodCapMicros가 있으면(호출부인
+   entitlement-usage.mjs가 이 계정의 지금 이용권 기간과 그 기간의 내부
+   원가 안전상한을 판단해 넘긴다) 계정/전체 한도에 더해 "이 이용권
+   기간 하나가 누적으로 쓴 원가"도 같은 트랜잭션 안에서 확인한다 —
+   무료체험은 평생 누적 700원, 유료는 이용권(주문) 하나당 누적
+   3,500원(제안값, 확정 아님 — config.costSafetyCap). 이건 계정별
+   일일/월간 한도와는 다른 층위의 안전판이다(계정 한도는 "이 계정이
+   하루/한 달에 얼마나 쓰는지", 이 상한은 "이 계정에게 약속한 사용량
+   전체가 원가 몇 원 안에 들어오는지"). */
+export function chargeCostBatch({ accountId, service, charges, periodId, periodCapMicros }) {
   const list = Array.isArray(charges) ? charges : [];
   if (!list.length) return { ok: true, estimatedCostMicros: 0, ids: [] };
 
@@ -109,13 +129,19 @@ export function chargeCostBatch({ accountId, service, charges }) {
     if (globalMonthlyCap > 0 && globalMonthly + totalMicros > globalMonthlyCap) {
       return fail('global-monthly-cost-budget-exceeded', globalMonthlyCap, globalMonthly);
     }
+    if (accountId && periodId && periodCapMicros > 0) {
+      const periodUsed = db.prepare('SELECT COALESCE(SUM(estimated_cost_micros),0) AS total FROM cost_ledger WHERE account_id = ? AND period_id = ?').get(accountId, periodId).total;
+      if (periodUsed + totalMicros > periodCapMicros) {
+        return fail('entitlement-period-cost-safety-cap-exceeded', periodCapMicros, periodUsed);
+      }
+    }
 
     const ids = [];
-    const insert = db.prepare('INSERT INTO cost_ledger (id, account_id, service, sku, count, estimated_cost_micros, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    const insert = db.prepare('INSERT INTO cost_ledger (id, account_id, service, sku, count, estimated_cost_micros, created_at, period_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
     const createdAt = nowIso();
     for (const r of rows) {
       const id = uuid();
-      insert.run(id, accountId || null, service, r.sku, r.n, r.micros, createdAt);
+      insert.run(id, accountId || null, service, r.sku, r.n, r.micros, createdAt, periodId || null);
       ids.push(id);
     }
     db.exec('COMMIT');
@@ -128,8 +154,8 @@ export function chargeCostBatch({ accountId, service, charges }) {
 
 /* 단일 건 편의 함수 — 내부적으로 chargeCostBatch를 그대로 쓴다(별도
    로직 중복 없음). */
-export function chargeCost({ accountId, service, sku, count }) {
-  return chargeCostBatch({ accountId, service, charges: [{ sku, count }] });
+export function chargeCost({ accountId, service, sku, count, periodId, periodCapMicros }) {
+  return chargeCostBatch({ accountId, service, charges: [{ sku, count }], periodId, periodCapMicros });
 }
 
 export function usageSummary(accountId) {

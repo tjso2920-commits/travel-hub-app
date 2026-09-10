@@ -109,6 +109,33 @@ export function buildConfig(env) {
     },
 
     freeTrialLimit: Number(env.FREE_TRIAL_LIMIT || 1),
+
+    // 2026-09-10 재검토(6차) — "고객에게 약속한 사용량"(이용권 횟수)을
+    // 실제 비용 원장과 분리한다. 이 숫자들은 소비자에게 보여주는 상품
+    // 사양의 원천이다(구매 화면·계정 화면이 이 값을 그대로 표시한다).
+    // 신규 장소 위치 확인은 "이 계정이 그 장소를 실제로 처음 확인한
+    // 순간"에만 차감되고(같은 장소 재사용·재조회는 미차감), 코스
+    // 생성은 "실제 경로로 성공"했을 때만 차감된다(추정/실패 미차감) —
+    // server/entitlement-usage.mjs가 이 규칙을 집행한다. 초기 테스트
+    // 상품 사양이며 공개 출시 전 실사용량으로 재조정한다
+    // (docs/BUSINESS_DECISIONS.md 3-1절).
+    entitlementUsage: {
+      freePlaceLookupLimit: Number(env.ENTITLEMENT_FREE_PLACE_LOOKUP_LIMIT || 10),
+      freeCourseLimit: Number(env.ENTITLEMENT_FREE_COURSE_LIMIT || 1),
+      paidPlaceLookupLimit: Number(env.ENTITLEMENT_PAID_PLACE_LOOKUP_LIMIT || 50),
+      paidCourseLimit: Number(env.ENTITLEMENT_PAID_COURSE_LIMIT || 30),
+    },
+    // 내부 원가 안전상한(고객에게 보여주는 상품 가격·잔여량이 아니다 —
+    // "약속한 사용량을 실제로 다 채워도 원가가 이 밑으로 들어오는지"를
+    // 감시하는 엔지니어링 안전장치). 무료체험 계정은 평생 누적,
+    // 유료는 이용권(주문) 하나당 누적. 이 상한에 걸리면 조용히 막지
+    // 않고 실제 요청 수 기준 계산을 보고한다(docs/BUSINESS_DECISIONS.md
+    // 3-1/3-3절 — 700원/3,500원은 R6 제안값, 확정 아님).
+    costSafetyCap: {
+      freeAccountMicros: Number(env.COST_SAFETY_CAP_FREE_KRW_MICROS || 700_000_000),
+      paidEntitlementMicros: Number(env.COST_SAFETY_CAP_PAID_KRW_MICROS || 3_500_000_000),
+    },
+
     sessionTtlSeconds: Number(env.SESSION_TTL_SECONDS || 60 * 60 * 24 * 30),
     loginCodeTtlSeconds: Number(env.LOGIN_CODE_TTL_SECONDS || 60 * 10),
 

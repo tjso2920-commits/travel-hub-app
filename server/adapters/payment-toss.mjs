@@ -63,7 +63,7 @@ import { fetchWithTimeout } from '../net.mjs';
 import { acquireLock, releaseLock } from '../locks.mjs';
 import { checkEntitlement, grantEntitlement, revokeEntitlementIfCurrentOrder } from '../routes/entitlement.mjs';
 import { markVerified } from '../status.mjs';
-import { usageSummary } from '../cost-ledger.mjs';
+import { usageSummary, periodCostMicros } from '../cost-ledger.mjs';
 
 function authHeader() {
   return 'Basic ' + Buffer.from(`${config.toss.secretKey}:`).toString('base64');
@@ -100,7 +100,32 @@ export function orderName() {
    **이미 결제를 마친 손님의 이용권 부여(복구 포함)는 이 함수와 완전히
    분리돼 있다** — 이 함수는 createOrder(신규 주문 생성)에서만 부르고,
    confirmPayment의 "이미 승인된 주문 재확인"(order.status==='paid')
-   경로는 이 함수를 아예 거치지 않는다. */
+   경로는 이 함수를 아예 거치지 않는다.
+
+   **2026-09-10 재검토(6차) — "전체 서비스 예산과 기존 유료 고객에게
+   제공해야 할 잔여 사용량을 고려해 신규 판매 가능 여부를 판단하라"**:
+   예전(5차)엔 "이번 달 남은 예산이 코스 딱 하나(최소 원가)는 되는가"
+   만 봤다 — 이미 활성인 다른 유료 손님들이 아직 다 안 쓴 만큼(최악의
+   경우 이용권 하나당 원가 안전상한까지 전부 쓸 수 있다고 가정한
+   "약속된 몫")을 전혀 안 뺐다. 그러면 활성 유료 손님이 여러 명일 때,
+   그들 몫을 다 주고 나면 예산이 바닥날 상황에서도 새 손님을 계속
+   받을 수 있었다 — 신규 손님은 결제만 하고 정작 서비스를 못 받거나,
+   기존 손님 몫을 침범하는 결과로 이어질 수 있다. 이제 "이번 달 남은
+   예산에서 기존 활성 유료 손님들의 약속된 잔여 몫을 먼저 뺀 뒤에도,
+   새 손님 한 명의 최악의 경우(이용권 하나 전체 안전상한)를 감당할
+   여유가 남는지"를 확인한다. */
+function totalCommittedRemainingMicros() {
+  const db = openDb();
+  const rows = db.prepare("SELECT id, active_order_id FROM accounts WHERE plan = 'paid' AND (plan_expires_at IS NULL OR plan_expires_at > ?)").all(nowIso());
+  let total = 0;
+  for (const row of rows) {
+    if (!row.active_order_id) continue;
+    const spent = periodCostMicros(row.id, row.active_order_id);
+    total += Math.max(0, config.costSafetyCap.paidEntitlementMicros - spent);
+  }
+  return total;
+}
+
 function isServiceUnavailableForNewSales() {
   if (config.isProd && config.services.routing !== 'real') return true;
   const usage = usageSummary(null);
@@ -110,6 +135,12 @@ function isServiceUnavailableForNewSales() {
   if (caps.globalDailyMicros > 0 && usage.globalDailyMicros >= caps.globalDailyMicros) return true;
   if (caps.globalMonthlyMicros > 0 && (caps.globalMonthlyMicros - usage.globalMonthlyMicros) < minCourseCostMicros) return true;
   if (caps.globalDailyMicros > 0 && (caps.globalDailyMicros - usage.globalDailyMicros) < minCourseCostMicros) return true;
+
+  if (caps.globalMonthlyMicros > 0) {
+    const committed = totalCommittedRemainingMicros();
+    const remainingAfterCommitments = (caps.globalMonthlyMicros - usage.globalMonthlyMicros) - committed;
+    if (remainingAfterCommitments < config.costSafetyCap.paidEntitlementMicros) return true;
+  }
   return false;
 }
 

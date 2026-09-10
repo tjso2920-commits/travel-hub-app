@@ -115,6 +115,18 @@ const paywallText = await p.textContent('#sheetContent');
 t('이용권 화면에 금액이 표시됨', /9,?900원/.test(paywallText));
 t('이용권 화면에 기간이 표시됨', /30일/.test(paywallText));
 t('이용권 화면에 자동결제 여부가 명시됨', paywallText.includes('자동결제'));
+// 2026-09-10 재검토(6차) 2절 — "구매 화면에 포함 사용량을 표시하라".
+// 서버 설정값(config.entitlementUsage)을 하드코딩하지 않고 그대로
+// 반영하는지 확인 — 실제 서버 응답(/api/entitlement)에서 읽어 비교한다.
+{
+  const entRes = await fetch(apiBase + '/api/entitlement', { headers: { Authorization: `Bearer ${await p.evaluate(() => foodMap.session && foodMap.session.token)}` } });
+  const entJson = await entRes.json();
+  const { includedPlaceLookups, includedCourseGenerations } = entJson.price;
+  t('이용권 화면에 포함된 위치 확인 횟수가 서버 설정값 그대로 표시됨',
+    paywallText.includes(`새로운 장소 위치 확인 최대 ${includedPlaceLookups}곳`));
+  t('이용권 화면에 포함된 코스 생성 횟수가 서버 설정값 그대로 표시됨',
+    paywallText.includes(`코스 생성·재계산 최대 ${includedCourseGenerations}회`));
+}
 {
   const db = openDb();
   const paywallEvt = db.prepare("SELECT * FROM events WHERE name = 'paywall_viewed'").all();
@@ -159,6 +171,27 @@ await p.waitForTimeout(800);
 const secondCourse = await p.evaluate(() => foodMap.course);
 t('결제 후 실제로 두 번째 코스가 만들어짐', secondCourse && secondCourse.stops.length === 1);
 await p.evaluate(() => document.getElementById('close').click());
+
+// --- 2026-09-10 재검토(6차) 2절 — "계정 화면에서 잔여 횟수를 확인할 수
+// 있게 하라". 실제로 유료 이용권으로 전환된 뒤 프로필 화면을 열어
+// 남은 위치 확인·코스 생성 횟수가 실제 서버 사용량 기준으로 표시되는지
+// 확인한다(개발자 용어인 API/SKU는 화면에 없어야 한다). ---
+{
+  await p.click('[data-profile]');
+  await p.waitForTimeout(200);
+  const profileTitle = await p.textContent('#sheetLabel');
+  t('프로필 버튼으로 실제 프로필 화면이 열림', profileTitle === '내 프로필');
+  const profileText = await p.textContent('#sheetContent');
+  t('프로필 화면에 유료 이용권으로 표시됨', profileText.includes('유료 이용권'));
+  t('프로필 화면에 남은 위치 확인 횟수가 표시됨(개발자 용어 없이)', /남은 위치 확인: \d+곳\(전체 \d+곳 중\)/.test(profileText));
+  t('프로필 화면에 남은 코스 생성 횟수가 표시됨', /남은 코스 생성: \d+회\(전체 \d+회 중\)/.test(profileText));
+  t('프로필 화면에 API·SKU 같은 개발 용어가 노출되지 않음', !/\bAPI\b|\bSKU\b/i.test(profileText));
+  const usageAfterOneCourse = await fetch(apiBase + '/api/account/usage', { headers: { Authorization: `Bearer ${await p.evaluate(() => foodMap.session && foodMap.session.token)}` } }).then((r) => r.json());
+  t('프로필 화면의 잔여 코스 생성 횟수가 실제 서버 사용량과 일치함(코스 1회 사용 후)',
+    profileText.includes(`남은 코스 생성: ${usageAfterOneCourse.courseGenerations.remaining}회(전체 ${usageAfterOneCourse.courseGenerations.limit}회 중)`));
+  await p.evaluate(() => document.getElementById('close').click());
+  await p.waitForTimeout(150);
+}
 
 // --- 환불 — 실제 서비스에서는 PG가 보내는 웹훅으로 이 상태가 바뀐다.
 // 클라이언트가 스스로 "환불받았다"고 선언하지 않는다. ---

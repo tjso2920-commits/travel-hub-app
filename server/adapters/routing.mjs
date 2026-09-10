@@ -44,6 +44,7 @@ import { config } from '../config.mjs';
 import { markVerified } from '../status.mjs';
 import { fetchWithTimeout } from '../net.mjs';
 import { chargeCostBatch } from '../cost-ledger.mjs';
+import { currentPeriod } from '../entitlement-usage.mjs';
 
 const WALK_MIN_PLAUSIBLE_MPS = 0.3;
 const WALK_MAX_PLAUSIBLE_MPS = 2.2;
@@ -201,7 +202,11 @@ async function callGoogleRoutesAll(origin, ordered, accountId) {
     const intermediateCount = seg.length - 2;
     return { sku: intermediateCount >= config.routesHighVolumeThreshold ? 'routes-compute-highvolume' : 'routes-compute' };
   });
-  const charge = chargeCostBatch({ accountId, service: 'routes', charges: plan });
+  // 2026-09-10 재검토(6차) — 이 비용도 이 계정의 지금 이용권 기간에
+  // 귀속시켜 내부 원가 안전상한(무료 누적 700원/유료 이용권당 누적
+  // 3,500원)을 함께 확인한다(places.mjs의 장소 조회 비용과 같은 원칙).
+  const period = accountId ? currentPeriod(accountId) : null;
+  const charge = chargeCostBatch({ accountId, service: 'routes', charges: plan, periodId: period && period.periodId, periodCapMicros: period && period.costCapMicros });
   if (!charge.ok) return { ok: false, reason: 'cost-budget-exceeded', detail: charge.reason };
   // 예산 확인을 전부 통과했으니 이제 실제로 순서대로 호출한다. 이 시점
   // 이후의 실패(네트워크 오류·타임아웃 등)는 "돈은 이미 쓰기로 확정

@@ -51,6 +51,7 @@ import { config } from '../config.mjs';
 import { openDb, nowIso } from '../db.mjs';
 import { checkAndIncrement, dayWindow } from '../rate-limit.mjs';
 import { chargeCost } from '../cost-ledger.mjs';
+import { reservePlaceLookupSlot, releasePlaceLookupSlot, periodCostStatus } from '../entitlement-usage.mjs';
 
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10분 — 화면을 실수로 여러 번 눌러 생기는 중복만 줄인다. Google Places API(New)의 캐시·재사용 정책 범위 안으로 의도적으로 짧게 뒀다(RELEASE_STATUS.md 참고 — 정확한 공식 한도는 이 세션이 재확인 못함).
 
@@ -106,10 +107,28 @@ function checkLimits(accountId, phaseScope, perAccountLimit, by) {
   return { ok: true };
 }
 
-async function runOneLookup(accountId, query, expectedArea) {
+/* 2026-09-10 재검토(6차) — "이용권 횟수와 실제 비용 원장 분리"(2절
+   지시). placeId(클라이언트가 들고 있는 장소 식별자)를 이 함수까지
+   반드시 넘겨야, 이 계정이 이 장소를 신규로 확인하는 건지(이용권
+   차감 대상) 아니면 이미 확인된 장소를 재사용/재조회하는 건지(미차감,
+   비용만 발생 가능)를 서버가 판별할 수 있다. 예약(reserve)은 실제
+   외부 호출 전에 낙관적으로 이뤄지고, 최종 결과가 실패면 되돌린다
+   (release) — "실패·추정 결과는 미차감"을 지킨다. */
+async function runOneLookup(accountId, query, expectedArea, placeId) {
+  const reservation = reservePlaceLookupSlot(accountId, placeId);
+  if (!reservation.ok) {
+    return { ok: false, status: 402, reason: reservation.reason, used: reservation.used, limit: reservation.limit };
+  }
+  const releaseIfNeeded = (outcomeOk, resultOk) => {
+    if (reservation.isNew && (!outcomeOk || !resultOk)) releasePlaceLookupSlot(accountId, placeId, reservation.period);
+  };
+
   const cacheKey = cacheKeyFor(query, expectedArea);
   const cached = cacheGet(cacheKey);
-  if (cached) return { ok: true, result: cached, cached: true };
+  if (cached) {
+    releaseIfNeeded(true, cached.ok);
+    return { ok: true, result: cached, cached: true };
+  }
 
   // 이미 같은 조건으로 진행 중인 조회가 있으면 새 외부 호출을 내지
   // 않고 그 결과를 그대로 기다린다(동시 요청 중복 호출 방지 — 실제로
@@ -117,6 +136,7 @@ async function runOneLookup(accountId, query, expectedArea) {
   const existing = inFlightLookups.get(cacheKey);
   if (existing) {
     const outcome = await existing;
+    releaseIfNeeded(outcome.ok, outcome.ok && outcome.result.ok);
     if (!outcome.ok) return outcome; // 비용 한도 등으로 실패한 결과도 그대로 공유
     return { ok: true, result: outcome.result, cached: true, deduped: true };
   }
@@ -129,7 +149,11 @@ async function runOneLookup(accountId, query, expectedArea) {
     // 호출"에 예산을 쓰는 꼴이라, routing.mjs가 실제 Google Routes
     // 호출 경로 안에서만 비용을 청구하는 것과 같은 원칙으로 맞춘다.
     if (config.services.placeLookup === 'real') {
-      const charge = chargeCost({ accountId, service: 'places', sku: 'places-text-search' });
+      // 2026-09-10 재검토(6차) — 이 호출의 내부 원가를 이 계정의 지금
+      // 이용권 기간(period)에 귀속시킨다(무료체험 누적 700원/유료
+      // 이용권당 누적 3,500원 안전상한 — cost-ledger.mjs가 계정·전체
+      // 한도와 같은 트랜잭션에서 함께 확인한다).
+      const charge = chargeCost({ accountId, service: 'places', sku: 'places-text-search', periodId: reservation.period.periodId, periodCapMicros: reservation.period.costCapMicros });
       if (!charge.ok) return { ok: false, status: 503, reason: 'cost-budget-exceeded', detail: charge.reason };
     }
     const result = await lookupPlace({ query, expectedArea });
@@ -138,22 +162,27 @@ async function runOneLookup(accountId, query, expectedArea) {
   })();
   inFlightLookups.set(cacheKey, promise);
   try {
-    return await promise;
+    const outcome = await promise;
+    releaseIfNeeded(outcome.ok, outcome.ok && outcome.result.ok);
+    return outcome;
   } finally {
     inFlightLookups.delete(cacheKey);
   }
 }
 
 /* 단일 조회(GET /api/places/lookup) — phase는 항상 requery 한도만 받는다
-   (위 상단 설명 1번). */
-export async function lookupPlaceRoute(accountId, query, expectedArea) {
+   (위 상단 설명 1번). placeId는 이용권 차감 대상을 가리는 필수값이다
+   (6차 신규 — 없으면 "이 조회가 어느 장소를 새로 확인하는 건지" 서버가
+   판별할 수 없어 신규/재사용 구분 자체가 불가능해진다). */
+export async function lookupPlaceRoute(accountId, query, expectedArea, placeId) {
   if (!accountId) return { ok: false, status: 401, reason: 'unauthorized' };
   if (!query || !String(query).trim()) return { ok: false, status: 400, reason: 'missing-query' };
+  if (!placeId || !String(placeId).trim()) return { ok: false, status: 400, reason: 'missing-place-id' };
 
   const limitCheck = checkLimits(accountId, 'requery', config.placeLookupRequeryDailyLimit);
   if (!limitCheck.ok) return limitCheck;
 
-  const r = await runOneLookup(accountId, query, expectedArea);
+  const r = await runOneLookup(accountId, query, expectedArea, String(placeId));
   if (!r.ok) return r;
   return { ok: true, status: 200, result: r.result, cached: r.cached };
 }
@@ -184,7 +213,9 @@ export async function lookupPlacesBatchRoute(accountId, items) {
     const id = item && item.id;
     const query = item && item.query;
     if (!id || !query || !String(query).trim()) { results.push({ id, ok: false, reason: 'missing-query' }); continue; }
-    const r = await runOneLookup(accountId, query, item.expectedArea);
+    // 배치 항목의 id가 곧 이용권 차감 판별용 placeId다(단일 조회와
+    // 같은 규칙 — 6차 신규).
+    const r = await runOneLookup(accountId, query, item.expectedArea, String(id));
     if (!r.ok) {
       // 예산 한도에 걸리면 이 배치의 나머지는 더 시도하지 않고 정직하게
       // "여기까지만 처리됐다"고 알린다(과도한 재시도로 상황을 더

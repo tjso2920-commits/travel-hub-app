@@ -35,6 +35,7 @@ import { paymentConfigRoute, createOrderRoute, confirmOrderRoute, cancelOrderRou
 import { listTrips, createTrip, updateTrip, getTripCourses, putTripCourses, syncTrips } from './routes/trips.mjs';
 import { getVisits, markVisited, unmarkVisited, setWantRevisit, setNotes, syncVisits } from './routes/visits.mjs';
 import { suggestNextTripPlaces } from './routes/next-trip-suggestions.mjs';
+import { usageSummaryForAccount } from './entitlement-usage.mjs';
 import { getVerifiedStatus } from './status.mjs';
 
 function readBody(req) {
@@ -242,6 +243,13 @@ async function handle(req, res) {
       const result = checkEntitlement(accountId);
       return sendJson(res, result.ok ? 200 : 404, result);
     }
+    // 2026-09-10 재검토(6차) — 계정 화면의 "잔여 횟수" 표시용. API/SKU
+    // 같은 개발 용어 없이 소비자가 그대로 읽을 수 있는 값만 돌려준다
+    // (server/entitlement-usage.mjs의 usageSummaryForAccount).
+    if (req.method === 'GET' && pathname === '/api/account/usage') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      return sendJson(res, 200, usageSummaryForAccount(accountId));
+    }
 
     // 장소 조회 — 인증 필수 + 계정별/서비스 전체 한도(2026-09-10).
     // 2026-09-10 재검토(4차): phase 쿼리 파라미터는 더 이상 한도 등급을
@@ -249,7 +257,7 @@ async function handle(req, res) {
     // 동명 장소 판별에 쓴다. 더 큰 한도는 아래 배치 엔드포인트로만.
     if (req.method === 'GET' && pathname === '/api/places/lookup') {
       const accountId = requireAccount(req, res); if (!accountId) return;
-      const result = await lookupPlaceRoute(accountId, url.searchParams.get('q'), url.searchParams.get('area'));
+      const result = await lookupPlaceRoute(accountId, url.searchParams.get('q'), url.searchParams.get('area'), url.searchParams.get('placeId'));
       return sendJson(res, result.status, result.ok ? result.result : result);
     }
     if (req.method === 'POST' && pathname === '/api/places/lookup-batch') {

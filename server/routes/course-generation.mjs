@@ -31,6 +31,7 @@ import { computeWalkingRoute } from '../adapters/routing.mjs';
 import { assembleCourse } from '../course-assembly.mjs';
 import { trialStatus, consumeTrial } from './trial.mjs';
 import { checkEntitlement } from './entitlement.mjs';
+import { currentPeriod, checkCourseGenerationAllowed, commitCourseGenerationSuccess } from '../entitlement-usage.mjs';
 import { upsertAccountCourse } from './account-data.mjs';
 import { upsertTripCourse } from './trips.mjs';
 import { checkAndIncrement, hourWindow } from '../rate-limit.mjs';
@@ -141,6 +142,21 @@ export async function generateCourseRoute(accountId, body) {
       storeResult(idempotencyKey, accountId, hash, 'rejected', rejected);
       return rejected;
     }
+    // 2026-09-10 재검토(6차) 1절 — "유료 이용권: 실제 코스 생성·재계산
+    // 성공 30회"(제안값, config.entitlementUsage.paidCourseLimit). 예전
+    // 에는 유료 기간 안에서 무제한으로 생성할 수 있었다 — 이제 이
+    // 기간(주문) 하나당 성공 횟수에 상한을 둔다. 무료체험 쪽 1회 한도는
+    // 위 trial_usage가 그대로 지킨다(바뀐 게 없다) — 여기서는 유료만
+    // 추가로 확인한다.
+    const period = currentPeriod(accountId);
+    if (isPaid) {
+      const courseCheck = checkCourseGenerationAllowed(accountId);
+      if (!courseCheck.ok) {
+        const rejected = { ok: false, status: 403, reason: courseCheck.reason, used: courseCheck.used, limit: courseCheck.limit };
+        storeResult(idempotencyKey, accountId, hash, 'rejected', rejected);
+        return rejected;
+      }
+    }
 
     // computeWalkingRoute(정확히는 orderByNearestNeighbor)는 좌표 유무를
     // 스스로 거르지 않는다 — 좌표 없는 곳까지 섞여 들어가면 순서·구간
@@ -193,6 +209,14 @@ export async function generateCourseRoute(accountId, body) {
       if (!isPaid && !trial.used && course.routedReal) {
         const consumed = consumeTrial(accountId);
         trialConsumed = !!consumed.consumed;
+        // 2026-09-10 재검토(6차) — 무료체험도 entitlement_usage에 같이
+        // 기록해 계정 화면의 "잔여 횟수"가 일관되게 나오게 한다(코스
+        // 생성 한도 자체는 여전히 trial_usage의 1회 제약이 실권한다 —
+        // 이건 표시용 이중 기록일 뿐 새 제약이 아니다).
+        if (trialConsumed) commitCourseGenerationSuccess(accountId, period);
+      }
+      if (isPaid && course.routedReal) {
+        commitCourseGenerationSuccess(accountId, period);
       }
       if (tripId) upsertTripCourse(accountId, tripId, date, course);
       else upsertAccountCourse(accountId, course);

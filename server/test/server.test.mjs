@@ -190,9 +190,9 @@ let tokenB;
   t('로그인 없이는 장소 조회도 401', noAuth.status === 401);
   const empty = await api('GET', '/api/places/lookup?q=', { token: tokenA });
   t('빈 질의는 400', empty.status === 400);
-  const r = await api('GET', '/api/places/lookup?q=' + encodeURIComponent('후쿠오카역'), { token: tokenA });
+  const r = await api('GET', '/api/places/lookup?q=' + encodeURIComponent('후쿠오카역') + '&placeId=place-lookup-test-1', { token: tokenA });
   t('장소 조회는 항상 응답을 줌(성공 또는 정직한 실패)', r.status === 200 && typeof r.json.ok === 'boolean');
-  const r2 = await api('GET', '/api/places/lookup?q=' + encodeURIComponent('후쿠오카역'), { token: tokenA });
+  const r2 = await api('GET', '/api/places/lookup?q=' + encodeURIComponent('후쿠오카역') + '&placeId=place-lookup-test-2', { token: tokenA });
   t('같은 질의는 같은 결과(테스트 어댑터 결정론적 — 재현 가능한 테스트)', JSON.stringify(r.json) === JSON.stringify(r2.json));
 }
 

@@ -514,8 +514,8 @@ if (scenario === 'routing-available') {
   const token = directSession(acc);
   const before = openDb().prepare('SELECT COUNT(*) AS n FROM cost_ledger WHERE service = ?').get('places').n;
   const mock = mockPlacesFetchAlways();
-  const first = await api('GET', `/api/places/lookup?q=${encodeURIComponent('중복조회테스트장소')}`, { token });
-  const second = await api('GET', `/api/places/lookup?q=${encodeURIComponent('중복조회테스트장소')}`, { token });
+  const first = await api('GET', `/api/places/lookup?q=${encodeURIComponent('중복조회테스트장소')}&placeId=dup-place-1`, { token });
+  const second = await api('GET', `/api/places/lookup?q=${encodeURIComponent('중복조회테스트장소')}&placeId=dup-place-1`, { token });
   mock.restore();
   const after = openDb().prepare('SELECT COUNT(*) AS n FROM cost_ledger WHERE service = ?').get('places').n;
   t('완전히 같은 질의를 반복해도 실제 유료 조회는 한 번만 기록됨(두 번째는 캐시)', after - before === 1);
@@ -527,8 +527,8 @@ if (scenario === 'routing-available') {
   // 캐시 키가 지역을 안 담아 Tokyo 조회 뒤 Kyoto 조회가 Tokyo 결과를
   // 그대로 돌려받았다).
   const mock2 = mockPlacesFetchAlways();
-  const tokyo = await api('GET', `/api/places/lookup?q=${encodeURIComponent('스타벅스')}&area=${encodeURIComponent('Tokyo')}`, { token });
-  const kyoto = await api('GET', `/api/places/lookup?q=${encodeURIComponent('스타벅스')}&area=${encodeURIComponent('Kyoto')}`, { token });
+  const tokyo = await api('GET', `/api/places/lookup?q=${encodeURIComponent('스타벅스')}&area=${encodeURIComponent('Tokyo')}&placeId=tokyo-starbucks`, { token });
+  const kyoto = await api('GET', `/api/places/lookup?q=${encodeURIComponent('스타벅스')}&area=${encodeURIComponent('Kyoto')}&placeId=kyoto-starbucks`, { token });
   mock2.restore();
   t('같은 질의라도 지역 힌트가 다르면 실제로 각각 다시 조회됨(캐시 혼선 방지)', mock2.calls.length === 2);
   t('둘 다 정상 응답', tokyo.status === 200 && kyoto.status === 200);
@@ -539,8 +539,8 @@ if (scenario === 'routing-available') {
   // 냈다 — 2회 발생).
   const mock3 = mockPlacesFetchAlways();
   const [c1, c2] = await Promise.all([
-    api('GET', `/api/places/lookup?q=${encodeURIComponent('동시조회테스트장소')}`, { token }),
-    api('GET', `/api/places/lookup?q=${encodeURIComponent('동시조회테스트장소')}`, { token }),
+    api('GET', `/api/places/lookup?q=${encodeURIComponent('동시조회테스트장소')}&placeId=concurrent-place-1`, { token }),
+    api('GET', `/api/places/lookup?q=${encodeURIComponent('동시조회테스트장소')}&placeId=concurrent-place-1`, { token }),
   ]);
   mock3.restore();
   t('동일 질의를 동시에 두 번 보내도 실제 외부 호출은 한 번만 나감(in-flight 병합)', mock3.calls.length === 1);
@@ -557,7 +557,7 @@ if (scenario === 'routing-available') {
   const mock = mockPlacesFetchAlways();
   let okCount = 0, blockedStatus = null;
   for (let i = 0; i < 7; i++) {
-    const r = await api('GET', `/api/places/lookup?q=${encodeURIComponent('예산테스트장소' + i)}`, { token });
+    const r = await api('GET', `/api/places/lookup?q=${encodeURIComponent('예산테스트장소' + i)}&placeId=${encodeURIComponent('budget-place-' + i)}`, { token });
     if (r.status === 200) okCount++;
     else if (blockedStatus === null) blockedStatus = r;
   }

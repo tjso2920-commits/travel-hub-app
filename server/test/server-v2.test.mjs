@@ -98,11 +98,11 @@ async function loginNewAccount(email) {
   // 항상 requery 한도(2)만 적용된다.
   let requeryOk = 0;
   for (let i = 0; i < 2; i++) {
-    const r = await api('GET', `/api/places/lookup?q=requery-place-${i}&phase=import`, { token: acc.token });
+    const r = await api('GET', `/api/places/lookup?q=requery-place-${i}&phase=import&placeId=requery-place-${i}`, { token: acc.token });
     if (r.status === 200) requeryOk++;
   }
   t('단일 조회는 phase=import를 붙여도 항상 requery 한도만 적용됨(자기 신고로 큰 한도를 못 받음)', requeryOk === 2);
-  const overRequery = await api('GET', '/api/places/lookup?q=requery-place-overflow&phase=import', { token: acc.token });
+  const overRequery = await api('GET', '/api/places/lookup?q=requery-place-overflow&phase=import&placeId=requery-place-overflow', { token: acc.token });
   t('단일 조회 한도를 넘으면 429', overRequery.status === 429 && overRequery.json.reason === 'account-daily-limit-reached');
 }
 

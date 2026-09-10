@@ -33,7 +33,10 @@
     "multi-day-check": "node scripts/test-multi-day.mjs",
     "place-lookup-check": "node scripts/test-place-lookup.mjs",
     "landing-page-check": "node scripts/test-landing-page.mjs",
-    "account-sync-check": "node scripts/test-account-sync.mjs"
+    "account-sync-check": "node scripts/test-account-sync.mjs",
+    "revisit-flow-check": "node scripts/test-revisit-flow.mjs",
+    "sync-protection-check": "node scripts/test-sync-protection-screens.mjs",
+    "consumer-flow-e2e-check": "node scripts/test-consumer-flow-e2e.mjs"
   },
   "devDependencies": {
     "jsdom": "^24.1.3",

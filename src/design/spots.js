@@ -28,7 +28,7 @@ let usingSample = spots.length === 0; // 담아 둔 게 하나도 없으면 처�
 if (usingSample) { spots = SAMPLE_SPOTS; cities = SAMPLE_CITIES; }
 
 let city = cities[0] ? cities[0].name : '';
-let filter = '전체', selected = new Set(), route = new Set(), selecting = false;
+let filter = '전체', visitFilter = '전체', selected = new Set(), route = new Set(), selecting = false;
 
 /* 2026-09-09 코드 검토 — 로드맵 ⑨(구매 흐름)·⑩(측정). 측정은 절대
    화면 동작을 막으면 안 된다(analytics.js가 아직 안 붙었거나 서버가
@@ -51,12 +51,29 @@ daTrackSafe('channel_inflow', { channel: window.Analytics ? window.Analytics.cla
    와 "이 계정으로 다른 기기에서 이미 올려 둔 데이터"를 둘 다 잃지
    않는 가장 안전한 방향이다(복잡한 필드 단위 병합 대신, 있는 걸
    지우지 않는 쪽으로 보수적으로 합친다). */
+/* 2026-09-10 재검토(6차) 3-⑤ — "여행·방문 기록은 /api/trips/sync,
+   /api/visits/sync로 옮겨야 6절(R5-7)에서 구현한 충돌 보호가 실제로
+   적용된다"는 지시. 예전 /api/courses 전체 치환 PUT은 tripId가 없는
+   레거시 코스만 계속 담당하게 좁힌다(trip에 딸린 코스를 그 경로로도
+   보내면 버전 보호 없이 통째로 덮어써져 R5-7이 막으려던 문제가 그대로
+   재발한다) — tripId가 있는 코스는 /api/trips/sync의 courses 필드로만
+   보낸다(trips.mjs의 syncTrips가 날짜별 upsert로 보수적으로 병합). */
 async function daSyncPush(token) {
   if (!token) return;
-  await Promise.all([
+  const tripsPayload = (foodMap.trips || []).map((t) => ({
+    ...t, courses: (foodMap.courses || []).filter((c) => c.tripId === t.tripId),
+  }));
+  const [, , tripsRes, visitsRes] = await Promise.all([
     A.api('/api/places', { method: 'PUT', token, body: { places: foodMap.places || [] } }),
-    A.api('/api/courses', { method: 'PUT', token, body: { courses: foodMap.courses || [] } }),
+    A.api('/api/courses', { method: 'PUT', token, body: { courses: (foodMap.courses || []).filter((c) => !c.tripId) } }),
+    A.api('/api/trips/sync', { method: 'POST', token, body: { trips: tripsPayload } }),
+    A.api('/api/visits/sync', { method: 'POST', token, body: { visits: foodMap.visits || [] } }),
   ]);
+  // syncTrips/syncVisits는 이 계정의 현재 전체 목록을 그대로 돌려준다
+  // (병합이 이미 서버에서 끝난 상태) — 로컬을 그 결과로 맞춘다.
+  if (tripsRes.ok && tripsRes.json && Array.isArray(tripsRes.json.trips)) foodMap.trips = tripsRes.json.trips;
+  if (visitsRes.ok && visitsRes.json && Array.isArray(visitsRes.json.visits)) foodMap.visits = visitsRes.json.visits;
+  A.saveFoodMap(foodMap);
 }
 function daSyncPushSafe() {
   const token = A.sessionToken(foodMap);
@@ -100,6 +117,9 @@ async function daLogout() {
   delete foodMap.places;
   delete foodMap.course;
   delete foodMap.courses;
+  delete foodMap.trips;
+  delete foodMap.visits;
+  delete foodMap.currentTripByCity;
   A.saveFoodMap(foodMap);
   foodMap = A.loadFoodMap();
   route.clear(); selected.clear(); filter = '전체';
@@ -131,6 +151,7 @@ function photoHTML(p, cls) {
 function render() {
   const q = $('#search').value.trim().toLowerCase();
   const list = spots.filter((p) => p.city === city && (filter === '전체' || p.category === filter)
+    && (usingSample || visitFilter === '전체' || visitStatusFor(p.id) === visitFilter)
     && [p.name, p.area, p.category, p.memo].some((v) => String(v || '').toLowerCase().includes(q)));
   $('#count').textContent = list.length;
   $('#clear').hidden = !q;
@@ -204,7 +225,7 @@ function detail(id) {
   }
   const catBlock = usingSample ? '' :
     ` <button class="text-button" data-cat-edit="${id}" style="padding:0;font-size:11px">${p.catConfirmed ? '유형 다시 고르기' : '유형이 맞나요? 수정'}</button>`;
-  open(usingSample ? '샘플 장소' : '내 장소', `<div class="detail">${photoHTML(p, 'detail-photo')}<h2>${A.esc(p.name)}</h2><span class="category">${A.esc(p.category)}${!usingSample && !p.catConfirmed ? '(짐작)' : ''}</span>${catBlock}${!usingSample ? ` <span class="category">${A.esc(p.city)}${p.cityKnown && !p.cityConfirmed ? '(짐작)' : ''}</span>` : ''}<p>${A.esc(p.area) || '위치 정보 없음'}</p>${p.memo ? `<p>“${A.esc(p.memo)}”</p>` : ''}<button class="primary" data-detail-pick="${id}">${selected.has(id) ? '선택에서 빼기' : '오늘 갈 곳으로 선택'}</button>${mapHref ? `<a target="_blank" rel="noopener noreferrer" href="${mapHref}">${mapLabel}</a>` : ''}${cityBlock}${notes.map((n) => `<small>${n}</small>`).join('')}</div>`);
+  open(usingSample ? '샘플 장소' : '내 장소', `<div class="detail">${photoHTML(p, 'detail-photo')}<h2>${A.esc(p.name)}</h2><span class="category">${A.esc(p.category)}${!usingSample && !p.catConfirmed ? '(짐작)' : ''}</span>${catBlock}${!usingSample ? ` <span class="category">${A.esc(p.city)}${p.cityKnown && !p.cityConfirmed ? '(짐작)' : ''}</span>` : ''}<p>${A.esc(p.area) || '위치 정보 없음'}</p>${p.memo ? `<p>“${A.esc(p.memo)}”</p>` : ''}<button class="primary" data-detail-pick="${id}">${selected.has(id) ? '선택에서 빼기' : '오늘 갈 곳으로 선택'}</button>${mapHref ? `<a target="_blank" rel="noopener noreferrer" href="${mapHref}">${mapLabel}</a>` : ''}${visitBlockHTML(id)}${cityBlock}${notes.map((n) => `<small>${n}</small>`).join('')}</div>`);
 }
 /* 유형 지정 시트 — 확인된 유형(실제 데이터에 있던 분류)을 이름 기반 추정
    보다 우선하지만, 추정이 틀렸으면 사용자가 여기서 직접 고칠 수 있다.
@@ -255,7 +276,7 @@ async function daLookupCandidateSheet(id) {
   // area는 동명 장소 판별 힌트로만 쓰인다(2026-09-10 재검토 4차 — 서버가
   // Places API(New)로 여러 후보 중 이 지역과 실제로 맞는 걸 우선한다).
   const areaParam = p.area ? '&area=' + encodeURIComponent(p.area) : '';
-  const r = await A.api('/api/places/lookup?q=' + encodeURIComponent(q) + areaParam, { token });
+  const r = await A.api('/api/places/lookup?q=' + encodeURIComponent(q) + areaParam + '&placeId=' + encodeURIComponent(id), { token });
   if (!r.ok || !r.json || r.json.ok === false || typeof r.json.lat !== 'number') {
     // 2026-09-10 재검토(5차) — "비용 한도 도달을 '못 찾았어요'로
     // 표시하지 말고 원인별로 정확히 안내하라"는 지시 반영. r.ok(HTTP
@@ -271,6 +292,10 @@ async function daLookupCandidateSheet(id) {
       msg = '오늘 위치 확인을 너무 많이 시도했어요. 내일 다시 시도해 주세요.';
     } else if (!r.ok && reason === 'cost-budget-exceeded') {
       msg = '지금은 위치 확인 서비스 이용 한도에 도달해 잠시 이용할 수 없어요. 나중에 다시 시도해 주세요.';
+    } else if (!r.ok && (reason === 'entitlement-place-lookup-limit-reached')) {
+      // 2026-09-10 재검토(6차) — 개발 용어(엔타이틀먼트·SKU 등) 없이
+      // "이번 이용권에 포함된 위치 확인 횟수를 다 썼다"는 사실만 정직하게.
+      msg = '이번 이용권에 포함된 위치 확인 횟수를 모두 사용했어요. 계정 화면에서 남은 횟수를 확인할 수 있어요.';
     } else if (!r.ok && reason === 'service-daily-cap-reached') {
       msg = '지금 위치 확인 서비스 전체 이용량이 많아 잠시 제한돼요. 나중에 다시 시도해 주세요.';
     } else if (!r.ok) {
@@ -347,6 +372,206 @@ function finishCityAssign(ids, cityName) {
   updateCity();
   sheet.close();
 }
+/* ── 재방문 여행자 지원 — 여행(trip) 목록·전환 (2026-09-10 재검토 6차
+   3절) ────────────────────────────────────────────────────────────────
+   서버는 이미 여행을 계정×도시가 아니라 독립된 tripId로 관리한다
+   (server/routes/trips.mjs) — 같은 도시로 다시 떠난 여행도 각각 따로
+   저장·열람된다. foodMap.trips(동기화로 채워지는 로컬 캐시)와
+   foodMap.currentTripByCity(도시별 "지금 보고 있는 여행")로 그 개념을
+   화면에 연결한다. 여행이 하나뿐인(가장 흔한, 마이그레이션된 계정
+   포함) 경우엔 daCoursesForCity 등 기존 화면 동작이 그대로 유지된다 —
+   한 도시에 여행이 실제로 2개 이상일 때만 "지금 여행" 기준으로 좁힌다. */
+function tripsForCity(cityName) {
+  return (foodMap.trips || []).filter((t) => t.city === cityName).slice()
+    .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+}
+function currentTripForCity(cityName) {
+  const list = tripsForCity(cityName);
+  if (!list.length) return null;
+  foodMap.currentTripByCity = foodMap.currentTripByCity || {};
+  const tid = foodMap.currentTripByCity[cityName];
+  const found = tid && list.find((t) => t.tripId === tid);
+  if (found) return found;
+  foodMap.currentTripByCity[cityName] = list[0].tripId;
+  return list[0];
+}
+function tripLabel(t) {
+  if (!t) return '';
+  if (t.name) return t.name;
+  const range = [t.startDate, t.endDate].filter(Boolean).join(' ~ ');
+  return t.city + ' 여행' + (range ? ` (${range})` : '');
+}
+/* "지금 여행" 표시 + 바꾸기·새 여행 만들기 — 오늘 동선 화면과 저장된
+   코스 화면 둘 다에서 재사용한다(코스가 이미 있어도 새 여행을 또
+   만들 수 있어야 한다 — 지시 3-②). */
+function tripBlockHTML(cityName) {
+  if (usingSample) return '';
+  const trips = tripsForCity(cityName);
+  if (!trips.length) return '';
+  const cur = currentTripForCity(cityName);
+  return `<div class="inline-note">여행: <b>${A.esc(tripLabel(cur))}</b>` +
+    (trips.length > 1 ? ' <button class="text-button" data-trip-switch style="padding:0 8px">바꾸기</button>' : ' ') +
+    '<button class="text-button" data-trip-new style="padding:0">새 여행 만들기</button></div>';
+}
+/* 이 도시에 여행이 아예 없으면(완전히 새로운 도시) 코스 생성 전에
+   조용히 하나 만든다 — "여행 만들기"를 먼저 누르게 강제하면 기존
+   단일 여행 사용자에게 없던 진입 장벽이 생긴다. 원하면 나중에
+   tripPickerSheet에서 이름·날짜를 채운 "진짜" 새 여행을 또 만들 수 있다. */
+async function ensureTripForCity(cityName) {
+  const existing = currentTripForCity(cityName);
+  if (existing) return existing;
+  const token = A.sessionToken(foodMap);
+  if (!token) return null;
+  const r = await A.api('/api/trips', { method: 'POST', token, body: { city: cityName } });
+  if (!r.ok || !r.json || !r.json.trip) return null;
+  foodMap.trips = foodMap.trips || [];
+  foodMap.trips.push(r.json.trip);
+  foodMap.currentTripByCity = foodMap.currentTripByCity || {};
+  foodMap.currentTripByCity[cityName] = r.json.trip.tripId;
+  A.saveFoodMap(foodMap);
+  return r.json.trip;
+}
+/* 여행 목록·전환 화면 — 같은 도시라도 서로 다른 여행이면 별도 카드로
+   구분해 보여준다(지시 3-①). */
+function tripPickerSheet(cityName) {
+  const list = tripsForCity(cityName);
+  const cur = currentTripForCity(cityName);
+  open('여행 선택', `<div class="detail"><h2>${A.esc(cityName)} · 어느 여행인가요?</h2><p>같은 여행지라도 다녀온 시기가 다르면 서로 다른 여행으로 따로 저장돼요. 새 여행을 만들어도 과거 여행은 지워지지 않아요.</p>` +
+    `<div class="city-options">${list.map((t) => `<button class="city-option ${cur && cur.tripId === t.tripId ? 'chosen' : ''}" data-trip-choose="${A.esc(t.tripId)}"><span><b>${A.esc(tripLabel(t))}</b>${t.lodging && t.lodging.name ? `<small>${A.esc(t.lodging.name)}</small>` : ''}</span><span class="city-check">${cur && cur.tripId === t.tripId ? '✓' : '›'}</span></button>`).join('')}</div>` +
+    `<button class="primary" data-trip-new>새 여행 만들기</button><button class="text-button" data-dismiss>돌아가기</button></div>`);
+}
+/* 이 여행의 저장된 코스를 서버에서 받아 로컬에 반영한다 — 다른 기기가
+   만든 여행으로 전환할 때도(로컬엔 아직 그 여행 코스가 없을 수 있다)
+   날짜 탭이 비어 보이지 않게 한다. */
+async function daSyncTripCourses(tripId) {
+  const token = A.sessionToken(foodMap);
+  if (!token) return;
+  const r = await A.api('/api/trips/' + encodeURIComponent(tripId) + '/courses', { token });
+  if (!r.ok || !r.json || !Array.isArray(r.json.courses)) return;
+  foodMap.courses = foodMap.courses || [];
+  r.json.courses.forEach((sc) => {
+    const idx = foodMap.courses.findIndex((c) => c.tripId === tripId && c.date === sc.date);
+    const entry = { ...sc, tripId };
+    if (idx >= 0) foodMap.courses[idx] = entry; else foodMap.courses.push(entry);
+  });
+  A.saveFoodMap(foodMap);
+}
+function chooseTrip(cityName, tripId) {
+  foodMap.currentTripByCity = foodMap.currentTripByCity || {};
+  foodMap.currentTripByCity[cityName] = tripId;
+  A.saveFoodMap(foodMap);
+  route.clear(); // 다른 여행으로 바꾸면 "오늘 동선"은 그 여행 것으로 다시 고른다(다른 여행에 담긴 곳과 안 섞이게).
+  daSyncTripCourses(tripId).then(() => { city = cityName; updateCity(); showRoute(); });
+}
+/* 새 여행 만들기 — 이름·날짜·숙소는 전부 선택 입력(비워도 여행은
+   만들어진다). "여행지 선택"(도시 전환)과 뚜렷이 구분되도록, 새 여행을
+   만들어도 과거 여행이 사라지지 않는다는 걸 여기서 분명히 알린다. */
+function newTripFormSheet(cityName) {
+  open('새 여행 만들기', `<div class="detail"><h2>${A.esc(cityName)}(으)로 새 여행을 만들까요?</h2><p>과거에 만든 여행은 사라지지 않고 그대로 남아요 — 이번 여행 기록만 새로 시작합니다.</p>` +
+    `<label class="xsmall" style="display:block;margin:10px 0 6px">여행 이름(선택)<input class="xinput" id="tripName" placeholder="예: 2번째 후쿠오카 여행" style="margin-top:6px;width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit"></label>` +
+    `<label class="xsmall" style="display:block;margin:10px 0 6px">시작일(선택)<input class="xinput" id="tripStart" type="date" style="margin-top:6px;width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit"></label>` +
+    `<label class="xsmall" style="display:block;margin:10px 0 6px">종료일(선택)<input class="xinput" id="tripEnd" type="date" style="margin-top:6px;width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit"></label>` +
+    `<label class="xsmall" style="display:block;margin:10px 0 6px">숙소 이름(선택)<input class="xinput" id="tripLodging" style="margin-top:6px;width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit"></label>` +
+    `<button class="primary" id="tripCreateBtn" style="margin-top:10px">이 여행 만들기</button><p class="inline-note" id="tripMsg" hidden></p></div>`);
+  const msg = (t2) => { const el = $('#tripMsg'); el.textContent = t2; el.hidden = false; };
+  $('#tripCreateBtn').onclick = async () => {
+    const token = A.sessionToken(foodMap);
+    if (!token) { showLoginSheet(() => newTripFormSheet(cityName)); return; }
+    const btn = $('#tripCreateBtn'); btn.disabled = true; btn.textContent = '만드는 중…';
+    const name = $('#tripName').value.trim();
+    const startDate = $('#tripStart').value || undefined;
+    const endDate = $('#tripEnd').value || undefined;
+    const lodgingName = $('#tripLodging').value.trim();
+    const r = await A.api('/api/trips', { method: 'POST', token, body: { city: cityName, name: name || undefined, startDate, endDate, lodging: lodgingName ? { name: lodgingName } : undefined } });
+    if (!r.ok || !r.json || !r.json.trip) { btn.disabled = false; btn.textContent = '이 여행 만들기'; msg('여행을 만들지 못했어요. 잠시 후 다시 시도해 주세요.'); return; }
+    foodMap.trips = foodMap.trips || [];
+    foodMap.trips.push(r.json.trip);
+    foodMap.currentTripByCity = foodMap.currentTripByCity || {};
+    foodMap.currentTripByCity[cityName] = r.json.trip.tripId;
+    A.saveFoodMap(foodMap);
+    route.clear();
+    daSyncPushSafe();
+    city = cityName;
+    updateCity();
+    showRoute();
+  };
+}
+/* 다음 여행 코스 후보 이월(지시 3-④) — 새 화면을 따로 만들지 않고
+   기존 "오늘 동선" 화면에 이월 후보 목록만 얹는다. 같은 도시의 다른
+   여행에서 아직 방문하지 못한 곳(서버가 미방문 우선으로 정렬)을
+   보여줄 뿐, 절대 자동으로 담지 않는다 — 사람이 "담기"를 눌러야 오늘
+   동선(route)에 들어간다(사용자의 명시적 선택은 항상 그대로 존중되고,
+   이 목록은 그저 참고용 제안일 뿐이라는 서버 쪽 설계와 같은 원칙). */
+let daCarryList = null;
+async function carryForwardSheet(cityName) {
+  const cur = currentTripForCity(cityName);
+  const others = tripsForCity(cityName).filter((t) => !cur || t.tripId !== cur.tripId);
+  const fromTripId = others[0] && others[0].tripId;
+  if (!fromTripId) return;
+  const token = A.sessionToken(foodMap);
+  if (!token) { showLoginSheet(() => carryForwardSheet(cityName)); return; }
+  open('이어가기', '<div class="detail"><h2>지난 여행 기록을 살펴보는 중…</h2></div>');
+  const r = await A.api('/api/trips/next-suggestions?fromTripId=' + encodeURIComponent(fromTripId), { token });
+  if (!r.ok || !r.json || !Array.isArray(r.json.suggestions) || !r.json.suggestions.length) {
+    open('이어가기', '<div class="detail"><h2>이어갈 만한 지난 기록이 없어요.</h2><p>지난 여행에서 담아 둔 곳을 이미 모두 방문했거나, 저장된 장소가 없어요.</p><button class="primary" data-dismiss>돌아가기</button></div>');
+    return;
+  }
+  daCarryList = r.json.suggestions.filter((s) => s.place).slice(0, 30);
+  open('이어가기', `<div class="detail"><h2>지난 여행에서 담아 둔 곳</h2><p>아직 안 가본 곳을 먼저 보여드려요. 다시 가고 싶은 곳도 함께 있어요.</p>` +
+    daCarryList.map((s) => `<div class="route-row"><span>${s.wantRevisit ? '♥' : (s.visited ? '✓' : '·')}</span><div><b>${A.esc((s.place && s.place.name) || '')}</b><p>${s.visited ? (s.wantRevisit ? '방문함 · 다시 가고 싶어요' : '방문함') : '미방문'}</p></div><button data-carry-add="${A.esc(s.placeId)}" aria-label="${A.esc((s.place && s.place.name) || '')} 오늘 동선에 담기">＋</button></div>`).join('') +
+    `<button class="primary" data-carry-add-all>전부 담기</button><button class="text-button" data-dismiss>돌아가기</button></div>`);
+}
+function carryAdd(placeId) { route.add(placeId); }
+function carryAddAll() { (daCarryList || []).forEach((s) => route.add(s.placeId)); daCarryList = null; }
+
+/* ── 재방문 여행자 지원 — 방문 기록(지시 3-③) ────────────────────────
+   코스에 담는 것과 방문 표시는 서로 다른 버튼이다(자동 방문처리
+   금지 — 서버 쪽도 course-generation.mjs가 visits.mjs를 아예 안
+   부르는 방식으로 이걸 구조적으로 지킨다). */
+function visitFor(placeId) {
+  return (foodMap.visits || []).find((x) => x.placeId === placeId) || { placeId, visited: false, wantRevisit: false, visitedDates: [], notes: '' };
+}
+function visitBlockHTML(id) {
+  if (usingSample) return '';
+  const v = visitFor(id);
+  const datesHTML = v.visitedDates.length
+    ? `<p class="xsmall">방문한 날: ${v.visitedDates.map((d) => A.esc(d.date)).join(', ')}</p>`
+    : '<p class="xsmall">아직 방문 기록이 없어요.</p>';
+  return `<div class="inline-note">${datesHTML}` +
+    `<button class="text-button" data-visit-mark="${id}" style="padding:6px 8px 6px 0">오늘 날짜로 방문 완료 표시</button>` +
+    (v.visitedDates.length ? `<button class="text-button" data-visit-unmark="${id}" style="padding:6px 8px">마지막 방문 취소</button>` : '') +
+    `<button class="text-button" data-visit-want="${id}" style="padding:6px 8px">${v.wantRevisit ? '다시 가고 싶음 ✓ (해제)' : '다시 가고 싶어요'}</button>` +
+    `<label class="xsmall" style="display:block;margin-top:8px">메모<textarea id="visitNotes_${id}" class="xinput" style="width:100%;box-sizing:border-box;padding:8px 12px;border-radius:12px;border:1px solid #e5e6e1;font:inherit;margin-top:4px" rows="2">${A.esc(v.notes || '')}</textarea></label>` +
+    `<button class="text-button" data-visit-notes="${id}" style="padding:6px 0">메모 저장</button></div>`;
+}
+async function visitAction(placeId, action, extra) {
+  const token = A.sessionToken(foodMap);
+  if (!token) { showLoginSheet(() => visitAction(placeId, action, extra)); return; }
+  let body = {};
+  if (action === 'mark') { const t = currentTripForCity(city); body = { tripId: t ? t.tripId : undefined }; }
+  else if (action === 'want-revisit') body = { wantRevisit: !visitFor(placeId).wantRevisit };
+  else if (action === 'notes') body = { notes: extra };
+  const r = await A.api('/api/visits/' + encodeURIComponent(placeId) + '/' + action, { method: 'POST', token, body });
+  if (r.ok && r.json && r.json.visit) {
+    foodMap.visits = foodMap.visits || [];
+    const idx = foodMap.visits.findIndex((x) => x.placeId === placeId);
+    if (idx >= 0) foodMap.visits[idx] = r.json.visit; else foodMap.visits.push(r.json.visit);
+    A.saveFoodMap(foodMap);
+  }
+  daSyncPushSafe();
+  // 방문 상태 필터·목록 정렬은 뒤에 있는 화면(#grid)이 근거로 삼는다 —
+  // 시트를 닫기 전까진 그 화면이 안 보이지만, 지금 다시 그려 둬야
+  // 닫는 순간 방문 상태 필터가 바로 나타나거나 갱신된다(2026-09-10
+  // 재검토 6차 3-③ — finishCatAssign 등 기존 패턴과 동일하게 처리).
+  updateCity();
+  detail(placeId);
+}
+function visitStatusFor(id) {
+  const v = visitFor(id);
+  if (v.wantRevisit) return '다시가고싶음';
+  return v.visited ? '방문함' : '미방문';
+}
+
 /* 실제 코스 생성(로드맵 ⑥). "오늘 동선"에 담아 둔 곳이 있으면 실제로
    방문 순서·이동시간을 만들 수 있게 하고, 이미 만들어 둔 코스가 있으면
    그걸 보여준다(새로고침해도 foodMap.course에 저장돼 있어 유지된다). */
@@ -363,7 +588,10 @@ function showRoute() {
      오가도 그 도시의 저장된 코스를 정확히 다시 보여줄 수 있다. */
   const cityCourses = daCoursesForCity(city);
   if (cityCourses.length) {
-    if (!foodMap.course || foodMap.course.city !== city) foodMap.course = cityCourses[cityCourses.length - 1];
+    const curTrip = usingSample ? null : currentTripForCity(city);
+    if (!foodMap.course || foodMap.course.city !== city || (curTrip && foodMap.course.tripId && foodMap.course.tripId !== curTrip.tripId)) {
+      foodMap.course = cityCourses[cityCourses.length - 1];
+    }
     showSavedCourse();
     return;
   }
@@ -374,7 +602,12 @@ function showRoute() {
   // 번에 확인할 수 있게 한다(실제 코스 후보로 좁혀진 상태에서만
   // 묶어서 조회 — 가져오기 직후 전체를 조회하는 게 아니다).
   const needLookupList = list.filter((p) => p.needsLookup);
-  open(city + ' · 오늘 동선', `<div class="detail"><h2>오늘은 이곳으로.</h2><p>${list.length ? '담아 둔 ' + list.length + '곳을 확인하세요.' : '마음에 드는 장소를 먼저 골라보세요.'}</p>${list.map((p, i) => `<div class="route-row"><span>${i + 1}</span>${photoHTML(p, '')}<div><b>${A.esc(p.name)}</b><p>${A.esc(p.area)}</p></div><button data-remove="${p.id}" aria-label="${A.esc(p.name)} 동선에서 빼기">×</button></div>`).join('')}${needLookupList.length ? `<button class="text-button" data-batch-lookup>위치 미확인 ${needLookupList.length}곳 한번에 확인하기 ↗</button>` : ''}${list.length ? '<button class="primary" data-build-course>코스 만들기 ↗</button>' : ''}<button class="text-button" data-dismiss>스팟 더 고르기</button></div>`);
+  // 2026-09-10 재검토(6차) 3-①②④ — 여행 목록/전환, 새 여행 만들기,
+  // 다음 여행 이월 후보를 전부 이 "오늘 동선" 화면 하나에 얹는다(첫
+  // 화면 설정을 늘리지 않는다는 지시대로 새 화면을 만들지 않는다).
+  const trips = usingSample ? [] : tripsForCity(city);
+  const carryBlock = (!usingSample && !list.length && trips.length > 1) ? '<button class="text-button" data-carry-forward>지난 여행에서 담아 둔 곳 이어가기 ↗</button>' : '';
+  open(city + ' · 오늘 동선', `<div class="detail"><h2>오늘은 이곳으로.</h2>${tripBlockHTML(city)}<p>${list.length ? '담아 둔 ' + list.length + '곳을 확인하세요.' : '마음에 드는 장소를 먼저 골라보세요.'}</p>${carryBlock}${list.map((p, i) => `<div class="route-row"><span>${i + 1}</span>${photoHTML(p, '')}<div><b>${A.esc(p.name)}</b><p>${A.esc(p.area)}</p></div><button data-remove="${p.id}" aria-label="${A.esc(p.name)} 동선에서 빼기">×</button></div>`).join('')}${needLookupList.length ? `<button class="text-button" data-batch-lookup>위치 미확인 ${needLookupList.length}곳 한번에 확인하기 ↗</button>` : ''}${list.length ? '<button class="primary" data-build-course>코스 만들기 ↗</button>' : ''}<button class="text-button" data-dismiss>스팟 더 고르기</button></div>`);
 }
 
 /* 일괄 위치 확인 — /api/places/lookup-batch를 실제로 화면에 연결한다
@@ -397,6 +630,7 @@ async function daBatchLookupFlow() {
     const reason = r.json && r.json.reason;
     let msg = '지금 위치를 한번에 확인하지 못했어요. 잠시 후 다시 시도해 주세요.';
     if (reason === 'account-daily-limit-reached') msg = '오늘 위치 확인을 너무 많이 시도했어요. 내일 다시 시도해 주세요.';
+    else if (reason === 'entitlement-place-lookup-limit-reached') msg = '이번 이용권에 포함된 위치 확인 횟수를 모두 사용했어요. 계정 화면에서 남은 횟수를 확인할 수 있어요.';
     else if (reason === 'cost-budget-exceeded' || reason === 'service-daily-cap-reached') msg = '지금은 위치 확인 서비스 이용 한도에 도달해 잠시 이용할 수 없어요. 나중에 다시 시도해 주세요.';
     open('위치 확인', `<div class="detail"><h2>지금은 확인할 수 없어요</h2><p>${msg}</p><button class="primary" data-dismiss>돌아가기</button></div>`);
     return;
@@ -453,17 +687,28 @@ function daShowBatchQueueStep() {
    구현할 필요가 없다. */
 function daUpsertCourse(entry) {
   foodMap.courses = foodMap.courses || [];
-  const idx = foodMap.courses.findIndex((c) => c.city === entry.city && c.date === entry.date);
+  const idx = foodMap.courses.findIndex((c) => c.city === entry.city && c.date === entry.date && c.tripId === entry.tripId);
   if (idx >= 0) foodMap.courses[idx] = entry; else foodMap.courses.push(entry);
   foodMap.course = entry;
 }
 /* 예전 데이터(foodMap.courses가 아직 없던 시절 저장분)와도 호환되도록,
    courses 배열이 비어 있어도 foodMap.course가 이 도시 것이면 최소
    1개짜리 목록으로 봐준다 — 별도 마이그레이션 스크립트 없이도 기존
-   저장 데이터가 갑자기 "날짜가 하나도 없는" 것처럼 보이지 않는다. */
+   저장 데이터가 갑자기 "날짜가 하나도 없는" 것처럼 보이지 않는다.
+   2026-09-10 재검토(6차) 3-① — 이 도시에 여행이 실제로 2개 이상일
+   때만 "지금 보고 있는 여행" 기준으로 좁힌다(여행이 하나뿐이면 예전과
+   완전히 같은 동작 — tripId가 애초에 전부 같거나 없어서 필터링 효과가
+   없다). */
 function daCoursesForCity(cityName) {
   let list = (foodMap.courses || []).filter((c) => c.city === cityName);
-  if (!list.length && foodMap.course && foodMap.course.city === cityName && Array.isArray(foodMap.course.stops) && foodMap.course.stops.length) {
+  const trips = tripsForCity(cityName);
+  const cur = trips.length > 1 ? currentTripForCity(cityName) : null;
+  if (cur) list = list.filter((c) => c.tripId === cur.tripId);
+  // 여행이 하나뿐일 때만 예전 저장분(foodMap.course, tripId 개념이 아직
+  // 없던 시절) 호환용 대체 목록을 쓴다 — 여행이 실제로 2개 이상이면
+  // "지금 여행" 필터링 결과가 곧 정답이라, 다른 여행의 마지막 코스
+  // 포인터(foodMap.course)가 여기 몰래 되살아나면 안 된다(3-① 핵심).
+  if (!cur && !list.length && foodMap.course && foodMap.course.city === cityName && Array.isArray(foodMap.course.stops) && foodMap.course.stops.length) {
     list = [foodMap.course];
   }
   return list.slice().sort((a, b) => ((a.date || '') < (b.date || '') ? -1 : (a.date || '') > (b.date || '') ? 1 : 0));
@@ -560,10 +805,16 @@ function showLoginCodeSheet(email, onSuccess) {
  * handleWebhook/confirmPayment 코드를 그대로 탄다(클라이언트가 "결제
  * 했다"고 스스로 선언하지 않는다는 원칙은 두 경로 모두 지킨다). */
 function showPaywallSheet(price, opts) {
-  const p = price || { amountKrw: 9900, periodDays: 30, autoRenew: false };
+  const p = price || { amountKrw: 9900, periodDays: 30, autoRenew: false, includedPlaceLookups: 50, includedCourseGenerations: 30 };
+  // 2026-09-10 재검토(6차) — "구매 화면에 가격·기간·자동갱신 여부·포함
+  // 사용량을 간단히 표시하라"는 지시. API/SKU 같은 개발 용어 없이,
+  // 사람이 바로 이해할 수 있는 말로만 적는다.
+  const usageNote = (p.includedPlaceLookups && p.includedCourseGenerations)
+    ? `<br>포함 사용량: 새로운 장소 위치 확인 최대 ${p.includedPlaceLookups}곳, 코스 생성·재계산 최대 ${p.includedCourseGenerations}회`
+    : '';
   open('이용권', `<div class="detail"><h2>더 만들려면 이용권이 필요해요</h2>` +
     `<p>무료 체험(코스 1회)은 이미 쓰셨어요. 계속 이용하시려면 아래 이용권을 확인해 주세요.</p>` +
-    `<div class="inline-note"><b>${p.amountKrw.toLocaleString()}원</b> / ${p.periodDays}일<br>자동결제: ${p.autoRenew ? '켜짐(직접 해지 전까지 자동으로 갱신)' : '꺼짐(자동으로 다시 결제되지 않음)'}</div>` +
+    `<div class="inline-note"><b>${p.amountKrw.toLocaleString()}원</b> / ${p.periodDays}일<br>자동결제: ${p.autoRenew ? '켜짐(직접 해지 전까지 자동으로 갱신)' : '꺼짐(자동으로 다시 결제되지 않음)'}${usageNote}</div>` +
     `<div id="tossPaymentMethods"></div>` +
     `<button class="primary" id="payBtn" style="margin-top:10px">결제하기</button>` +
     `<button class="text-button" data-dismiss>다음에 할게요</button></div>`);
@@ -740,6 +991,10 @@ async function runRealCourseGeneration(origin, startPlaceId, list, city2, date, 
   const token = A.sessionToken(foodMap);
   if (!token) { showLoginSheet(() => daGateThenBuildCourseSheet(opts)); return; }
   open('코스 만드는 중', '<div class="detail"><h2>실제 이동시간을 계산하고 있어요…</h2><p>도보 경로를 먼저 확인합니다. 네트워크 상태에 따라 몇 초 걸릴 수 있어요.</p></div>');
+  // 2026-09-10 재검토(6차) 3-④ — "생성 요청은 현재 tripId를 실어 보내고
+  // 그 결과를 그 여행 아래 저장해야 한다." 이 도시에 여행이 아직
+  // 없으면(완전히 새로운 도시) 조용히 하나 만들어 둔다(ensureTripForCity).
+  const trip = await ensureTripForCity(city2);
   const placesPayload = list.map((p) => ({ id: p.id, name: p.name, lat: A.hasCoords(p) ? p.lat : undefined, lng: A.hasCoords(p) ? p.lng : undefined }));
   // 한 번의 사용자 시도당 하나의 idempotencyKey — 네트워크 재시도로
   // 서버에 똑같은 요청이 두 번 들어와도(예: 응답 유실 뒤 사용자가 다시
@@ -747,7 +1002,7 @@ async function runRealCourseGeneration(origin, startPlaceId, list, city2, date, 
   const idempotencyKey = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : ('gen-' + Date.now() + '-' + Math.random().toString(36).slice(2));
   const r = await A.api('/api/course/generate', {
     method: 'POST', token,
-    body: { idempotencyKey, city: city2, date, origin, startMinutes, budgetMinutes, places: placesPayload },
+    body: { idempotencyKey, city: city2, date, origin, startMinutes, budgetMinutes, places: placesPayload, tripId: trip ? trip.tripId : undefined },
   });
   if (r.status === 402) {
     daTrackSafe('paywall_viewed', { trigger: (opts && opts.isNewDay) ? 'new_day' : 'second_course' });
@@ -758,10 +1013,18 @@ async function runRealCourseGeneration(origin, startPlaceId, list, city2, date, 
     open('잠시 후 다시 시도해 주세요', '<div class="detail"><h2>요청이 너무 잦아요.</h2><p>잠시 뒤에 다시 시도해 주세요.</p><button class="primary" data-dismiss>돌아가기</button></div>');
     return;
   }
+  if (r.status === 403 && r.json && r.json.reason === 'entitlement-course-limit-reached') {
+    // 2026-09-10 재검토(6차) — 이번 이용권에 포함된 코스 생성 횟수를
+    // 다 쓴 상태. 추가 결제 상품이 없으므로 "더 사라"고 유도하지 않고,
+    // 사실만 정직하게 안내한다(개발 용어 없이).
+    open('이번 이용권 한도', '<div class="detail"><h2>이번 이용권에 포함된 코스 생성 횟수를 모두 사용했어요.</h2><p>계정 화면에서 남은 횟수와 이용권 기간을 확인할 수 있어요.</p><button class="primary" data-dismiss>돌아가기</button></div>');
+    return;
+  }
   if (!r.ok || !r.json || !r.json.course) {
     open('코스를 만들 수 없어요', `<div class="detail"><h2>${r.json && r.json.reason === 'no-coords' ? '좌표가 있는 곳이 없어요.' : '코스를 만들지 못했어요.'}</h2><p>${r.json && r.json.reason === 'no-coords' ? '담아 둔 곳 모두 좌표가 없어 이동시간을 계산할 수 없습니다. 장소 상세에서 위치를 먼저 확인해 주세요.' : '잠시 후 다시 시도해 주세요.'}</p><button class="primary" data-dismiss>돌아가기</button></div>`);
     return;
   }
+  r.json.course.tripId = trip ? trip.tripId : undefined;
   daUpsertCourse(r.json.course);
   const saved = A.saveFoodMap(foodMap);
   if (!saved) {
@@ -831,17 +1094,33 @@ function showSavedCourse() {
   const timeList = excluded.filter((p) => reasons[p.id] === 'time-budget');
   const totalKm = (c.totalMeters / 1000).toFixed(1);
   const hours = Math.floor(c.walkTotal / 60), mins = c.walkTotal % 60;
-  open('오늘의 코스', `<div class="detail">${dayTabsHTML(c)}<h2>${c.stops.length}곳 · 도보 이동 ${hours ? hours + '시간 ' : ''}${mins}분</h2>` +
+  open('오늘의 코스', `<div class="detail">${dayTabsHTML(c)}${tripBlockHTML(city)}<h2>${c.stops.length}곳 · 도보 이동 ${hours ? hours + '시간 ' : ''}${mins}분</h2>` +
     `<p>${c.routedReal ? '실제 도보 경로 기준으로 계산했습니다.' : '실제 경로 연결에 실패해 직선거리 기준으로 추정했습니다(실제와 다를 수 있어요).'} 총 이동 거리 약 ${totalKm}km · 마지막 장소 도착 예정 ${window.CourseGen.clockLabel(c.endAt - (c.stops[c.stops.length - 1] ? c.stops[c.stops.length - 1].dwell : 0))}</p>` +
     stopViews +
     (noCoordsList.length ? `<div class="inline-note">좌표가 없어 이번 코스 계산에서 빠진 곳 ${noCoordsList.length}곳: ${noCoordsList.map((p) => A.esc(p.name)).join(', ')}. 위치를 확인하면 다음 코스에 포함할 수 있어요.</div>` : '') +
     (timeList.length ? `<div class="inline-note">가용 시간 안에 다 들르지 못해 빠진 곳 ${timeList.length}곳: ${timeList.map((p) => A.esc(p.name)).join(', ')}. 쓸 수 있는 시간을 늘리거나 곳 수를 줄이면 포함할 수 있어요.</div>` : '') +
     `<button class="text-button" data-course-new>새로 만들기</button><button class="primary" data-dismiss>확인</button></div>`);
 }
-function profile() {
+/* 2026-09-10 재검토(6차) — "계정 화면에서 잔여 횟수를 확인할 수 있게
+   하라"는 지시. API/SKU 같은 개발 용어 없이, 이번 이용권(무료체험 또는
+   유료)에 남은 위치 확인·코스 생성 횟수만 사람 말로 보여준다. */
+async function profile() {
   const realCount = foodMap.places ? foodMap.places.length : 0;
   const loggedInEmail = foodMap.session && foodMap.session.email;
-  open('내 프로필', `<div class="profile"><div class="avatar">Y</div><h2>나의 여행 기록</h2><p>가고 싶은 곳을 하나씩 모으는 중</p><div class="stats"><div><b>${realCount}</b><span>저장한 스팟</span></div><div><b>${cities.length}</b><span>도시</span></div><div><b>${route.size}</b><span>오늘 갈 곳</span></div></div><p>${A.esc(city)} · ${usingSample ? '샘플 컬렉션' : '내 데이터'}</p>${loggedInEmail ? `<p class="inline-note">${A.esc(loggedInEmail)}로 로그인됨</p>` : ''}<button class="primary" data-dismiss>내 스팟으로 돌아가기</button>${usingSample ? '<p>샘플 프로필입니다.</p>' : ''}${loggedInEmail ? '<button class="text-button" data-logout>로그아웃</button>' : ''}</div>`);
+  const token = A.sessionToken(foodMap);
+  let usageHTML = '';
+  if (token) {
+    const r = await A.api('/api/account/usage', { token });
+    if (r.ok && r.json) {
+      const u = r.json;
+      const kindLabel = u.kind === 'paid' ? '유료 이용권' : '무료 체험';
+      const expiresNote = u.expiresAt ? ` · ${new Date(u.expiresAt).toLocaleDateString('ko-KR')}까지` : '';
+      usageHTML = `<div class="inline-note"><b>${A.esc(kindLabel)}${expiresNote}</b><br>` +
+        `남은 위치 확인: ${u.placeLookups.remaining}곳(전체 ${u.placeLookups.limit}곳 중)<br>` +
+        `남은 코스 생성: ${u.courseGenerations.remaining}회(전체 ${u.courseGenerations.limit}회 중)</div>`;
+    }
+  }
+  open('내 프로필', `<div class="profile"><div class="avatar">Y</div><h2>나의 여행 기록</h2><p>가고 싶은 곳을 하나씩 모으는 중</p><div class="stats"><div><b>${realCount}</b><span>저장한 스팟</span></div><div><b>${cities.length}</b><span>도시</span></div><div><b>${route.size}</b><span>오늘 갈 곳</span></div></div><p>${A.esc(city)} · ${usingSample ? '샘플 컬렉션' : '내 데이터'}</p>${loggedInEmail ? `<p class="inline-note">${A.esc(loggedInEmail)}로 로그인됨</p>` : ''}${usageHTML}<button class="primary" data-dismiss>내 스팟으로 돌아가기</button>${usingSample ? '<p>샘플 프로필입니다.</p>' : ''}${loggedInEmail ? '<button class="text-button" data-logout>로그아웃</button>' : ''}</div>`);
 }
 function updateCity() {
   $('#cityName').textContent = city;
@@ -849,6 +1128,20 @@ function updateCity() {
   $('#albumCity').textContent = c ? (c.label || c.name).toUpperCase() : '';
   $('.filters').innerHTML = ['전체', ...new Set(spots.filter((p) => p.city === city).map((p) => p.category))]
     .map((c2) => `<button data-filter="${A.esc(c2)}" class="${c2 === filter ? 'active' : ''}" aria-pressed="${c2 === filter}">${A.esc(c2)}</button>`).join('');
+  // 2026-09-10 재검토(6차) 3-③ — 방문 상태 필터. 방문·다시가고싶음
+  // 기록이 하나도 없으면 아예 안 보여준다(첫 화면에 안 쓰는 설정을
+  // 미리 늘어놓지 않는다 — 실제로 기록이 생겼을 때만 나타난다).
+  const vf = $('#visitFilters');
+  if (vf) {
+    const hasVisitData = !usingSample && (foodMap.visits || []).some((v) => v.visited || v.wantRevisit);
+    vf.hidden = !hasVisitData;
+    if (hasVisitData) {
+      vf.innerHTML = ['전체', '미방문', '방문함', '다시가고싶음']
+        .map((f) => `<button data-vfilter="${A.esc(f)}" class="${f === visitFilter ? 'active' : ''}" aria-pressed="${f === visitFilter}">${A.esc(f)}</button>`).join('');
+    } else {
+      visitFilter = '전체';
+    }
+  }
   render();
 }
 function chooseCity(name) { city = name; filter = '전체'; selecting = false; $('#search').value = ''; updateCity(); sheet.close(); }
@@ -1007,6 +1300,14 @@ function nearby() {
 $('#search').addEventListener('input', render);
 $('#clear').onclick = () => { $('#search').value = ''; render(); $('#search').focus(); };
 $('.filters').onclick = (e) => { const b = e.target.closest('[data-filter]'); if (!b) return; filter = b.dataset.filter; document.querySelectorAll('[data-filter]').forEach((x) => { x.classList.toggle('active', x === b); x.setAttribute('aria-pressed', x === b); }); render(); };
+if ($('#visitFilters')) {
+  $('#visitFilters').onclick = (e) => {
+    const b = e.target.closest('[data-vfilter]'); if (!b) return;
+    visitFilter = b.dataset.vfilter;
+    $('#visitFilters').querySelectorAll('[data-vfilter]').forEach((x) => { x.classList.toggle('active', x === b); x.setAttribute('aria-pressed', x === b); });
+    render();
+  };
+}
 $('#grid').onclick = (e) => { const pick = e.target.closest('[data-pick]'); if (pick) return toggle(pick.dataset.pick); const b = e.target.closest('[data-detail]'); if (b) selecting ? toggle(b.dataset.detail) : detail(b.dataset.detail); };
 $('#selectMode').onclick = () => { selecting = !selecting; render(); };
 $('#close').onclick = () => sheet.close();
@@ -1064,6 +1365,23 @@ $('#sheetContent').onclick = (e) => {
      다음날로 기본값을 잡아 준다(여행 계획이 보통 이어지는 방향이라). */
   if (b.hasAttribute('data-day-new')) return daGateThenBuildCourseSheet({ date: daNextDay(city), isNewDay: true });
   if (b.hasAttribute('data-logout')) return daLogout();
+  /* 2026-09-10 재검토(6차) 3절 — 여행 목록/전환·새 여행·이월 후보·
+     방문 기록 버튼. 전부 이 중앙 위임 핸들러에 얹는다(파일 전체가
+     이미 이 패턴을 쓴다 — 여기서만 새 컴포넌트를 안 만든다). */
+  if (b.hasAttribute('data-trip-switch')) return tripPickerSheet(city);
+  if (b.hasAttribute('data-trip-new')) return newTripFormSheet(city);
+  if (b.dataset.tripChoose) return chooseTrip(city, b.dataset.tripChoose);
+  if (b.hasAttribute('data-carry-forward')) return carryForwardSheet(city);
+  if (b.dataset.carryAdd) { carryAdd(b.dataset.carryAdd); showRoute(); return; }
+  if (b.hasAttribute('data-carry-add-all')) { carryAddAll(); showRoute(); return; }
+  if (b.dataset.visitMark) return visitAction(b.dataset.visitMark, 'mark');
+  if (b.dataset.visitUnmark) return visitAction(b.dataset.visitUnmark, 'unmark');
+  if (b.dataset.visitWant) return visitAction(b.dataset.visitWant, 'want-revisit');
+  if (b.dataset.visitNotes) {
+    const notesId = b.dataset.visitNotes;
+    const el = document.getElementById('visitNotes_' + notesId);
+    return visitAction(notesId, 'notes', el ? el.value : '');
+  }
 };
 function resolveDup(aId, bId, action) {
   const result = A.resolveDup(foodMap.places, aId, bId, action);

@@ -6,23 +6,24 @@
 API 비용 통제 실제 구현, 경유지 상한 반영) · 갱신: 2026-09-10(5차 —
 비용 SKU 단가 정확화, 비용 예약 원자성 강화, 장소조회 캐시·동시성
 버그 수정, 결제·타임아웃 경계 6건, **재방문 여행자 지원 신규**,
-재방문 기록 보호 동기화) · 브랜치 `design-integration`
+재방문 기록 보호 동기화) · 갱신: 2026-09-10(6차 — **초기 테스트
+상품(무료체험 10+1/유료 50+30) 이용권 사용량 실제 집행**, 내부 비용
+안전상한, 신규판매 예산 판정에 기존 유료고객 몫 반영, **재방문
+여행자 지원을 실제 화면까지 연결**, 기존 전체치환 동기화 경로
+검증) · 브랜치 `design-integration`
 
-**5차 갱신 배경**: ChatGPT가 4차 결과물을 다시 코드로 재현·검토하고
-새 테스트 3건을 직접 돌려 전부 통과를 확인한 뒤, 이번엔 (1) 비용
-SKU 단가가 실제 호출 필드 기준(Text Search **Pro** 등급)이 아니라
-기억에 의존한 최저 등급으로 잘못 추정돼 있었고, (2) `chargeCost`가
-세그먼트별로 따로 불려 "실제 호출 0번인데 비용 1건이 남는" 부분기록
-버그가 있었고, (3) 장소 조회 캐시가 지역 힌트를 안 담아 도시가 다른
-동명 질의가 서로 결과를 오염시켰고 동시 요청이 중복 호출을 냈으며,
-(4) 결제·타임아웃 경계에 6가지 남은 틈(승인 응답 필드 누락 우회,
-여러 pending 주문으로 중복구매 차단 우회, 부분취소 판정 기준, 결제
-가능 판정 범위, 응답 본문 읽기 단계 타임아웃 미보호, 라우트 실패
-응답 상태 덮어쓰기)이 있다고 지적했다 — 전부 이번 세션에서 실제
-코드로 재현·수정했다(3절 표). 여기에 더해, 같은 도시·나라를
-반복 방문하는 여행자를 위한 **재방문 여행자 지원**(장소 보관함/여행
-분리, 방문 기록, 다음 여행 코스 후보 제안, 동기화 충돌 보호)을 신규
-범위로 구현했다.
+**6차 갱신 배경**: 5차에서 "서버 API·DB·마이그레이션은 끝났지만
+화면 연결이 안 됐다"고 ⑤로 명시했던 재방문 여행자 지원을 이번
+세션에서 `src/design/spots.js`에 실제로 연결했다(7절 5항목 전부).
+동시에 초기 테스트 상품의 실제 사용량 집계(무료체험 위치확인
+10곳+코스 1회, 유료 위치확인 50곳+코스 30회, 30일 이용권 기준)를
+서버에 새로 구현하고 구매·계정 화면에 그대로 노출했다. 기존
+`/api/places`·`/api/courses` 전체치환 동기화가 새 여행/방문 데이터를
+덮어쓰지 않는지 6가지 지정 시나리오를 실제 화면(Chromium)에서
+검증했고, 그 과정에서 **`/api/places` 자체는 여전히 버전 보호가 없어
+두 기기가 겹치면 최신 수정이 덮어써질 수 있다는 기존 구조의 한계를
+새로 발견**했다(4절, 아래 5-⑨ 표 항목 참고 — 조용히 숨기지 않고
+그대로 보고한다).
 
 - **①코드 완료** — 동작에 필요한 코드가 전부 작성됐고, 외부 서비스가
   없거나 실제 HTTP 요청으로 검증까지 끝난 기능.
@@ -106,22 +107,34 @@ SKU 단가가 실제 호출 필드 기준(Text Search **Pro** 등급)이 아니�
 | **결제 — 이미 승인된 결제의 복구는 신규판매 차단과 분리** | **①** | 〃(e) — 같은 주문의 재확인(복구)은 차단 로직에 안 걸림을 확인 |
 | **결제 — `createOrderRoute`가 실패 응답을 200으로 덮어쓰던 버그 수정** | **①** | `server/routes/payment.mjs`(f) |
 | **타임아웃 — 응답 본문 읽기 단계까지 보호(헤더만 받고 끝나던 버그 수정)** | **①** | `server/net.mjs`의 `fetchWithTimeout`, `server/test/reliability-and-cost.test.mjs` §8(g) — 헤더 수신 후 본문 스트림이 영원히 멈추는 응답도 결국 타임아웃으로 정리됨을 재현 확인 |
-| **재방문 여행자 — 여행 분리(trips)·같은 도시 재방문 여행도 각각 저장** | **①**(서버) **⑤**(화면 미연결) | `server/routes/trips.mjs`, `server/db.mjs`(schema), `server/test/trips-and-visits.test.mjs` — 새 여행·도시 전환이 기존 기록을 절대 안 지움을 확인, 기존 city+date/단일 일정 데이터도 서버 재시작 시 손실 없이 마이그레이션(파일 DB 기반 재현 테스트로 확인) |
-| **재방문 여행자 — 방문 기록(미방문/방문함/다시가고싶음, 반복 방문 날짜·메모)** | **①**(서버) **⑤**(화면 미연결) | `server/routes/visits.mjs`, `server/test/trips-and-visits.test.mjs` — 코스에 담기만 해선 자동 방문처리 안 됨, 방문완료/취소(되돌리기) 둘 다 가능, 방문함+다시가고싶음 동시 설정 가능함을 확인 |
-| **재방문 여행자 — 다음 여행 코스 후보 제안(미방문 우선·다시가고싶음 포함·과거 미방문 이월)** | **①**(서버) **⑤**(화면 미연결) | `server/routes/next-trip-suggestions.mjs`, `server/test/next-trip-suggestions.test.mjs` — "미방문 우선"은 배제가 아니라 정렬, 사용자가 명시적으로 고른 곳은 방문 상태와 무관하게 항상 포함됨(코스 생성 자체가 방문 상태를 아예 안 봄)을 확인 |
+| **초기 테스트 상품 — 무료체험 위치확인 최대 10곳+코스 1회, 유료 이용권 위치확인 최대 50곳+코스 30회(30일)** | **①**(6차 신규) | `server/entitlement-usage.mjs`, `server/config.mjs`의 `entitlementUsage` — 성공한 결과에만 차감(실패·추정 결과는 미차감), 이미 위치가 확인된 장소를 재조회해도 새 장소 한도를 안 깎음(영구 dedupe), `server/test/entitlement-usage.test.mjs`(14개)·`server/test/entitlement-course-limit.test.mjs`(6개)에서 확인. **이 숫자는 출시 전 검증된 시장가격이 아니라 초기 테스트 상품 스펙**(`docs/BUSINESS_DECISIONS.md` 참고) |
+| **초기 테스트 상품 — 30일 유료 이용권은 주문(order_id) 단위로 집계, 달력월 경계와 무관** | **①**(6차 신규) | `server/entitlement-usage.mjs`의 `currentPeriod` — 사용량이 `accounts.active_order_id`에 고정된 버킷에 쌓여 달력월이 바뀌어도 초기화 안 됨, `server/test/entitlement-period-month-boundary.test.mjs`(8개)에서 1월→2월 경계를 직접 재현해 확인 |
+| **내부 비용 안전상한 — 무료체험 계정 700원/유료 이용권 3,500원(고객 잔액 표시 아님)** | **①**(6차 신규) | `server/config.mjs`의 `costSafetyCap`, `server/cost-ledger.mjs`의 `chargeCostBatch` — 실제 원가가 이 상한을 넘으려는 순간 그 이상의 실제 유료 호출 자체를 막음, `server/test/cost-safety-cap.test.mjs`(3개)에서 확인. 현재 단가 기준 계산상 무료체험 최악 사용량은 약 455원, 유료 최악은 약 2,450원으로 상한 안에 들어오지만(`docs/BUSINESS_DECISIONS.md` 참고), 실제 공급자 단가가 바뀌면 이 여유가 줄어들 수 있어 계속 지켜봐야 함 |
+| **신규 판매 가능 여부 — 전체 예산에서 기존 유료 고객에게 약속된 잔여 몫까지 먼저 뺀 뒤 판단** | **①**(6차 신규) | `server/adapters/payment-toss.mjs`의 `totalCommittedRemainingMicros`/`isServiceUnavailableForNewSales` — 활성 유료 고객이 늘어 약속된 몫 합계가 예산을 압박하면 새 결제를 거부(이미 쓴 것은 계산에 안 들어감, 이용권 만료는 계산에서 빠짐), `server/test/new-sale-committed-budget.test.mjs`(3개)에서 확인 |
+| **구매 화면 — 가격·기간·자동갱신 여부·포함 사용량 표시** | **①**(6차 신규) | `src/design/spots.js`의 `showPaywallSheet`, `server/routes/entitlement.mjs`의 `priceWithIncludedUsage` — 서버 설정값을 그대로 실어 보내 화면에 하드코딩된 숫자가 없음, `scripts/test-purchase-flow.mjs`에서 실제 화면 텍스트로 확인 |
+| **계정(프로필) 화면 — 남은 위치확인·코스생성 횟수 표시(API/SKU 등 개발 용어 없이)** | **①**(6차 신규) | `src/design/spots.js`의 `profile()`, `GET /api/account/usage` — "남은 위치 확인: N곳(전체 M곳 중)" 형태로 사람 말로 표시, `scripts/test-purchase-flow.mjs`에서 실제 서버 사용량과 화면 텍스트가 일치함을 확인 |
+| **재방문 여행자 — 여행 목록·전환 화면(같은 도시 다른 여행도 카드로 구분)** | **①**(6차 — 화면 연결 완료) | `src/design/spots.js`의 `tripPickerSheet`/`chooseTrip`/`tripBlockHTML`, `scripts/test-revisit-flow.mjs` — 같은 도시에 여행이 2개 이상이면 "오늘 동선"·"오늘의 코스" 화면에 지금 여행 이름이 표시되고 "바꾸기"로 카드 목록에서 고를 수 있음을 실제 화면에서 확인. 여행이 하나뿐이면(마이그레이션된 기존 계정 포함) 예전과 완전히 같은 화면 |
+| **재방문 여행자 — 새 여행 만들기(이름·날짜·숙소, 과거 여행 보존)** | **①**(6차) | `src/design/spots.js`의 `newTripFormSheet`, `scripts/test-revisit-flow.mjs` — 같은 도시로 새 여행을 만들어도 여행이 2개로 늘어나고 과거 여행의 코스가 그대로 남아 있음을 확인, `scripts/test-sync-protection-screens.mjs` (f) — 서버 오류로 만들기가 실패하면 성공한 것처럼 안 넘어가고 화면에 남아 재시도로 성공함을 확인 |
+| **재방문 여행자 — 방문 표시 버튼(방문완료·취소·다시가고싶음)·방문 상태 필터·반복 방문일/메모** | **①**(6차) | `src/design/spots.js`의 `visitBlockHTML`/`visitAction`, `#visitFilters`(전체/미방문/방문함/다시가고싶음) — 장소 상세에서 코스에 담는 것과 완전히 분리된 버튼으로 확인, 방문 기록이 하나라도 생기면 목록 화면에 방문 상태 필터가 나타나 실제로 좁혀짐을 `scripts/test-revisit-flow.mjs`에서 확인 |
+| **재방문 여행자 — 다음 여행 코스 후보 제안 화면 연결(이월, 새 화면 안 만듦)** | **①**(6차) | `src/design/spots.js`의 `carryForwardSheet`(기존 "오늘 동선" 화면에 얹음) — 같은 도시에 다른 여행이 있고 동선이 비어 있을 때만 "지난 여행에서 담아 둔 곳 이어가기" 진입점이 뜨고, 미방문 우선으로 정렬된 후보를 실제로 오늘 동선에 담을 수 있음을 확인. 사용자가 이미 고른 곳은 이 목록과 무관하게 항상 코스에 반영됨(서버가 애초에 필터링 안 함) |
+| **재방문 여행자 — 코스 생성이 현재 tripId를 실어 그 여행 아래 저장** | **①**(6차) | `src/design/spots.js`의 `ensureTripForCity`/`runRealCourseGeneration` — 여행이 없는 새 도시는 조용히 하나 자동 생성(진입장벽 없음), 두 여행에서 각각 만든 코스가 서버에서 완전히 분리 저장되고 서로 안 섞임을 `GET /api/trips/:tripId/courses`로 직접 확인 |
 | **재방문 여행자 — 무료/유료 경계(기록 읽기·쓰기는 항상 무료)** | **①** | `server/test/trips-and-visits.test.mjs` §4 — 여행 여러 개 생성·도시 전환·방문 기록 읽기/쓰기를 반복해도 무료체험이 전혀 안 깎이고, 유료 이용권이 없어도 방문 기록 API가 그대로 동작함을 확인 |
-| **재방문 기록 보호 동기화 — 버전 확인 후 충돌 시 재병합(조용한 전체 덮어쓰기 방지)** | **①**(서버) **⑤**(화면 미연결) | `server/routes/trips.mjs`의 `syncTrips`, `server/routes/visits.mjs`의 `syncVisits`, `server/test/trips-visits-sync.test.mjs` — 지정된 5개 시나리오(기기A 추가 후 오래된 기기B 저장/서로 다른 여행 추가/같은 장소 다른 날짜/삭제 후 오래된 기기 재연결/계정 전환 시 데이터 격리) 전부 재현·확인 |
+| **재방문 기록 보호 동기화 — 버전 확인 후 충돌 시 재병합(조용한 전체 덮어쓰기 방지) + 로그인/저장/로그아웃 실제 연결** | **①**(6차 — 화면 연결 완료) | `server/routes/trips.mjs`의 `syncTrips`, `server/routes/visits.mjs`의 `syncVisits`, `server/test/trips-visits-sync.test.mjs`(서버 5개 시나리오) — 클라이언트 쪽은 `src/design/spots.js`의 `daSyncPush`가 로그인 직후(`daSyncPullAndMerge`)와 매 로컬 저장마다(`daSyncPushSafe`) `/api/trips/sync`·`/api/visits/sync`를 실제로 부르도록 연결(예전엔 이 엔드포인트를 클라이언트가 아예 안 불렀다), 로그아웃 시 `foodMap.trips`/`foodMap.visits` 로컬 삭제. `scripts/test-sync-protection-screens.mjs` (b)(c)(e) — 서로 다른 기기의 여행 추가가 둘 다 보존됨, 방문 취소 후 오래된 기기 재연결에도 안 되살아남, 계정 전환/로그아웃 시 다른 계정 데이터가 안 새어나감을 실제 화면에서 확인 |
+| **⚠ 기존 `/api/places` 전체치환 동기화 — 알려진 한계(6차 신규 발견, 미해결)** | 발견됨(수정 안 함, 아래 설명 참고) | `scripts/test-sync-protection-screens.mjs` (a) — trips/visits(위 항목)와 달리 `account_places`는 버전 필드가 아예 없어 서버가 충돌을 감지 못한다. 기기 A가 장소를 수정한 뒤, 그 사실을 모르는(재로그인하지 않은) 오래된 기기 B가 자신의 무관한 변경을 저장하면 B가 들고 있던 옛 스냅샷 전체가 A의 수정을 덮어쓴다 — 실제로 재현해 확인했고, 조용히 감추지 않고 실패 테스트로 그대로 남겨 뒀다(4절에 계속) |
 
-**요약**: ChatGPT가 4차에서 지적한 6가지 문제에 이어, 5차에서 지적한
-비용 SKU 단가·비용 예약 부분기록·장소조회 캐시/동시성·결제 경계
-6건까지 **전부 실제 코드 수정 + 재현 테스트 통과까지 이번 세션에서
-끝냈다.** 재방문 여행자 지원(신규 범위)은 **서버 API·DB·마이그레이션
-전체가 완료 및 재현 테스트 통과**했지만, `src/design`의 실제 사용자
-화면은 아직 이 API들을 부르지 않는다(⑤) — 다음 세션에서 화면을
-연결해야 사용자가 실제로 쓸 수 있다(7절 "다음에 할 일" 참고). 남은
-③(실제 키 연결) 미검증은 4차와 동일하게 네 공급자(Toss/Resend/
-Google Places/Google Routes)의 네트워크 제약 때문이며, 코드가
-없어서가 아니다(2절 참고).
+**요약**: ChatGPT가 4차·5차에서 지적한 문제는 모두 실제 코드 수정 +
+재현 테스트 통과까지 끝났고, 이번 6차에서는 (1) 초기 테스트 상품의
+이용권 사용량(무료 10+1/유료 50+30, 30일 order 단위)을 서버에 실제로
+집행하고 구매·계정 화면에 그대로 노출했으며, (2) **5차에서 ⑤(서버
+완료·화면 미연결)로 남겨 뒀던 재방문 여행자 지원을 `src/design`
+실제 화면까지 전부 연결했다**(여행 목록/전환, 새 여행 만들기, 방문
+표시 버튼·필터, 다음 여행 이월 후보, 로그인/저장/로그아웃 동기화
+연결 — 7절 참고, 이제 전부 완료). (3) 그 과정에서 기존
+`/api/places` 전체치환 동기화에 버전 보호가 없다는 기존 구조의
+한계를 새로 발견해 감추지 않고 그대로 보고했다(4절). 남은 ③(실제 키
+연결) 미검증은 이전 차수와 동일하게 네 공급자(Toss/Resend/Google
+Places/Google Routes)의 네트워크 제약 때문이며, 코드가 없어서가
+아니다(2절 참고).
 
 ---
 
@@ -226,14 +239,25 @@ Google Places/Google Routes)의 네트워크 제약 때문이며, 코드가
   판별(도시 좌표 반경 등)이 필요할 수 있다.
 - 재조회 사용 패턴(월 몇 %) 가정은 여전히 임의값이다 — 체험단 운영
   중 관찰 필요.
-- **재방문 여행자 지원의 화면 연결이 아직 안 됐다**(5차 신규 — ⑤
-  분류) — `server/routes/trips.mjs`/`visits.mjs`/`next-trip-suggestions.mjs`
-  의 서버 API는 전부 완료·검증됐지만, `src/design/spots.js`가 이
-  API들을 아직 부르지 않는다. 지금은 코스 생성 요청에 `tripId`를
-  실으면(선택 사항) 그 여행 아래 저장되고, 안 실으면 예전처럼
-  계정+도시+날짜 구조(`account_courses`)로 저장되는 하위 호환
-  경로가 그대로 남아 있다 — 화면을 연결하기 전까지는 사용자가 여행
-  분리·방문 기록 기능을 전혀 쓸 수 없다는 뜻이다.
+- **(해결됨, 6차)** ~~재방문 여행자 지원의 화면 연결이 아직 안
+  됐다~~ — 6차에서 `src/design/spots.js`에 전부 연결했다(7절 참고).
+  다만 코스 생성 요청에 `tripId`가 없을 때 예전처럼
+  계정+도시+날짜 구조(`account_courses`)로 저장되는 하위 호환 경로는
+  의도적으로 그대로 남겨 뒀다(마이그레이션 이전 기존 데이터·
+  `tripId`를 안 보내는 외부 호출 대비).
+- **⚠ `/api/places` 전체치환 동기화에 버전 보호가 없다(6차 신규
+  발견)** — `account_courses`/`account_places`는 애초에
+  "로그인 시점에 로컬↔서버를 병합해 다시 올린다"는 전제로 설계됐지만
+  (트랜잭션은 원자적이어도 버전 필드 자체가 없다), 실제로는 이미
+  로그인한 채 오래 켜 둔 기기가 다른 기기의 최신 수정을 모르는 상태로
+  자기 변경만 저장하면 그 기기가 들고 있던 옛 스냅샷 전체가 최신
+  수정을 덮어쓸 수 있다. `scripts/test-sync-protection-screens.mjs`
+  (a)에서 실제 화면으로 재현해 확인했다(의도적으로 FAIL로 남겨 정직하게
+  기록). trips/visits(이번 6차 대상)는 버전 비교+보수적 재병합으로
+  이미 보호되지만, **장소 배열 자체를 같은 방식으로 보호하려면
+  `account_places`에 장소별 버전/수정시각 필드를 새로 설계해야 하는
+  별도 작업**이라 이번 "화면 연결" 범위에서는 고치지 않았다 — 다음
+  라운드 후보로 남긴다.
 - **방문 기록 동기화의 충돌 병합 규칙은 이번에 새로 설계한 것**이라
   (버전 비교 + 날짜는 합집합·무덤표시, 단일 값은 최종 수정시각 기준)
   실사용 트래픽에서 검증된 적은 없다 — 지정된 5개 시나리오는 전부
@@ -266,6 +290,11 @@ node server/test/cost-budget-allornothing.test.mjs          # 5개(2 시나리�
 node server/test/trips-and-visits.test.mjs                  # 21개 — 전체 통과(5차 신규 — 여행 분리·방문 기록·마이그레이션·무료경계)
 node server/test/next-trip-suggestions.test.mjs              # 10개 — 전체 통과(5차 신규 — 미방문우선·다시가고싶음·이월·명시적선택)
 node server/test/trips-visits-sync.test.mjs                  # 17개 — 전체 통과(5차 신규 — 지정된 동기화 충돌 시나리오 5건)
+node server/test/entitlement-usage.test.mjs                  # 14개 — 전체 통과(6차 신규 — 위치확인 한도·재사용 미차감·실패 미차감)
+node server/test/entitlement-course-limit.test.mjs           # 6개 — 전체 통과(6차 신규 — 유료 코스 생성 한도·멱등 재생성 미중복차감)
+node server/test/cost-safety-cap.test.mjs                    # 3개 — 전체 통과(6차 신규 — 내부 원가 안전상한 실제 차단)
+node server/test/new-sale-committed-budget.test.mjs          # 3개 — 전체 통과(6차 신규 — 기존 유료고객 약속 잔여몫 반영)
+node server/test/entitlement-period-month-boundary.test.mjs  # 8개 — 전체 통과(6차 신규 — 30일 이용권 달력월 경계 면역)
 node scripts/test/run-all.mjs               # t1~t49, 개인용+판매용 양쪽 — 전체 통과
 node scripts/design-integration-check.mjs   # 전체 통과
 node scripts/test-storage-migration.mjs     # 전체 통과
@@ -275,6 +304,9 @@ node scripts/test-purchase-flow.mjs         # 27개 — 전체 통과
 node scripts/test-multi-day.mjs             # 28개 — 전체 통과
 node scripts/test-place-lookup.mjs          # 11개 — 전체 통과(Places API(New) 응답 형식 반영 확인)
 node scripts/test-account-sync.mjs          # 12개 — 전체 통과
+node scripts/test-revisit-flow.mjs           # 23개 — 전체 통과(6차 신규 — 여행 목록/전환·새 여행·방문 버튼/필터·이월후보·다른 기기 로그인 동기화, 실제 Chromium 화면)
+node scripts/test-sync-protection-screens.mjs # 16개 — 15개 통과·1개 의도된 실패(6차 신규 — 지정된 6개 시나리오(a)~(f)를 실제 화면에서 검증, (a)는 알려진 한계로 정직하게 실패 처리)
+node scripts/test-consumer-flow-e2e.mjs      # 16개 — 전체 통과(6차 신규 — 실제 CSV 파일 300곳 가져오기→배치 위치확인→첫 코스→여행 저장→방문 표시→같은 도시 다음 여행→미방문 우선 코스→이용권 잔여횟수까지 한 번에 이어서 확인, 300곳 가져오기 시 비용 원장 0건도 실제 파일 입력으로 재확인)
 node scripts/test-landing-page.mjs          # 전체 통과
 node scripts/audit.mjs                      # 개인정보·하드코딩 키 잔존 검사 — 전체 통과
 node scripts/verify.mjs                     # 보호 블록·저장 키 무결성 — 전체 통과
@@ -298,36 +330,54 @@ node scripts/verify.mjs                     # 보호 블록·저장 키 무결�
 흉내 낸 장면이라는 점을 `src/design/landing.html`에 그대로 캡션으로
 밝혀 뒀다 — 4차 갱신에서도 이 캡션 원칙은 그대로 유지한다.
 
+**6차 신규 — 이번에 새로 화면에 연결한 것들만 `docs/screenshots/`에
+따로 캡처했다**(`scripts/shot-r6-flows.mjs`, 전부 지어낸 이름·이메일만
+쓴 합성 데이터 — 실제 장소명·개인정보 없음). 7장:
+`after_방문표시_장소상세.png`, `after_방문상태필터_목록.png`,
+`after_새여행만들기.png`, `after_여행선택.png`, `after_이월후보.png`,
+`after_이용권_포함사용량.png`, `after_프로필_잔여횟수.png` — 방문
+버튼·방문 상태 필터·새 여행 만들기·여행 전환·이월 후보·이용권 포함
+사용량·계정 잔여 횟수가 실제 서버 응답을 반영해 화면에 표시되는
+모습을 담았다. **이 스크린샷은 화면 자체가 실제 데이터로 정상
+그려진다는 것만 보여준다 — 실제 iPhone Safari에서의 표시나 실제
+공급자(Toss/Resend/Google) 연결을 검증하는 게 아니다**(2절과 동일한
+구분 원칙).
+
 ---
 
-## 7. 다음에 할 일 — 재방문 여행자 화면 연결(5차에서 남긴 것)
+## 7. 재방문 여행자 화면 연결 — 6차에서 완료
 
-재방문 여행자 지원은 서버(스키마·API·마이그레이션·동기화)가 전부
-완료·재현 테스트까지 끝났지만, **사용자가 실제로 쓸 수 있으려면
-`src/design/spots.js`에 다음 화면 연결이 필요하다**(①로 표시하지 않고
-⑤로 남겨 둔 이유):
+5차에서 서버(스키마·API·마이그레이션·동기화)만 끝내고 ⑤(화면
+미연결)로 남겨 뒀던 5가지를 이번 6차에서 `src/design/spots.js`에 전부
+연결했다. 새 백엔드 설계 없이 기존 서버 API를 그대로 부르는 화면
+배선·문구 작업이었다:
 
-1. **여행 목록·전환 화면** — 지금 도시 하나에 코스 하나만 보여주는
-   화면을, `/api/trips`로 받은 목록 중 하나를 고르는 화면으로
-   바꾼다. 같은 도시라도 서로 다른 여행이면 별도 카드/탭으로 구분해야
-   한다.
-2. **새 여행 만들기 흐름** — 지금 "도시 바꾸기"가 하던 자리에 "새
-   여행 만들기"(`POST /api/trips`)를 추가하되, 도시 전환이 곧 새 여행
-   생성으로 오해되지 않게(과거 여행이 사라진 것처럼 보이지 않게) UI
-   문구를 분명히 한다.
-3. **방문 표시 버튼** — 장소 상세/코스 화면에 "방문 완료"·"다시 가고
-   싶어요" 버튼을 추가한다(`POST /api/visits/:placeId/mark`,
-   `.../want-revisit`). 코스에 담는 것과 방문 표시는 서로 다른 버튼
-   이어야 한다(자동 방문처리 금지).
-4. **"다음 여행 코스 만들기" 진입점** — 기존 코스 생성 버튼 옆에,
-   과거 여행에서 못 가본 곳을 이월하는 옵션(`GET
-   /api/trips/next-suggestions?fromTripId=...`)을 추가한다. 새 화면을
-   따로 만들지 않고 기존 코스 생성 화면 안에 후보 목록만 얹는 방식을
-   권장한다(지시: "첫 화면 설정을 늘리지 말 것").
-5. **로그인 시 동기화 전환** — 지금의 `/api/places`, `/api/courses`
-   전체 치환 PUT과 별개로, 여행·방문 기록은 `/api/trips/sync`,
-   `/api/visits/sync`로 옮겨야 6절에서 구현한 충돌 보호가 실제로
-   적용된다(지금은 클라이언트가 이 엔드포인트를 아예 안 부른다).
+1. **여행 목록·전환 화면 — 완료.** `/api/trips` 목록을 `tripPickerSheet`
+   로 보여주고, 같은 도시에 여행이 2개 이상일 때만 카드로 구분해
+   고를 수 있게 했다(여행이 하나뿐이면 예전 화면과 동일). "오늘
+   동선"·"오늘의 코스" 화면 상단에 지금 여행 이름을 표시한다
+   (`tripBlockHTML`).
+2. **새 여행 만들기 흐름 — 완료.** `newTripFormSheet`가 이름·시작일·
+   종료일·숙소를 선택 입력으로 물어보고 `POST /api/trips`를 부른다.
+   "도시 바꾸기"(장소 필터용 `chooseCity`)와는 완전히 분리된 별도
+   버튼이라 오해될 소지가 없다.
+3. **방문 표시 버튼 — 완료.** 장소 상세(`detail()`)에 "오늘 날짜로
+   방문 완료 표시"·"마지막 방문 취소"·"다시 가고 싶어요" 버튼을
+   추가했다(`visitBlockHTML`/`visitAction`). 코스 담기(`selected`)와
+   완전히 분리된 상태값이라 자동 방문처리가 안 된다. 방문 기록이 하나
+   라도 생기면 목록 화면에 방문 상태 필터(전체/미방문/방문함/
+   다시가고싶음)가 나타난다.
+4. **"다음 여행 코스 만들기" 진입점 — 완료.** 새 화면을 따로 안 만들고
+   기존 "오늘 동선" 화면 안에 `carryForwardSheet`로 이월 후보 목록만
+   얹었다(지시대로 "첫 화면 설정을 늘리지 않음"). 같은 도시에 다른
+   여행이 있고 동선이 비어 있을 때만 진입점이 뜬다.
+5. **로그인 시 동기화 전환 — 완료.** `daSyncPush`가 이제
+   `/api/trips/sync`·`/api/visits/sync`를 로그인 직후와 매 로컬 저장
+   때마다 실제로 부른다(예전엔 클라이언트가 이 엔드포인트를 아예 안
+   불렀다). `/api/places`·`/api/courses` 전체치환 PUT은 `tripId`가
+   없는 레거시 코스만 계속 담당하도록 좁혀서, trip에 딸린 코스가 그
+   경로로 새어 나가 버전 보호 없이 덮어써지는 일을 막았다.
 
-이 5가지를 연결하는 작업 자체는 서버 API가 이미 다 있어 새 백엔드
-설계가 필요하지 않다 — 화면 배선과 문구 작업이 중심이다.
+전부 `scripts/test-revisit-flow.mjs`(23개, 실제 Chromium 화면)로
+검증했다. 남은 것은 4절에 적은 **`/api/places` 자체의 버전 보호
+부재**(다음 라운드 후보)뿐이다.

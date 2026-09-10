@@ -8,6 +8,18 @@
 import { openDb } from '../db.mjs';
 import { config } from '../config.mjs';
 
+// 2026-09-10 재검토(6차) — "구매 화면에 가격·기간·자동갱신 여부·포함
+// 사용량을 간단히 표시하라"는 지시. 클라이언트에 숫자를 박지 않는다는
+// 기존 원칙 그대로, 유료 이용권에 포함된 사용량(위치 확인·코스 생성
+// 횟수)도 서버 설정값을 그대로 실어 보낸다.
+function priceWithIncludedUsage() {
+  return {
+    ...config.price,
+    includedPlaceLookups: config.entitlementUsage.paidPlaceLookupLimit,
+    includedCourseGenerations: config.entitlementUsage.paidCourseLimit,
+  };
+}
+
 export function checkEntitlement(accountId) {
   const db = openDb();
   const row = db.prepare('SELECT plan, plan_expires_at FROM accounts WHERE id = ?').get(accountId);
@@ -17,7 +29,7 @@ export function checkEntitlement(accountId) {
     ok: true,
     plan: active ? 'paid' : 'free',
     expiresAt: row.plan_expires_at,
-    price: config.price, // 가격은 항상 서버 설정값을 그대로 보여준다 — 클라이언트에 숫자를 박지 않는다.
+    price: priceWithIncludedUsage(), // 가격은 항상 서버 설정값을 그대로 보여준다 — 클라이언트에 숫자를 박지 않는다.
   };
 }
 

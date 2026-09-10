@@ -224,7 +224,12 @@ function migrate(d) {
       sku TEXT NOT NULL,
       count INTEGER NOT NULL DEFAULT 1,
       estimated_cost_micros INTEGER NOT NULL,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      -- 2026-09-10 재검토(6차): 이 비용이 어느 이용권 기간(free 또는
+      -- 특정 주문의 order_id) 소속인지 표시한다 — 계정별 내부 원가
+      -- 안전상한(무료 700원 누적/유료 이용권당 3,500원 누적)을 이
+      -- period_id 기준으로 집계한다(server/entitlement-usage.mjs).
+      period_id TEXT
     );
 
     /* 2026-09-10 재검토(5차) — "재방문 여행자 지원"(5절): 장소 보관함
@@ -283,6 +288,37 @@ function migrate(d) {
     CREATE TABLE IF NOT EXISTS schema_migrations (
       name TEXT PRIMARY KEY,
       applied_at TEXT NOT NULL
+    );
+
+    /* 2026-09-10 재검토(6차) — "고객에게 약속한 사용량"(이용권 횟수)을
+       실제 비용 원장(cost_ledger)과 분리해서 집행한다
+       (server/entitlement-usage.mjs). period_id는 무료체험이면 고정
+       문자열 'free'(계정당 평생 한 번), 유료면 그 이용권을 부여한
+       주문의 order_id다 — "30일 이용권"이 달력월과 무관하게 그 주문
+       하나에 계속 묶여 있어서, 월 경계를 넘어도 조용히 초기화되지
+       않는다(새 주문 = 새 period_id일 때만 사용량이 새로 시작된다).
+       place_lookups_used/course_successes_used는 오직
+       entitlement-usage.mjs를 통해서만 올라간다(성공/신규 조건을
+       그 파일이 전부 확인한 뒤에만 커밋). */
+    CREATE TABLE IF NOT EXISTS entitlement_usage (
+      account_id TEXT NOT NULL REFERENCES accounts(id),
+      period_id TEXT NOT NULL,
+      place_lookups_used INTEGER NOT NULL DEFAULT 0,
+      course_successes_used INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (account_id, period_id)
+    );
+    /* entitlement_place_confirmed: 이 계정이 이 장소(place_id)를 실제로
+       처음 확인한 적이 있는지 — 계정당 영구(기간과 무관) 기록. "이미
+       위치가 확인된 기존 장소를 재사용/재조회하는 것은 신규 장소 한도를
+       또 깎지 않는다"는 지시를 정확히 지키는 근거표: 여기 행이 있으면
+       그 장소는 어느 기간에 다시 조회돼도 절대 신규로 안 센다. */
+    CREATE TABLE IF NOT EXISTS entitlement_place_confirmed (
+      account_id TEXT NOT NULL REFERENCES accounts(id),
+      place_id TEXT NOT NULL,
+      first_period_id TEXT NOT NULL,
+      confirmed_at TEXT NOT NULL,
+      PRIMARY KEY (account_id, place_id)
     );
   `);
 
