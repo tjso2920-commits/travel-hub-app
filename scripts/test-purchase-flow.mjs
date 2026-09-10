@@ -94,7 +94,11 @@ await p.waitForTimeout(200);
 const secondSheetTitle = await p.textContent('#sheetLabel');
 t('두 번째 코스 시도부터는 로그인 화면이 뜸(게이트 작동 확인)', secondSheetTitle === '로그인');
 
-// --- 로그인 진행 ---
+// --- 로그인 진행(2026-09-10: "간편 로그인 후 기존에 가져온 장소와
+// 작성 중인 코스 유지" — 로그인은 foodMap.session만 얹을 뿐, 이미
+// 가져온 장소·만든 코스는 전혀 안 건드려야 한다) ---
+const placesBeforeLogin = await p.evaluate(() => JSON.stringify(foodMap.places));
+const courseBeforeLogin = await p.evaluate(() => JSON.stringify(foodMap.course));
 const testEmail = 'purchase-flow-tester@example.com';
 await p.fill('#loginEmail', testEmail);
 await p.click('#loginSendBtn');
@@ -115,6 +119,10 @@ await p.waitForFunction(() => document.getElementById('sheetLabel').textContent 
 // 로그인했지만 아직 무료체험을 이미 썼으므로 이번엔 이용권 화면이 떠야 한다 ---
 const afterLoginTitle = await p.textContent('#sheetLabel');
 t('로그인 성공 뒤 원래 하려던 동작을 이어감(이용권 화면으로)', afterLoginTitle === '이용권');
+t('로그인 후에도 이미 가져온 장소가 그대로 남아 있음(로그인이 로컬 데이터를 안 지움)',
+  (await p.evaluate(() => JSON.stringify(foodMap.places))) === placesBeforeLogin);
+t('로그인 후에도 이미 만든 코스가 그대로 남아 있음',
+  (await p.evaluate(() => JSON.stringify(foodMap.course))) === courseBeforeLogin);
 const paywallText = await p.textContent('#sheetContent');
 t('이용권 화면에 금액이 표시됨', /9,?900원/.test(paywallText));
 t('이용권 화면에 기간이 표시됨', /30일/.test(paywallText));
