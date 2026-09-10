@@ -73,7 +73,12 @@ for (let i = 0; i < 5; i++) {
   else if (blockedStatus === null) blockedStatus = r;
 }
 t('안전상한 안에서는 정상 처리됨(3원 한도, 1원씩 3건)', okCount === 3);
-t('안전상한을 넘으면 비용 한도 초과로 차단됨(503)', blockedStatus && blockedStatus.status === 503 && blockedStatus.json.reason === 'cost-budget-exceeded');
+// 2026-09-10 재검토(7차) 3절 — "이용권 자신의 원가 안전상한에 도달한
+// 것"과 "서비스 전체가 일시적으로 바쁜 것"을 더는 같은 'cost-budget-
+// exceeded'로 뭉개지 않는다(describeCostFailure). 이 시나리오는 정확히
+// 전자(entitlement-period-cost-safety-cap-exceeded)이므로 바깥 reason도
+// 그에 맞는 'entitlement-cost-cap-reached'로 나와야 한다.
+t('안전상한을 넘으면 이용권 자신의 원가 상한 도달로 정확히 차단됨(503)', blockedStatus && blockedStatus.status === 503 && blockedStatus.json.reason === 'entitlement-cost-cap-reached');
 t('차단 상세 사유가 이용권 기간 안전상한임을 구분해 표시함', blockedStatus && blockedStatus.json.detail === 'entitlement-period-cost-safety-cap-exceeded');
 
 globalThis.fetch = originalFetch;

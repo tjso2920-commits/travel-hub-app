@@ -54,6 +54,16 @@ process.env.COST_PLACES_TEXT_SEARCH_KRW_MICROS = '1000000'; // 1원 — 한도 �
 process.env.COST_ROUTES_COMPUTE_KRW_MICROS = '1000000';
 process.env.COST_ROUTES_COMPUTE_HIGHVOLUME_KRW_MICROS = '3000000';
 process.env.COST_PER_ACCOUNT_DAILY_KRW_MICROS = '5000000'; // 계정당 하루 5원 — 곧 소진되게
+// 2026-09-10 재검토(7차) 3절 — 계정별 일일 한도는 이제 "이 계정의 이용권
+// 기간 전체 누적 한도(costSafetyCap)"보다 낮게 잡히지 않는다(유료
+// 고객이 하루 안에 이용권 전체 몫을 몰아 써도 일일 한도가 먼저 막지
+// 않게 하기 위해서 — cost-ledger.mjs의 effectiveCap 참고). 이 절은
+// 일부러 계정별 일일 한도(5원)를 딱 그 지점에서 소진시켜 재현하는
+// 테스트라, 무료체험 안전상한도 같은 값(5원)으로 맞춰 둬야 예전과
+// 같은 지점에서 여전히 막힌다(기본값 700원을 그대로 두면 안전상한이
+// 일일 한도를 700원으로 끌어올려 이 절의 "5건까지만 통과" 전제가
+// 깨진다).
+process.env.COST_SAFETY_CAP_FREE_KRW_MICROS = '5000000';
 process.env.COST_GLOBAL_DAILY_KRW_MICROS = '0'; // 이 테스트에선 전체 일일 한도는 끔(계정 한도만 본다)
 process.env.COST_GLOBAL_MONTHLY_KRW_MICROS = '0';
 // 2026-09-10 재검토(5차): 장소 조회는 services.placeLookup==='real'일

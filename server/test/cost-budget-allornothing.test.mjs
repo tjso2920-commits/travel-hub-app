@@ -56,6 +56,15 @@ process.env.COST_ROUTES_COMPUTE_HIGHVOLUME_KRW_MICROS = '1000000'; // 세그먼�
 // 값 — 첫 세그먼트만 보면 통과할 수 있는 상황을 일부러 만든다.
 // 'sufficient': 3건 합계(3원)를 넉넉히 감당하는 값.
 process.env.COST_PER_ACCOUNT_DAILY_KRW_MICROS = scenario === 'sufficient' ? '10000000' : '1500000';
+// 2026-09-10 재검토(7차) 3절 — 계정별 일일 한도는 이제 이 계정의
+// 이용권 기간 전체 누적 안전상한(costSafetyCap)보다 낮게 잡히지 않는다
+// (cost-ledger.mjs의 effectiveCap). 이 테스트가 쓰는 계정('acct-partial-
+// budget')은 accounts 표에 없는 임시 문자열이라 entitlement-usage.mjs가
+// 항상 "무료체험" 기본값(costSafetyCap.freeAccountMicros, 기본 700원)
+// 으로 판정한다 — 그 기본값을 그대로 두면 위의 일부러 작게 잡은 일일
+// 한도(1.5원/10원)가 700원으로 끌어올려져 이 파일의 "insufficient"
+// 시나리오 전제가 깨진다. 그래서 안전상한도 같은 값으로 맞춘다.
+process.env.COST_SAFETY_CAP_FREE_KRW_MICROS = scenario === 'sufficient' ? '10000000' : '1500000';
 
 const { computeWalkingRoute } = await import('../adapters/routing.mjs');
 const { openDb } = await import('../db.mjs');

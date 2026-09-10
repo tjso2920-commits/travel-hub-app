@@ -50,7 +50,7 @@ import { lookupPlace } from '../adapters/place-lookup.mjs';
 import { config } from '../config.mjs';
 import { openDb, nowIso } from '../db.mjs';
 import { checkAndIncrement, dayWindow } from '../rate-limit.mjs';
-import { chargeCost } from '../cost-ledger.mjs';
+import { chargeCost, describeCostFailure } from '../cost-ledger.mjs';
 import { reservePlaceLookupSlot, finalizePlaceLookupResult, periodCostStatus } from '../entitlement-usage.mjs';
 
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10분 — 화면을 실수로 여러 번 눌러 생기는 중복만 줄인다. Google Places API(New)의 캐시·재사용 정책 범위 안으로 의도적으로 짧게 뒀다(RELEASE_STATUS.md 참고 — 정확한 공식 한도는 이 세션이 재확인 못함).
@@ -170,7 +170,14 @@ async function runOneLookup(accountId, query, expectedArea, placeId) {
       // 이용권당 누적 3,500원 안전상한 — cost-ledger.mjs가 계정·전체
       // 한도와 같은 트랜잭션에서 함께 확인한다).
       const charge = chargeCost({ accountId, service: 'places', sku: 'places-text-search', periodId: reservation.period.periodId, periodCapMicros: reservation.period.costCapMicros });
-      if (!charge.ok) return { ok: false, status: 503, reason: 'cost-budget-exceeded', detail: charge.reason };
+      if (!charge.ok) {
+        // 2026-09-10 재검토(7차) 3절 — "이용권 몫을 다 썼다"(정당한 안내)와
+        // "서비스 전체가 일시적으로 바쁘다"(운영상 안내)를 구분해서
+        // 클라이언트에 전달한다(예전엔 둘 다 'cost-budget-exceeded'로
+        // 뭉개졌다).
+        const described = describeCostFailure(charge.reason);
+        return { ok: false, status: 503, reason: described.reason, detail: charge.reason };
+      }
     }
     const result = await lookupPlace({ query, expectedArea });
     if (shouldCache(result)) cacheSet(cacheKey, result);
