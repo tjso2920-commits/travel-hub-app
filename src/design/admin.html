@@ -1,0 +1,188 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>운영 콘솔 · travel hub</title>
+<style>
+:root{color-scheme:light;--paper:#f7f6f2;--ink:#335563;--muted:#7c8585;--blue:#4388a5;--line:#e5e6e1;--bad:#b8543e;--warn:#b98a2e;--ok:#5c8f5c}
+*{box-sizing:border-box}
+body{margin:0;background:#eaece8;color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,'Noto Sans KR',sans-serif}
+.wrap{max-width:900px;margin:auto;padding:24px 20px 80px}
+h1{font-size:22px;margin:0 0 4px}
+h2{font-size:16px;margin:28px 0 10px;border-bottom:1px solid var(--line);padding-bottom:6px}
+p.sub{color:var(--muted);font-size:13px;margin:0 0 20px}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+input,select,button,textarea{font:inherit}
+input[type=text],input[type=password],input[type=number],select,textarea{width:100%;padding:9px 12px;border-radius:10px;border:1px solid var(--line);margin-bottom:10px;box-sizing:border-box}
+button{background:var(--blue);color:#fff;border:0;border-radius:10px;padding:9px 16px;cursor:pointer;min-height:36px}
+button.ghost{background:#eef1ea;color:var(--ink)}
+button.small{padding:5px 10px;min-height:28px;font-size:12px;margin-right:6px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+.row>div{flex:1;min-width:140px}
+.pill{display:inline-block;font-size:11px;border-radius:20px;padding:3px 9px;margin-left:6px}
+.pill.received{background:#eef1ea;color:#6a7d6a}
+.pill.in_progress{background:#fdf1dc;color:var(--warn)}
+.pill.resolved{background:#e6f2e6;color:var(--ok)}
+.pill.payment,.pill.priority{background:#fbe7e2;color:var(--bad)}
+.item{border-top:1px solid var(--line);padding:12px 0}
+.item:first-child{border-top:0}
+.item small{color:var(--muted);display:block;margin-top:4px}
+.msg{font-size:13px;color:var(--bad);margin-top:6px}
+.hint{font-size:12px;color:var(--muted)}
+[hidden]{display:none!important}
+.typeCounts span{display:inline-block;background:#eef1ea;border-radius:20px;padding:3px 10px;font-size:12px;margin:0 6px 6px 0}
+</style></head>
+<body><div class="wrap">
+<h1>운영 콘솔(소규모 베타)</h1>
+<p class="sub">ADMIN_TOKEN 하나로만 보호됩니다 — 실제 운영에서는 이 페이지 자체를 공개 배포하지 마세요. 하루 한 번 훑어보는 걸 전제로 만든 최소 화면입니다.</p>
+
+<div class="card" id="loginCard">
+  <label>API 주소(비워두면 이 페이지와 같은 서버)</label>
+  <input type="text" id="apiBase" placeholder="예: http://localhost:8787">
+  <label>관리자 토큰(ADMIN_TOKEN)</label>
+  <input type="password" id="adminToken" placeholder="서버 환경변수 ADMIN_TOKEN과 동일한 값">
+  <button id="loginBtn">들어가기</button>
+  <p class="msg" id="loginMsg" hidden></p>
+</div>
+
+<div id="main" hidden>
+  <h2>신규 모집</h2>
+  <div class="card">
+    <p class="hint" id="recruitStatus">불러오는 중…</p>
+    <button id="pauseBtn" class="ghost">신규 모집 일시중지</button>
+    <button id="resumeBtn" class="ghost">신규 모집 재개</button>
+  </div>
+
+  <h2>초대 코드</h2>
+  <div class="card">
+    <div class="row">
+      <div><label>인원(비우면 기본값)</label><input type="number" id="inviteMaxUses" min="1"></div>
+      <div><label>유효기간(일, 비우면 기본값)</label><input type="number" id="inviteTtlDays" min="1"></div>
+      <div><button id="createInviteBtn">코드 만들기</button></div>
+    </div>
+    <p class="hint" id="inviteCapNote"></p>
+    <div id="inviteList"></div>
+  </div>
+
+  <h2>불편함 접수</h2>
+  <div class="card">
+    <div class="row">
+      <div><label>상태</label><select id="fbStatusFilter"><option value="">전체</option><option value="received">받음</option><option value="in_progress">처리 중</option><option value="resolved">해결됨</option></select></div>
+      <div><label>유형</label><select id="fbTypeFilter"><option value="">전체</option><option value="import">가져오기</option><option value="location-route">위치·동선</option><option value="usage">이용 방법</option><option value="payment">결제</option><option value="other">기타</option><option value="survey_usage">코스 설문</option></select></div>
+      <div><button id="fbReloadBtn" class="ghost">새로고침</button></div>
+    </div>
+    <div class="typeCounts" id="fbTypeCounts"></div>
+    <div id="fbList"></div>
+  </div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+let apiBase = '';
+let token = '';
+
+function authHeaders() { return { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }; }
+async function api(path, opts) {
+  opts = opts || {};
+  const res = await fetch(apiBase + path, { method: opts.method || 'GET', headers: authHeaders(), body: opts.body ? JSON.stringify(opts.body) : undefined });
+  let json = null;
+  try { json = await res.json(); } catch (e) { /* 본문 없음 */ }
+  return { ok: res.ok, status: res.status, json };
+}
+
+const typeLabels = { import: '가져오기', 'location-route': '위치·동선', usage: '이용 방법', payment: '결제', other: '기타', survey_usage: '코스 설문' };
+const statusLabels = { received: '받음', in_progress: '처리 중', resolved: '해결됨' };
+
+/* 우선순위 — 지시대로 결제·데이터손실·잘못된 장소 이슈를 먼저 보여준다.
+   서버는 최근순으로만 정렬해 주므로, 화면에서 그 위에 이 기준으로 한 번
+   더 정렬한다(새 카테고리를 서버 스키마에 만들지 않고 키워드 휴리스틱
+   으로 최소 구현 — 완벽한 분류가 아니라 "먼저 보게" 돕는 보조 장치일
+   뿐이라는 걸 운영자가 알고 써야 한다). */
+function priorityScore(item) {
+  if (item.type === 'payment') return 2;
+  const d = String(item.description || '');
+  if (/데이터|손실|사라|지워|날아|없어졌/.test(d)) return 2;
+  if (/잘못된 장소|엉뚱한|틀린 위치/.test(d)) return 1;
+  return 0;
+}
+
+async function loadRecruitStatus() {
+  const r = await api('/api/admin/recruitment-pause');
+  if (!r.ok) { $('#recruitStatus').textContent = '불러오지 못했어요.'; return; }
+  const j = r.json;
+  $('#recruitStatus').innerHTML = `초대 코드 게이트: <b>${j.requireInviteCodeForSignup ? '켜짐' : '꺼짐(기본값 — 열린 가입)'}</b> · 신규 모집: <b>${j.paused ? '일시중지됨' : '정상'}</b>`;
+}
+$('#pauseBtn').onclick = async () => { await api('/api/admin/recruitment-pause', { method: 'POST', body: { paused: true } }); loadRecruitStatus(); };
+$('#resumeBtn').onclick = async () => { await api('/api/admin/recruitment-pause', { method: 'POST', body: { paused: false } }); loadRecruitStatus(); };
+
+async function loadInvites() {
+  const r = await api('/api/admin/invite-codes');
+  if (!r.ok) { $('#inviteList').innerHTML = '<p class="msg">불러오지 못했어요.</p>'; return; }
+  const j = r.json;
+  $('#inviteCapNote').textContent = `이번 베타 전체 가입 상한: ${j.totalDistinctRedeemers}/${j.recruitmentTotalCap}명 사용됨`;
+  $('#inviteList').innerHTML = (j.items || []).map((c) => `<div class="item"><b>${c.code}</b> <span class="pill ${c.active ? 'resolved' : 'received'}">${c.active ? '활성' : '비활성'}</span><br>` +
+    `사용 ${c.used_count}/${c.max_uses} · 만료 ${c.expires_at ? new Date(c.expires_at).toLocaleDateString('ko-KR') : '없음'}` +
+    (c.active ? ` <button class="small ghost" data-deactivate="${c.code}">비활성화</button>` : '') + `</div>`).join('') || '<p class="hint">아직 만든 코드가 없어요.</p>';
+  $('#inviteList').querySelectorAll('[data-deactivate]').forEach((b) => {
+    b.onclick = async () => { await api('/api/admin/invite-codes/' + encodeURIComponent(b.dataset.deactivate) + '/deactivate', { method: 'POST' }); loadInvites(); };
+  });
+}
+$('#createInviteBtn').onclick = async () => {
+  const maxUses = $('#inviteMaxUses').value ? Number($('#inviteMaxUses').value) : undefined;
+  const ttlDays = $('#inviteTtlDays').value ? Number($('#inviteTtlDays').value) : undefined;
+  const r = await api('/api/admin/invite-codes', { method: 'POST', body: { maxUses, ttlDays } });
+  if (r.ok) loadInvites();
+};
+
+async function loadFeedback() {
+  const status = $('#fbStatusFilter').value;
+  const type = $('#fbTypeFilter').value;
+  const qs = new URLSearchParams();
+  if (status) qs.set('status', status);
+  if (type) qs.set('type', type);
+  const r = await api('/api/admin/feedback?' + qs.toString());
+  if (!r.ok) { $('#fbList').innerHTML = '<p class="msg">불러오지 못했어요. 토큰을 확인해 주세요.</p>'; return; }
+  const j = r.json;
+  $('#fbTypeCounts').innerHTML = Object.entries(j.typeCounts || {}).map(([k, v]) => `<span>${typeLabels[k] || k} ${v}</span>`).join('');
+  const items = (j.items || []).slice().sort((a, b) => priorityScore(b) - priorityScore(a) || String(b.created_at).localeCompare(String(a.created_at)));
+  $('#fbList').innerHTML = items.map((it) => {
+    const pri = priorityScore(it);
+    return `<div class="item"><span class="pill ${it.status}">${statusLabels[it.status] || it.status}</span>` +
+      `<span class="pill">${typeLabels[it.type] || it.type}</span>` +
+      (pri >= 2 ? '<span class="pill priority">우선</span>' : '') +
+      `<div>${escapeHtml(it.description)}</div>` +
+      `<small>${it.contact ? '연락처: ' + escapeHtml(it.contact) + ' · ' : ''}${new Date(it.created_at).toLocaleString('ko-KR')} · ${escapeHtml((it.diagnostic && it.diagnostic.deviceType) || '')} ${escapeHtml((it.diagnostic && it.diagnostic.screen) || '')} ${escapeHtml((it.diagnostic && it.diagnostic.errorCode) || '')}</small>` +
+      `<div style="margin-top:8px">` +
+      (it.status !== 'in_progress' ? `<button class="small ghost" data-status="${it.id}|in_progress">처리 중으로</button>` : '') +
+      (it.status !== 'resolved' ? `<button class="small ghost" data-status="${it.id}|resolved">해결됨으로</button>` : '') +
+      (it.status !== 'received' ? `<button class="small ghost" data-status="${it.id}|received">받음으로</button>` : '') +
+      `</div></div>`;
+  }).join('') || '<p class="hint">접수된 항목이 없어요.</p>';
+  $('#fbList').querySelectorAll('[data-status]').forEach((b) => {
+    b.onclick = async () => {
+      const [id, st] = b.dataset.status.split('|');
+      await api('/api/admin/feedback/' + encodeURIComponent(id) + '/status', { method: 'POST', body: { status: st } });
+      loadFeedback();
+    };
+  });
+}
+function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+$('#fbReloadBtn').onclick = loadFeedback;
+$('#fbStatusFilter').onchange = loadFeedback;
+$('#fbTypeFilter').onchange = loadFeedback;
+
+$('#loginBtn').onclick = async () => {
+  apiBase = $('#apiBase').value.trim();
+  token = $('#adminToken').value.trim();
+  if (!token) { $('#loginMsg').hidden = false; $('#loginMsg').textContent = '토큰을 입력해 주세요.'; return; }
+  const r = await api('/api/admin/recruitment-pause');
+  if (!r.ok) {
+    $('#loginMsg').hidden = false;
+    $('#loginMsg').textContent = r.status === 501 ? '서버에 ADMIN_TOKEN이 아직 설정 안 됐어요.' : '토큰이 올바르지 않아요.';
+    return;
+  }
+  $('#loginCard').hidden = true;
+  $('#main').hidden = false;
+  loadRecruitStatus();
+  loadInvites();
+  loadFeedback();
+};
+</script>
+</div></body></html>

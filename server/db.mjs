@@ -383,6 +383,57 @@ function migrate(d) {
     );
     CREATE INDEX IF NOT EXISTS idx_entitlement_place_reservations_account
       ON entitlement_place_reservations(account_id);
+
+    /* 2026-09-11 재검토(9차) 6-4절 — 소규모 베타·피드백 체계.
+       app_flags: 운영자가 켜고 끄는 소수의 전역 스위치(지금은
+       recruitment_paused 하나). 결제·데이터손실급 심각 이슈가 생기면
+       코드를 새로 배포하지 않고도 신규 모집만 즉시 멈출 수 있게 한다. */
+    CREATE TABLE IF NOT EXISTS app_flags (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    /* invite_codes: 소규모 베타 모집용 초대 코드. max_uses(코드 하나당
+       총 사용 가능 횟수)·expires_at(만료)을 갖는다. 실제로 이 게이트를
+       켤지 말지는 config.requireInviteCodeForSignup(기본 꺼짐 — 가격이
+       미정인 지금은 실제 모집을 시작하지 않는다는 지시 반영)이 결정한다.
+       invite_code_redemptions: 코드 하나가 계정 하나에 실제로 쓰인
+       기록 — PRIMARY KEY(code, account_id)라 같은 계정이 같은 코드를
+       두 번 "쓴 것으로" 만들 수 없고, 애초에 이 표는 새 계정이 생기는
+       그 순간에만 채워지므로(auth.mjs의 loginOrCreateAccount 참고) 한
+       이메일(=한 계정)이 여러 번 "신규 등록"으로 코드를 반복 소모하는
+       것 자체가 구조적으로 불가능하다. */
+    CREATE TABLE IF NOT EXISTS invite_codes (
+      code TEXT PRIMARY KEY,
+      max_uses INTEGER NOT NULL,
+      used_count INTEGER NOT NULL DEFAULT 0,
+      expires_at TEXT,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS invite_code_redemptions (
+      code TEXT NOT NULL REFERENCES invite_codes(code),
+      account_id TEXT NOT NULL REFERENCES accounts(id),
+      redeemed_at TEXT NOT NULL,
+      PRIMARY KEY (code, account_id)
+    );
+    /* feedback: "불편함 보내기"(type별 한 줄 설명 + 선택 연락처 +
+       최소 진단정보)와 코스 생성 직후 짧은 설문(type='survey_usage')을
+       같이 담는다. diagnostic은 JSON 문자열이지만 서버가 허용된 키만
+       저장한다(server/feedback.mjs의 화이트리스트 참고 — 전체
+       저장목록·정밀 GPS·결제정보가 실려 오는 걸 구조적으로 막는다). */
+    CREATE TABLE IF NOT EXISTS feedback (
+      id TEXT PRIMARY KEY,
+      account_id TEXT,
+      type TEXT NOT NULL,
+      description TEXT NOT NULL,
+      contact TEXT,
+      diagnostic TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'received',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status);
   `);
 
   migrateLegacyCoursesIntoTrips(d);

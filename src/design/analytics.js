@@ -22,6 +22,11 @@ const EVENT_SCHEMA = {
   payment_result: { props: ['result'] },
   waitlist_signup: { props: ['channel'] },
   affiliate_click: { props: ['offer_type'] },
+  // 2026-09-11 재검토(9차) 6-4절 — 가입→가져오기→코스완성→실사용→피드백 퍼널.
+  signup_completed: { props: [] },
+  place_visited: { props: [] },
+  feedback_submitted: { props: ['type'] },
+  survey_submitted: { props: ['actually_traveled'] },
 };
 
 function validate(name, props) {

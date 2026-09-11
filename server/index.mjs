@@ -39,6 +39,9 @@ import { usageSummaryForAccount } from './entitlement-usage.mjs';
 import { getVerifiedStatus } from './status.mjs';
 import { weatherRoute } from './routes/weather.mjs';
 import { activeOffersForCity } from './affiliates.mjs';
+import { submitFeedback, submitUsageSurvey, adminListFeedback, adminUpdateFeedbackStatus } from './feedback.mjs';
+import { adminCreateInviteCode, adminListInviteCodes, adminDeactivateInviteCode } from './invite-codes.mjs';
+import { isRecruitmentPaused, setRecruitmentPaused } from './app-flags.mjs';
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -86,6 +89,17 @@ function requireAccount(req, res) {
   return accountId;
 }
 
+/* 2026-09-11 재검토(9차) 6-4절 — 소규모 관리자 화면 인증. ADMIN_TOKEN이
+   비어 있으면(설정을 안 한 상태) "누구나 통과"가 아니라 "관리자 기능
+   자체가 아직 준비 안 됨"으로 정직하게 막는다(빈 문자열끼리 비교해
+   토큰 없이도 통과하는 사고 방지). */
+function requireAdmin(req, res) {
+  if (!config.adminToken) { sendJson(res, 501, { ok: false, reason: 'admin-not-configured' }); return false; }
+  const token = bearerToken(req);
+  if (!token || token !== config.adminToken) { sendJson(res, 401, { ok: false, reason: 'unauthorized' }); return false; }
+  return true;
+}
+
 async function handle(req, res) {
   const url = new URL(req.url, 'http://localhost');
   const { pathname } = url;
@@ -98,7 +112,7 @@ async function handle(req, res) {
     }
     if (req.method === 'POST' && pathname === '/api/auth/verify-code') {
       const body = JSON.parse((await readBody(req)) || '{}');
-      const result = verifyLoginCode(body.email, body.code);
+      const result = verifyLoginCode(body.email, body.code, body.inviteCode);
       return sendJson(res, result.ok ? 200 : (result.reason === 'locked' ? 429 : 400), result);
     }
     if (req.method === 'POST' && pathname === '/api/auth/logout') {
@@ -287,6 +301,64 @@ async function handle(req, res) {
     if (req.method === 'GET' && pathname === '/api/affiliates') {
       const city = url.searchParams.get('city') || '';
       return sendJson(res, 200, { ok: true, offers: activeOffersForCity(city) });
+    }
+
+    // 2026-09-11 재검토(9차) 6-4절 — "불편함 보내기"(로그인 없이도
+    // 가능 — 아직 로그인 못 한 상태에서 겪은 문제도 알려야 하므로)와
+    // 코스 생성 직후 짧은 설문(로그인 필수 — 계정 단위 응답).
+    if (req.method === 'POST' && pathname === '/api/feedback') {
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const accountId = accountForToken(bearerToken(req));
+      const result = submitFeedback({ accountId, type: body.type, description: body.description, contact: body.contact, diagnostic: body.diagnostic }, clientIp(req));
+      return sendJson(res, result.status, result);
+    }
+    if (req.method === 'POST' && pathname === '/api/feedback/survey') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const result = submitUsageSurvey({ accountId, tripId: body.tripId, actuallyTraveled: body.actuallyTraveled, biggestBlocker: body.biggestBlocker });
+      return sendJson(res, result.status, result);
+    }
+
+    // 소규모 관리자 화면(src/design/admin.html) 전용 API — 전부
+    // requireAdmin을 거친다(ADMIN_TOKEN 미설정 시 501로 정직하게 막힘).
+    if (req.method === 'GET' && pathname === '/api/admin/feedback') {
+      if (!requireAdmin(req, res)) return;
+      const result = adminListFeedback({ status: url.searchParams.get('status') || undefined, type: url.searchParams.get('type') || undefined });
+      return sendJson(res, result.status, result);
+    }
+    const adminFeedbackStatusMatch = pathname.match(/^\/api\/admin\/feedback\/([^/]+)\/status$/);
+    if (adminFeedbackStatusMatch && req.method === 'POST') {
+      if (!requireAdmin(req, res)) return;
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const result = adminUpdateFeedbackStatus(decodeURIComponent(adminFeedbackStatusMatch[1]), body.status);
+      return sendJson(res, result.status, result);
+    }
+    if (req.method === 'GET' && pathname === '/api/admin/invite-codes') {
+      if (!requireAdmin(req, res)) return;
+      const result = adminListInviteCodes(openDb());
+      return sendJson(res, result.status, result);
+    }
+    if (req.method === 'POST' && pathname === '/api/admin/invite-codes') {
+      if (!requireAdmin(req, res)) return;
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const result = adminCreateInviteCode(openDb(), { maxUses: body.maxUses, ttlDays: body.ttlDays });
+      return sendJson(res, result.status, result);
+    }
+    const adminInviteDeactivateMatch = pathname.match(/^\/api\/admin\/invite-codes\/([^/]+)\/deactivate$/);
+    if (adminInviteDeactivateMatch && req.method === 'POST') {
+      if (!requireAdmin(req, res)) return;
+      const result = adminDeactivateInviteCode(openDb(), decodeURIComponent(adminInviteDeactivateMatch[1]));
+      return sendJson(res, result.status, result);
+    }
+    if (req.method === 'GET' && pathname === '/api/admin/recruitment-pause') {
+      if (!requireAdmin(req, res)) return;
+      return sendJson(res, 200, { ok: true, paused: isRecruitmentPaused(), requireInviteCodeForSignup: config.requireInviteCodeForSignup });
+    }
+    if (req.method === 'POST' && pathname === '/api/admin/recruitment-pause') {
+      if (!requireAdmin(req, res)) return;
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const paused = setRecruitmentPaused(!!body.paused);
+      return sendJson(res, 200, { ok: true, paused });
     }
 
     if (req.method === 'POST' && pathname === '/api/waitlist') {

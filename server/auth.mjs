@@ -23,6 +23,8 @@ import { openDb, uuid, nowIso } from './db.mjs';
 import { config } from './config.mjs';
 import { sendEmail } from './adapters/email.mjs';
 import { checkAndIncrement, hourWindow } from './rate-limit.mjs';
+import { isRecruitmentPaused } from './app-flags.mjs';
+import { checkInviteCodeForNewAccount, consumeInviteCodeForNewAccount } from './invite-codes.mjs';
 
 function genCode() {
   return String(crypto.randomInt(0, 1000000)).padStart(6, '0');
@@ -66,13 +68,29 @@ export async function requestLoginCode(email, ip) {
   return { ok: true };
 }
 
-function loginOrCreateAccount(db, email) {
+/* 2026-09-11 재검토(9차) 6-4절 — 초대 코드 게이트는
+   config.requireInviteCodeForSignup이 꺼져 있으면(기본값) 이 함수는
+   예전과 완전히 동일하게 동작한다(기존 열린 가입 흐름·회귀 테스트
+   보존). 켜져 있을 때만, "이 이메일로 계정이 아직 없을 때"(진짜
+   신규 가입일 때)만 초대 코드를 확인·소모한다 — 이미 있는 계정의
+   재로그인은 초대 코드와 전혀 무관하다. */
+function loginOrCreateAccount(db, email, inviteCode) {
   const existing = db.prepare('SELECT id FROM accounts WHERE email = ?').get(email);
-  if (existing) return existing.id;
+  if (existing) return { ok: true, accountId: existing.id, isNew: false };
+  if (config.requireInviteCodeForSignup) {
+    if (isRecruitmentPaused()) return { ok: false, reason: 'recruitment-paused' };
+    const check = checkInviteCodeForNewAccount(db, inviteCode);
+    if (!check.ok) return { ok: false, reason: check.reason };
+    const id = uuid();
+    db.prepare('INSERT INTO accounts (id, email, created_at, plan) VALUES (?, ?, ?, ?)')
+      .run(id, email, nowIso(), 'free');
+    consumeInviteCodeForNewAccount(db, check.code, id);
+    return { ok: true, accountId: id, isNew: true };
+  }
   const id = uuid();
   db.prepare('INSERT INTO accounts (id, email, created_at, plan) VALUES (?, ?, ?, ?)')
     .run(id, email, nowIso(), 'free');
-  return id;
+  return { ok: true, accountId: id, isNew: true };
 }
 
 function isLocked(db, email) {
@@ -95,7 +113,7 @@ function clearFailures(db, email) {
   db.prepare('DELETE FROM login_attempts WHERE email = ?').run(email);
 }
 
-export function verifyLoginCode(email, code) {
+export function verifyLoginCode(email, code, inviteCode) {
   const normalized = String(email || '').trim().toLowerCase();
   const db = openDb();
   if (isLocked(db, normalized)) return { ok: false, reason: 'locked' };
@@ -107,14 +125,26 @@ export function verifyLoginCode(email, code) {
   if (row.consumed) { recordFailure(db, normalized); return { ok: false, reason: 'code-already-used' }; }
   if (new Date(row.expires_at).getTime() < Date.now()) { recordFailure(db, normalized); return { ok: false, reason: 'code-expired' }; }
 
+  // 2026-09-11 재검토(9차) 6-4절 — 초대 코드가 잘못됐다고 해서 방금 이메일로
+  // 받은(다시 요청하려면 쿨다운을 또 기다려야 하는) 로그인 코드까지 태워
+  // 없애면 안 된다. 그래서 로그인 코드를 "사용됨"으로 표시하기 전에
+  // 먼저 확인한다 — 이건 코드 추측 실패가 아니므로 실패 횟수에도 안 넣는다.
+  const existingAccount = db.prepare('SELECT id FROM accounts WHERE email = ?').get(normalized);
+  if (!existingAccount && config.requireInviteCodeForSignup) {
+    const check = checkInviteCodeForNewAccount(db, inviteCode);
+    if (!check.ok) return { ok: false, reason: check.reason };
+  }
+
   db.prepare('UPDATE login_codes SET consumed = 1 WHERE rowid = ?').run(row.rowid);
   clearFailures(db, normalized);
-  const accountId = loginOrCreateAccount(db, normalized);
+  const accountResult = loginOrCreateAccount(db, normalized, inviteCode);
+  if (!accountResult.ok) return { ok: false, reason: accountResult.reason };
+  const accountId = accountResult.accountId;
   const token = crypto.randomBytes(24).toString('hex');
   const expiresAt = new Date(Date.now() + config.sessionTtlSeconds * 1000).toISOString();
   db.prepare('INSERT INTO sessions (token, account_id, created_at, expires_at) VALUES (?, ?, ?, ?)')
     .run(token, accountId, nowIso(), expiresAt);
-  return { ok: true, token, accountId };
+  return { ok: true, token, accountId, isNew: accountResult.isNew };
 }
 
 export function accountForToken(token) {

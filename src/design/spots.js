@@ -36,6 +36,21 @@ let sortMode = 'recent';
 // 6-2절 — 세부 다중 태그 필터(상위분류 filter와 별개, AND 조건으로 겹쳐 씀).
 // 지금 보유한 장소 중 실제 존재하는 태그만 칩으로 보여준다(버튼 과잉 방지).
 let activeTags = new Set();
+// 6-4절 — "불편함 보내기"에 같이 보낼 최소 진단정보. appBuild는 배포
+// 파이프라인이 아직 없어 라운드 번호로만 최소 식별한다(정식 semver
+// 아님 — 정직하게 그 정도로만 쓴다). currentScreenLabel은 open()이
+// 호출될 때마다 그 시트의 제목으로 갱신된다. lastErrorCode는 지금은
+// 장소 위치 확인 실패 사유 하나만 부분적으로 채운다(전체 실패 경로를
+// 다 걸지는 않았다 — 이번 라운드의 의도된 최소 범위로 문서에 남긴다).
+const APP_BUILD = 'r9-12';
+let currentScreenLabel = '내 스팟';
+let lastErrorCode = '';
+function daDeviceTypeBucket() {
+  const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
+  if (/iPhone|iPad|iPod/.test(ua)) return 'iOS';
+  if (/Android/.test(ua)) return 'Android';
+  return 'Desktop';
+}
 
 /* 2026-09-10 재검토(7차) — "계정 전환 후 늦게 도착한 응답이 다른 계정
    화면에 섞이지 않게 하라"는 지시. 로그인·로그아웃마다 1씩 올리는
@@ -495,7 +510,7 @@ function render() {
 }
 function resetSearch() { $('#search').value = ''; filter = '전체'; activeTags.clear(); document.querySelectorAll('[data-filter]').forEach((x) => { x.classList.toggle('active', x.dataset.filter === '전체'); x.setAttribute('aria-pressed', x.dataset.filter === '전체'); }); render(); }
 function toggle(id) { selected.has(id) ? selected.delete(id) : selected.add(id); render(); }
-function open(title, html) { $('#sheetLabel').textContent = title; $('#sheetContent').innerHTML = html; if (!sheet.open) sheet.showModal(); }
+function open(title, html) { currentScreenLabel = title; $('#sheetLabel').textContent = title; $('#sheetContent').innerHTML = html; if (!sheet.open) sheet.showModal(); }
 
 /* 상세 시트. 바뀐 것:
    - "샘플" 문구는 usingSample 일 때만
@@ -659,6 +674,7 @@ async function daLookupCandidateSheet(id) {
     //뭉개지 않는다.
     let title = '위치 확인'; let msg;
     const reason = r.json && r.json.reason;
+    lastErrorCode = reason || 'lookup-not-found'; // 6-4절 — "불편함 보내기" 최소 진단정보(부분 커버).
     if (!r.ok && reason === 'unauthorized') {
       showLoginSheet(() => daLookupCandidateSheet(id)); return;
     } else if (!r.ok && (reason === 'account-daily-limit-reached')) {
@@ -936,6 +952,9 @@ async function visitAction(placeId, action, extra) {
     const idx = foodMap.visits.findIndex((x) => x.placeId === placeId);
     if (idx >= 0) foodMap.visits[idx] = r.json.visit; else foodMap.visits.push(r.json.visit);
     A.saveFoodMap(foodMap);
+    // 6-4절 — 가입~피드백 퍼널의 "실사용" 단계 신호. 실제로 방문 완료
+    // 표시를 한 순간만 기록한다(장소명 등은 안 실음).
+    if (action === 'mark') daTrackSafe('place_visited', {});
   }
   daSyncPushSafe();
   // 방문 상태 필터·목록 정렬은 뒤에 있는 화면(#grid)이 근거로 삼는다 —
@@ -1142,19 +1161,35 @@ function showLoginSheet(onSuccess) {
   };
 }
 function showLoginCodeSheet(email, onSuccess) {
+  // 6-4절 — 초대 코드는 평소엔 아무 의미가 없다(서버가 요구하지 않는
+  // 한 그냥 무시된다). 서버가 실제로 소규모 베타 모집을 켰을 때만
+  // (config.requireInviteCodeForSignup) 신규 가입에서 필요해지고, 그때
+  // 서버가 정확한 사유(invite-code-required 등)를 돌려주면 이 입력칸을
+  // 강조해서 다시 시도하게 안내한다.
   open('코드 확인', `<div class="detail"><h2>이메일로 받은 코드를 입력하세요</h2><p>${A.esc(email)}로 6자리 코드를 보냈어요.</p>` +
     `<input class="xinput" id="loginCode" inputmode="numeric" placeholder="6자리 코드" style="width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit">` +
+    `<input class="xinput" id="loginInviteCode" placeholder="초대 코드(안내받은 경우에만)" style="margin-top:8px;width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit">` +
     `<button class="primary" id="loginVerifyBtn" style="margin-top:10px">확인</button>` +
     `<p class="inline-note" id="loginMsg" hidden></p></div>`);
   const msg = (t2) => { const el = $('#loginMsg'); el.textContent = t2; el.hidden = false; };
   $('#loginVerifyBtn').onclick = async () => {
     const code = $('#loginCode').value.trim();
+    const inviteCode = $('#loginInviteCode').value.trim();
     const btn = $('#loginVerifyBtn');
     btn.disabled = true; btn.textContent = '확인 중…';
-    const r = await A.api('/api/auth/verify-code', { method: 'POST', body: { email, code } });
+    const r = await A.api('/api/auth/verify-code', { method: 'POST', body: { email, code, inviteCode: inviteCode || undefined } });
     if (!r.ok || !r.json || !r.json.token) {
       btn.disabled = false; btn.textContent = '확인';
-      msg(r.json && r.json.reason === 'locked' ? '시도 횟수를 너무 많이 넘겨 잠시 후 다시 시도해 주세요.' : '코드가 맞지 않거나 만료됐어요. 다시 시도해 주세요.');
+      const reasonMsg = {
+        locked: '시도 횟수를 너무 많이 넘겨 잠시 후 다시 시도해 주세요.',
+        'invite-code-required': '지금은 초대 코드가 있어야 새로 가입할 수 있어요. 안내받은 코드를 위 칸에 입력해 주세요.',
+        'invite-code-invalid': '초대 코드가 올바르지 않아요. 다시 확인해 주세요.',
+        'invite-code-expired': '이 초대 코드는 기간이 지났어요. 새 코드를 요청해 주세요.',
+        'invite-code-exhausted': '이 초대 코드는 이미 정원이 다 찼어요. 새 코드를 요청해 주세요.',
+        'recruitment-cap-reached': '지금은 신청 가능한 인원이 다 찼어요. 나중에 다시 시도해 주세요.',
+        'recruitment-paused': '지금은 잠시 신규 가입을 받지 않고 있어요. 나중에 다시 시도해 주세요.',
+      }[r.json && r.json.reason];
+      msg(reasonMsg || '코드가 맞지 않거나 만료됐어요. 다시 시도해 주세요.');
       return;
     }
     // 2026-09-10 재검토(7차) — 로그인마다 세대(epoch)를 올려, 이전
@@ -1164,6 +1199,7 @@ function showLoginCodeSheet(email, onSuccess) {
     sessionEpoch++;
     foodMap.session = { token: r.json.token, email };
     A.saveFoodMap(foodMap);
+    if (r.json.isNew) daTrackSafe('signup_completed', {});
     /* 2026-09-10 재검토(3차): 개인화 코스 생성 자체가 이제 로그인
        뒤에만 가능해졌으므로(daGateThenBuildCourseSheet 참고), "로그인
        전에 만든 코스의 무료체험을 서버에 뒤늦게 알리는" 예전 문제는
@@ -1482,12 +1518,13 @@ function showSavedCourse() {
   const timeList = excluded.filter((p) => reasons[p.id] === 'time-budget');
   const totalKm = (c.totalMeters / 1000).toFixed(1);
   const hours = Math.floor(c.walkTotal / 60), mins = c.walkTotal % 60;
+  const surveyTrip = currentTripForCity(city);
   open('오늘의 코스', `${window.WeatherCard.skeletonHTML(city)}${window.StreetVideo.buttonHTML(city)}<div class="detail">${dayTabsHTML(c)}${tripBlockHTML(city)}<h2>${c.stops.length}곳 · 도보 이동 ${hours ? hours + '시간 ' : ''}${mins}분</h2>` +
     `<p>${c.routedReal ? '실제 도보 경로 기준으로 계산했습니다.' : '실제 경로 연결에 실패해 직선거리 기준으로 추정했습니다(실제와 다를 수 있어요).'} 총 이동 거리 약 ${totalKm}km · 마지막 장소 도착 예정 ${window.CourseGen.clockLabel(c.endAt - (c.stops[c.stops.length - 1] ? c.stops[c.stops.length - 1].dwell : 0))}</p>` +
     stopViews +
     (noCoordsList.length ? `<div class="inline-note">좌표가 없어 이번 코스 계산에서 빠진 곳 ${noCoordsList.length}곳: ${noCoordsList.map((p) => A.esc(p.name)).join(', ')}. 위치를 확인하면 다음 코스에 포함할 수 있어요.</div>` : '') +
     (timeList.length ? `<div class="inline-note">가용 시간 안에 다 들르지 못해 빠진 곳 ${timeList.length}곳: ${timeList.map((p) => A.esc(p.name)).join(', ')}. 쓸 수 있는 시간을 늘리거나 곳 수를 줄이면 포함할 수 있어요.</div>` : '') +
-    `<button class="text-button" data-course-new>새로 만들기</button><button class="primary" data-dismiss>확인</button>${window.Affiliates.placeholderHTML('affiliateSection')}</div>`);
+    `<button class="text-button" data-course-new>새로 만들기</button><button class="primary" data-dismiss>확인</button>${window.Affiliates.placeholderHTML('affiliateSection')}${courseSurveyHTML(surveyTrip && surveyTrip.tripId)}</div>`);
   window.WeatherCard.loadWeatherCard(A, city, spots, c.date);
   // 2026-09-11 재검토(9차) — 최소 제휴 준비. 이 도시에 승인된 실제
   // 제휴가 없으면(지금은 전부 없음) 섹션이 그대로 숨겨진 채로 남는다.
@@ -1526,7 +1563,7 @@ async function profile() {
     `<button class="text-button" id="testLocCustomBtn" style="padding:6px 0">이 좌표로 적용</button>` +
     (testLoc ? `<button class="text-button" id="testLocClearBtn" style="padding:6px 0">테스트 위치 끄기</button>` : '')
     : '';
-  open('내 프로필', `<div class="profile"><div class="avatar">Y</div><h2>나의 여행 기록</h2><p>가고 싶은 곳을 하나씩 모으는 중</p><div class="stats"><div><b>${realCount}</b><span>저장한 스팟</span></div><div><b>${cities.length}</b><span>도시</span></div><div><b>${route.size}</b><span>오늘 갈 곳</span></div></div><p>${A.esc(city)} · ${usingSample ? '샘플 컬렉션' : '내 데이터'}</p>${loggedInEmail ? `<p class="inline-note">${A.esc(loggedInEmail)}로 로그인됨</p>` : ''}${usageHTML}<button class="primary" data-dismiss>내 스팟으로 돌아가기</button>${usingSample ? '<p>샘플 프로필입니다.</p>' : ''}${loggedInEmail ? '<button class="text-button" data-logout>로그아웃</button>' : ''}${testLocationHTML}</div>`);
+  open('내 프로필', `<div class="profile"><div class="avatar">Y</div><h2>나의 여행 기록</h2><p>가고 싶은 곳을 하나씩 모으는 중</p><div class="stats"><div><b>${realCount}</b><span>저장한 스팟</span></div><div><b>${cities.length}</b><span>도시</span></div><div><b>${route.size}</b><span>오늘 갈 곳</span></div></div><p>${A.esc(city)} · ${usingSample ? '샘플 컬렉션' : '내 데이터'}</p>${loggedInEmail ? `<p class="inline-note">${A.esc(loggedInEmail)}로 로그인됨</p>` : ''}${usageHTML}<button class="primary" data-dismiss>내 스팟으로 돌아가기</button>${usingSample ? '<p>샘플 프로필입니다.</p>' : ''}<button class="text-button" data-feedback-open>불편함 보내기</button>${loggedInEmail ? '<button class="text-button" data-logout>로그아웃</button>' : ''}${testLocationHTML}</div>`);
   if (A.testModeAllowed()) {
     $('#sheetContent').querySelectorAll('[data-test-loc-preset]').forEach((b) => {
       b.onclick = () => {
@@ -1559,6 +1596,73 @@ function renderTestLocationBanner() {
   const loc = A.getTestLocation();
   el.hidden = !loc;
   if (loc) $('#testLocationBannerText').textContent = `🧪 테스트 위치 사용 중: ${loc.label} · 실제 위치 아님(수동 지정)`;
+}
+/* 6-4절 — "불편함 보내기". 로그인 없이도 보낼 수 있다(아직 로그인
+   못 한 상태에서 겪은 문제도 알려야 한다). 화면 스크린샷 첨부는 이번
+   라운드에서 지원하지 않는다 — 개인정보(저장한 장소가 화면에 그대로
+   보임)·초기 운영비용을 고려한 의도적 최소 범위이며, 그 사실을
+   화면에서 숨기지 않고 그대로 알린다. */
+function feedbackSheet() {
+  const typeLabels = { import: '가져오기', 'location-route': '위치·동선', usage: '이용 방법', payment: '결제', other: '기타' };
+  open('불편함 보내기', `<div class="detail"><h2>어떤 게 불편했나요?</h2>` +
+    `<label class="xsmall" style="display:block;margin:10px 0 6px">유형<select id="fbType" style="margin-top:6px;width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit">${Object.entries(typeLabels).map(([k, v]) => `<option value="${A.esc(k)}">${A.esc(v)}</option>`).join('')}</select></label>` +
+    `<label class="xsmall" style="display:block;margin:10px 0 6px">한 줄로 설명해 주세요<textarea id="fbDesc" maxlength="300" style="margin-top:6px;width:100%;box-sizing:border-box;padding:12px 16px;border-radius:16px;border:1px solid #e5e6e1;font:inherit" rows="3"></textarea></label>` +
+    `<label class="xsmall" style="display:block;margin:10px 0 6px">답변받을 연락처(선택)<input class="xinput" id="fbContact" placeholder="이메일 등(선택)" style="margin-top:6px;width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit"></label>` +
+    `<p class="inline-note">화면 스크린샷 첨부는 아직 지원하지 않아요(개인정보·운영비용을 고려해 최소한으로 시작합니다). 대신 앱 버전·현재 화면·기기 종류 정도의 최소 정보만 함께 보내져요 — 저장한 장소 목록이나 정확한 위치, 결제 정보는 절대 같이 보내지 않아요.</p>` +
+    `<button class="primary" id="fbSendBtn" style="margin-top:8px">보내기</button>` +
+    `<p class="inline-note" id="fbMsg" hidden></p></div>`);
+  const msg = (t2) => { const el = $('#fbMsg'); el.textContent = t2; el.hidden = false; };
+  $('#fbSendBtn').onclick = async () => {
+    const type = $('#fbType').value;
+    const description = $('#fbDesc').value.trim();
+    if (!description) { msg('한 줄이라도 설명을 입력해 주세요.'); return; }
+    const contact = $('#fbContact').value.trim();
+    const btn = $('#fbSendBtn'); btn.disabled = true; btn.textContent = '보내는 중…';
+    const token = A.sessionToken(foodMap);
+    const diagnostic = { appBuild: APP_BUILD, screen: currentScreenLabel, deviceType: daDeviceTypeBucket(), errorCode: lastErrorCode || undefined };
+    const r = await A.api('/api/feedback', { method: 'POST', token: token || undefined, body: { type, description, contact: contact || undefined, diagnostic } });
+    if (!r.ok || !r.json || !r.json.ok) {
+      btn.disabled = false; btn.textContent = '보내기';
+      const reasonMsg = {
+        'account-daily-limit-reached': '오늘은 이미 여러 번 보내셨어요. 내일 다시 보내주세요.',
+        'ip-daily-limit-reached': '오늘은 이미 여러 번 보내셨어요. 내일 다시 보내주세요.',
+        'description-too-long': '설명이 너무 길어요. 조금 줄여서 다시 시도해 주세요.',
+      }[r.json && r.json.reason];
+      msg(reasonMsg || '보내지 못했어요. 잠시 후 다시 시도해 주세요.');
+      return;
+    }
+    daTrackSafe('feedback_submitted', { type });
+    open('불편함 보내기', '<div class="detail"><h2>보내주셔서 감사해요.</h2><p>확인 후 반영하겠습니다.</p><button class="primary" data-dismiss>돌아가기</button></div>');
+  };
+}
+/* 6-4절 — 코스가 실제로 만들어진 직후 뜨는 짧은(닫을 수 있는) 설문.
+   코스 사용을 막지 않는다 — 카드 형태로 얹혀 있을 뿐, 안 눌러도 코스
+   화면은 그대로 다 쓸 수 있다. 같은 코스에는 한 번만 보여준다. */
+function courseSurveyHTML(tripId) {
+  if (usingSample || !tripId) return '';
+  foodMap.surveyShownForTrips = foodMap.surveyShownForTrips || [];
+  if (foodMap.surveyShownForTrips.includes(tripId)) return '';
+  return `<div class="inline-note" id="courseSurveyCard" data-survey-trip="${A.esc(tripId)}"><b>실제로 이 코스로 여행하셨나요?</b><br>` +
+    `<button class="text-button" data-survey-answer="yes" style="padding:6px 10px 6px 0">네, 다녀왔어요</button>` +
+    `<button class="text-button" data-survey-answer="no" style="padding:6px 10px">아직요/못 갔어요</button>` +
+    `<label class="xsmall" style="display:block;margin-top:6px">가장 큰 불편이 있었다면(선택)<input class="xinput" id="courseSurveyBlocker" style="margin-top:4px;width:100%;box-sizing:border-box;padding:8px 12px;border-radius:14px;border:1px solid #e5e6e1;font:inherit"></label>` +
+    `<button class="text-button" id="courseSurveySkip" style="padding:6px 0">나중에</button></div>`;
+}
+async function submitCourseSurvey(tripId, actuallyTraveled) {
+  // 카드를 지우기 전에 입력값부터 읽는다 — 순서를 바꾸면 el.remove()가
+  // #courseSurveyBlocker까지 같이 지워 항상 빈 값으로 전송되는 버그가
+  // 생긴다(실제로 재현해 확인한 뒤 고쳤다).
+  const blockerEl = $('#courseSurveyBlocker');
+  const biggestBlocker = blockerEl ? blockerEl.value.trim() : '';
+  foodMap.surveyShownForTrips = foodMap.surveyShownForTrips || [];
+  if (!foodMap.surveyShownForTrips.includes(tripId)) foodMap.surveyShownForTrips.push(tripId);
+  A.saveFoodMap(foodMap);
+  const el = $('#courseSurveyCard');
+  if (el) el.remove();
+  const token = A.sessionToken(foodMap);
+  if (!token) return; // 로그인 안 한 상태(샘플 등)에서는 조용히 건너뜀 — 코스 사용을 막지 않는다.
+  await A.api('/api/feedback/survey', { method: 'POST', token, body: { tripId, actuallyTraveled, biggestBlocker: biggestBlocker || undefined } });
+  daTrackSafe('survey_submitted', { actually_traveled: !!actuallyTraveled });
 }
 function updateCity() {
   $('#cityName').textContent = city;
@@ -1846,6 +1950,19 @@ $('#sheetContent').onclick = (e) => {
   // 그 전까지 이 버튼은 그냥 정적 텍스트일 뿐 iframe도 스크립트도 없다).
   if (b.dataset.streetVideoOpen) return window.StreetVideo.openPanel(b.dataset.streetVideoOpen);
   if (b.hasAttribute('data-street-video-close')) return window.StreetVideo.closePanel();
+  // 6-4절 — "불편함 보내기" + 코스 생성 직후 짧은 설문.
+  if (b.hasAttribute('data-feedback-open')) return feedbackSheet();
+  if (b.dataset.surveyAnswer) {
+    const card = b.closest('[data-survey-trip]');
+    const tripId = card && card.dataset.surveyTrip;
+    if (tripId) submitCourseSurvey(tripId, b.dataset.surveyAnswer === 'yes');
+    return;
+  }
+  if (b.hasAttribute('data-survey-skip') || b.id === 'courseSurveySkip') {
+    const card = document.getElementById('courseSurveyCard');
+    if (card) card.remove();
+    return;
+  }
 };
 /* 2026-09-11 재검토(9차) — 진짜 필드 충돌(daRemergePlaceConflict가
    남긴 _fieldConflicts)을 사용자가 한 번에 해결한다. "다른 기기 값"을

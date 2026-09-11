@@ -346,6 +346,43 @@ export function buildConfig(env) {
     // 나가겠지만, 안전하게 그보다 낮게 잡는다).
     weatherGlobalDailyCap: Number(env.WEATHER_GLOBAL_DAILY_CAP || 2000),
     expectedCurrency: env.PAYMENT_EXPECTED_CURRENCY || 'KRW',
+
+    // 2026-09-11 재검토(9차) 6-4절 — 소규모 베타·피드백 체계.
+    // adminToken이 비어 있으면 관리자 엔드포인트는 "설정 안 됨"으로
+    // 정직하게 막힌다(빈 문자열끼리 비교해 누구나 통과하는 사고 방지 —
+    // server/index.mjs의 requireAdmin 참고).
+    adminToken: env.ADMIN_TOKEN || '',
+    // requireInviteCodeForSignup: 기본값 false. "가격이 미정인 지금은
+    // 실제 유료 모집을 켜지 않는다"는 지시대로, 이 라운드에서 코드는
+    // 전부 준비해 두되 실제로 신규 가입을 초대 코드로 막는 건 사용자가
+    // 명시적으로 이 환경변수를 켰을 때만 시작된다(기본값 유지 시 기존
+    // 열린 가입 흐름·기존 회귀 테스트가 전부 그대로 동작한다).
+    requireInviteCodeForSignup: env.REQUIRE_INVITE_CODE_FOR_SIGNUP === 'true',
+    invite: {
+      // 코드 하나당 기본 허용 인원 — "5명→10명은 예시일 뿐 확정 값이
+      // 아니다"라는 지시를 따라 5보다 살짝 여유 있게 잡되(실제 초대
+      // 발송 실수·한두 명 이탈을 감안), 여전히 "소규모"라 부를 수 있는
+      // 크기로 뒀다. 운영자가 언제든 admin API로 다른 값의 코드를 새로
+      // 만들 수 있다.
+      defaultMaxUses: Number(env.INVITE_CODE_DEFAULT_MAX_USES || 8),
+      defaultTtlDays: Number(env.INVITE_CODE_DEFAULT_TTL_DAYS || 14),
+      // recruitmentTotalCap: 이번 베타 전체를 통틀어 실제로 새 계정을
+      // 만들 수 있는 사람 수의 상한(운영자가 코드를 여러 개 만들어도
+      // 이 총량을 못 넘는다). 초기 운영 여력(문의 응대 1인, 하루 1회
+      // 검토)을 기준으로 "코드 하나(8명)의 3~4배" 정도인 30명을
+      // 제안값으로 둔다 — 확정 아님, 실제로 응대가 밀리면 낮추고
+      // 여유가 있으면 admin API로 코드를 더 만들면 된다.
+      recruitmentTotalCap: Number(env.RECRUITMENT_TOTAL_CAP || 30),
+    },
+    feedback: {
+      maxDescriptionLength: Number(env.FEEDBACK_MAX_DESCRIPTION_LENGTH || 300),
+      // 남용 방지 — 로그인 계정은 하루 10건, 로그인 없는 익명(IP 기준)은
+      // 더 낮게 잡는다(무료 API를 건드리지 않는 순수 DB 쓰기라 비용
+      // 위험은 없지만, 관리자가 하루 한 번 훑어보는 소규모 운영 전제상
+      // 스팸이 몰리면 그 자체가 운영 부담이다).
+      perAccountDailyLimit: Number(env.FEEDBACK_PER_ACCOUNT_DAILY_LIMIT || 10),
+      perIpDailyLimit: Number(env.FEEDBACK_PER_IP_DAILY_LIMIT || 20),
+    },
   };
 }
 
