@@ -37,19 +37,71 @@ if (A.sessionToken(foodMap)) A.refreshTestAccess(A.sessionToken(foodMap));
 // 메모리에만 두고 저장소에 남기지 않는다 — 앱을 다시 열면 다시
 // 물어본다(위치 권한을 앱 진입부터 강요하지 않는다는 원칙과 일관).
 let _myGpsLocation = null;
-/* 거리순 정렬·코스 출발점·(향후) 내 주변 날씨가 전부 같은 기준을
-   쓰도록 하나로 모은 공통 위치 공급 함수. 우선순위: ①서버가 승인한
-   테스트 계정의 테스트 위치(개발자/검증용) ②이번 세션에 실제로 허용
-   받은 GPS ③평균 위치(자동 계산, 사용자가 지정한 값이 아님을 항상
-   "평균 위치"라는 이름으로만 부른다). 좌표를 하나도 못 구하면 null —
-   호출부가 "기준을 못 정함"으로 정직하게 표시한다. */
+// 2026-09-11 재검토(11차) 5절 — "GPS 거절 시 숙소 또는 직접 지정
+// 위치를 쓸 수 있게 해." 숙소(trip.lodging)는 지금 이름 문자열만
+// 저장하고 좌표가 없어(실제 위치 확인을 거친 적 없음) 그대로 기준점
+// 으로 쓸 수 없다 — 대신 사용자가 직접 좌표를 입력하는 경로를 모든
+// 사용자에게 연다(예전엔 테스트 계정 전용 화면에만 있었다). GPS와
+// 마찬가지로 세션 메모리에만 두고 저장소·서버에는 절대 안 보낸다.
+let _myManualLocation = null;
+/* 거리순 정렬·코스 출발점이 전부 같은 기준을 쓰도록 하나로 모은
+   공통 위치 공급 함수. 우선순위: ①서버가 승인한 테스트 계정의 테스트
+   위치(개발자/검증용) ②이번 세션에 실제로 허용받은 GPS ③사용자가
+   직접 입력한 좌표(GPS를 거절했을 때의 대안) ④평균 위치(자동 계산,
+   사용자가 지정한 값이 아님을 항상 "평균 위치"라는 이름으로만
+   부른다). 좌표를 하나도 못 구하면 null — 호출부가 "기준을 못 정함"
+   으로 정직하게 표시한다.
+   "내 주변 날씨"는 아직 구현되지 않았다(2026-09-11 재검토 11차 —
+   "향후"라는 주석만 있던 상태를 그대로 연결 완료로 보고하지 말라는
+   지시에 따라 명시적으로 남긴다). 실제로 만들 때는 이 함수를 그대로
+   재사용해야 한다 — 목적지 날씨(weather-card.js)는 의도적으로 GPS를
+   전혀 안 쓰는 별개 기준이니 혼동하지 않는다. */
 function daLocationBasis() {
   const testLoc = A.testModeAllowed() ? A.getTestLocation() : null;
   if (testLoc) return { lat: testLoc.lat, lng: testLoc.lng, source: 'test', label: `${A.t('location.testPrefix')}(${testLoc.label})` };
   if (_myGpsLocation) return { lat: _myGpsLocation.lat, lng: _myGpsLocation.lng, source: 'gps', label: A.t('location.gps') };
+  if (_myManualLocation) return { lat: _myManualLocation.lat, lng: _myManualLocation.lng, source: 'manual', label: '직접 지정 위치' };
   const avg = A.centroid(spots.filter((p) => p.city === city));
   if (avg) return { lat: avg.lat, lng: avg.lng, source: 'average', label: A.t('location.average') };
   return null;
+}
+/* 2026-09-11 재검토(11차) 5절 — "거리순 옆에서 '내 위치 기준'을
+   선택하면 그때 GPS 권한을 요청해. 앱 시작부터 위치 팝업을 띄우지
+   마." 이 함수는 사용자가 버튼을 직접 눌렀을 때만 호출된다(자동
+   실행 없음). 테스트 위치가 이미 켜져 있으면 그게 우선이므로 굳이
+   실제 GPS를 부르지 않는다(daLocationBasis와 같은 우선순위를 존중). */
+function daRequestMyLocation() {
+  if (A.testModeAllowed() && A.getTestLocation()) { daToast('테스트 위치가 켜져 있어 그 값을 그대로 씁니다.'); return; }
+  if (!navigator.geolocation) { manualLocationSheet(); return; }
+  daToast('위치 확인 중…');
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      _myGpsLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      render();
+      daToast('내 위치를 기준으로 정렬했어요.');
+    },
+    () => { manualLocationSheet(); },
+    { enableHighAccuracy: true, timeout: 10000 },
+  );
+}
+/* GPS를 거절했거나 지원하지 않을 때의 대안 — 좌표를 직접 입력한다
+   (예: 숙소 좌표를 지도에서 확인해 붙여넣기). 서버에는 전혀 안
+   보내고 이 세션(메모리)에만 둔다 — 테스트 위치와 달리 관리자 승인이
+   필요 없는 일반 사용자용 대안이다. */
+function manualLocationSheet() {
+  open('직접 위치 입력', `<div class="detail"><h2>위치 확인을 못 받았어요</h2><p>좌표를 알고 있으면(예: 숙소 위치) 직접 입력해서 거리순 기준으로 쓸 수 있어요. 입력한 좌표는 이 기기의 지금 화면에서만 쓰이고 저장·전송되지 않아요.</p>` +
+    `<label class="xsmall" style="display:block;margin:10px 0 6px">위도<input class="xinput" id="manualLocLat" placeholder="예: 33.5904" style="margin-top:6px;width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit"></label>` +
+    `<label class="xsmall" style="display:block;margin:10px 0 6px">경도<input class="xinput" id="manualLocLng" placeholder="예: 130.4207" style="margin-top:6px;width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit"></label>` +
+    `<button class="primary" id="manualLocApplyBtn" style="margin-top:10px">이 좌표로 적용</button><button class="text-button" data-dismiss>평균 위치로 계속 보기</button></div>`);
+  $('#manualLocApplyBtn').onclick = () => {
+    const lat = parseFloat($('#manualLocLat').value);
+    const lng = parseFloat($('#manualLocLng').value);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) { alert('위도·경도를 숫자로 입력해 주세요.'); return; }
+    _myManualLocation = { lat, lng };
+    render();
+    sheet.close();
+    daToast('직접 입력한 위치를 기준으로 정렬했어요.');
+  };
 }
 
 let city = cities[0] ? cities[0].name : '';
@@ -635,6 +687,14 @@ async function daLogout() {
   delete foodMap.visits;
   delete foodMap.currentTripByCity;
   delete foodMap.deletedPlaceIds;
+  // 2026-09-11 재검토(11차) 5절 — 실제 GPS·직접 입력 위치는 세션
+  // 메모리에만 있어 애초에 저장소에 안 남지만(로그아웃해도 자동으로
+  // 안전), 같은 탭에서 로그아웃 없이 다른 계정으로 곧장 들어오는
+  // 경로는 없다(로그아웃이 항상 먼저다) — 그래도 "이전 계정에서 켠
+  // 위치가 다음 계정 화면에 그대로 남는" 사고를 원천 차단하기 위해
+  // 로그아웃 시점에 명시적으로 비운다.
+  _myGpsLocation = null;
+  _myManualLocation = null;
   A.saveFoodMap(foodMap);
   // 2026-09-11 재검토(10차) — 기준선(baseline) 지속 저장을 도입하면서
   // 새로 생긴 책임: 이 계정의 마지막 동기화 기준선이 다음 계정으로
@@ -708,10 +768,22 @@ function render() {
           ? `기준: ${basis.label} · 실제 GPS 아님 · 좌표 없는 곳은 맨 아래`
           : basis.source === 'gps'
             ? '기준: 내 위치(GPS) · 좌표 없는 곳은 맨 아래'
-            : '기준: 이 도시에 저장된 곳들의 평균 위치 · 좌표 없는 곳은 맨 아래';
+            : basis.source === 'manual'
+              ? '기준: 직접 입력한 위치 · 좌표 없는 곳은 맨 아래'
+              : '기준: 이 도시에 저장된 곳들의 평균 위치 · 좌표 없는 곳은 맨 아래';
     } else {
       basisNote.hidden = true;
     }
+  }
+  // 2026-09-11 재검토(11차) 5절 — 거리순을 고를 때만 "내 위치 기준"
+  // 버튼을 보여준다(다른 정렬에서는 위치 얘기를 꺼낼 이유가 없다).
+  // 테스트 위치가 이미 켜져 있으면 그게 최우선이라 버튼을 눌러도
+  // 바뀌는 게 없으므로 숨긴다(혼란 방지).
+  const useMyLocationBtn = $('#useMyLocationBtn');
+  if (useMyLocationBtn) {
+    const testLocActive = A.testModeAllowed() && !!A.getTestLocation();
+    useMyLocationBtn.hidden = sortMode !== 'distance' || testLocActive;
+    if (!useMyLocationBtn.hidden) useMyLocationBtn.textContent = (basis && basis.source === 'gps') ? '내 위치 다시 확인' : '내 위치 기준으로 보기';
   }
   $('#count').textContent = list.length;
   $('#clear').hidden = !q;
@@ -2209,8 +2281,17 @@ function importDone(perFile, skipped) {
     : '';
   open('가져오기 결과', `<div class="detail import-flow"><span class="flow-tag">실제 결과</span><h2>${added + updated}곳을 확인했어요.</h2><p>도시별로 모아뒀어요.</p><div class="import-summary"><span><b>${added}</b>새로 추가</span><span><b>${updated}</b>자동 갱신</span><span><b>${total}</b>전체</span></div>${dupCandidates ? `<p class="inline-note">그중 ${dupCandidates}곳은 이름이 같은 기존 장소가 있었어요. 자동으로 합치지 않았습니다 — 장소 상세에서 같은 곳인지 확인해 주세요.</p>` : ''}${fileList}${cities.map((c) => `<button class="city-option" data-city="${A.esc(c.name)}"><span class="city-initial">${A.esc(c.name.slice(0, 1))}</span><span><b>${A.esc(c.name)}</b><small>${c.count}곳</small></span><span class="city-check">↗</span></button>`).join('')}<small>실제 파일 분석 결과입니다.${unknown ? ' 그중 ' + unknown + '곳은 도시를 확인 못 해 "지역 확인 필요"로 넣어 뒀어요 — 여러 개 선택해서 한 번에 지정할 수 있어요.' : ''}</small></div>`);
 }
+/* 2026-09-11 재검토(11차) 5절 — 예전엔 "GPS 연결 전인 화면"이라고
+   스스로 밝히는 자리표시자였다(위치를 수집하지도, 거리순으로
+   정렬하지도 않음). 이제 이 버튼을 누르면 실제로 daRequestMyLocation
+   (거리순 옆 버튼과 완전히 같은 함수 — 앱 시작이 아니라 이 버튼을
+   누른 지금 이 순간에만 위치 권한을 요청한다)을 부르고, 메인 화면을
+   거리순으로 전환해 보여준다. */
 function nearby() {
-  open('내 주변', `<div class="detail"><h2>지금 가까운 곳부터.</h2><p>현재 위치를 출발점으로, ${A.esc(city)}에 저장한 장소를 가까운 순서로 보여줄 공간입니다.</p><div class="inline-note">선택한 여행지: ${A.esc(city)}<br>위치 권한은 이 기능을 사용할 때만 요청합니다.</div><small>GPS 연결 전인 화면입니다. 현재 위치를 수집하거나 거리순으로 정렬하지 않습니다.</small><button class="primary" data-dismiss>저장한 스팟 계속 보기</button><button class="text-button" data-city-picker>여행지 바꾸기</button></div>`);
+  sortMode = 'distance';
+  if ($('#sortSelect')) $('#sortSelect').value = 'distance';
+  render();
+  daRequestMyLocation();
 }
 
 $('#search').addEventListener('input', render);
@@ -2219,6 +2300,7 @@ if ($('#sortSelect')) {
   $('#sortSelect').value = sortMode;
   $('#sortSelect').addEventListener('change', (e) => { sortMode = e.target.value; render(); });
 }
+if ($('#useMyLocationBtn')) $('#useMyLocationBtn').onclick = daRequestMyLocation;
 $('.filters').onclick = (e) => { const b = e.target.closest('[data-filter]'); if (!b) return; filter = b.dataset.filter; document.querySelectorAll('[data-filter]').forEach((x) => { x.classList.toggle('active', x === b); x.setAttribute('aria-pressed', x === b); }); render(); };
 if ($('#tagFilters')) {
   // 6-2절 — 태그 칩은 단일 선택(filter)과 달리 여러 개를 동시에 켤 수
