@@ -72,10 +72,23 @@ function _stampPlaceVersions(places) {
 }
 /* 서버와 실제로 내용이 맞춰진 직후(로그인 직후 풀, 푸시가 성공적으로
    반영된 항목들) 불러 기준선을 다시 잡는다 — 다음 충돌이 났을 때
-   "그때 이후로 내가 실제로 뭘 고쳤는지"를 정확히 비교할 수 있게. */
-function _resetPlacesSnapshot(places) {
+   "그때 이후로 내가 실제로 뭘 고쳤는지"를 정확히 비교할 수 있게.
+   2026-09-11 재검토(9차) — ChatGPT가 지적한 버그: 충돌 재병합 직후
+   이 함수를 부를 때 places 배열에는 "서버가 실제로 확정한 값"이
+   아니라 "재병합으로 내가 고른 값(merged)"이 섞여 있다. 그 merged를
+   그대로 기준선으로 삼으면, 다음 충돌 판정 때 "내가 방금 지킨 값"과
+   "기준"이 똑같아져 실제로 내가 고친 필드를 "안 건드림"으로 오인해
+   서버 값으로 조용히 되돌려 버릴 수 있다. overrides(id→서버가 지금
+   실제로 확정한 내용)를 주면, 그 id는 places 배열의 값 대신
+   overrides 쪽을 기준선으로 쓴다 — 병합 대기 중인 로컬 픽이 아니라
+   "서버가 진짜로 갖고 있는 값"이 항상 기준이 되게 한다. */
+function _resetPlacesSnapshot(places, overrides) {
   const next = new Map();
-  for (const p of (places || [])) { if (p && p.id) next.set(p.id, _placeContentKey(p)); }
+  for (const p of (places || [])) {
+    if (!p || !p.id) continue;
+    const src = (overrides && overrides.has(p.id)) ? overrides.get(p.id) : p;
+    next.set(p.id, _placeContentKey(src));
+  }
   _placesVersionSnapshot = next;
 }
 /* 충돌 재병합(daRemergePlaceConflict, spots.js)이 "이 장소가 마지막
@@ -649,6 +662,10 @@ function daBuildSpots(foodMap) {
     lat: p.lat, lng: p.lng,
     sourceLists: Array.isArray(p.sourceLists) ? p.sourceLists : [],
     dupCandidateIds: Array.isArray(p.dupCandidateIds) ? p.dupCandidateIds : [],
+    // 2026-09-11 재검토(9차) — 같은 필드를 두 기기가 서로 다르게
+    // 고친 진짜 충돌(daRemergePlaceConflict가 남겨 둔 것). 화면에서
+    // 조용히 사라지지 않게 그대로 넘긴다.
+    fieldConflicts: p._fieldConflicts || null,
   }));
   const byCity = new Map();
   spots.forEach((s) => { byCity.set(s.city, (byCity.get(s.city) || 0) + 1); });

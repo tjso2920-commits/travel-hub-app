@@ -181,6 +181,162 @@ async function loginViaUi(page, email) {
   t('3) 다음 저장으로 서버에도 최종적으로 두 수정이 모두 반영됨', onServer.name === '저장 중에 바꾼 이름' && onServer.note === '첫 번째 수정');
 }
 
+// =====================================================================
+// 4) 2026-09-11 재검토(9차) 재현 A — ChatGPT가 재현한 삭제 충돌 우회.
+//    오래된 기기가 places=[]+삭제 큐(옛 기준버전)로 daSyncPush를 부르면
+//    서버가 삭제 충돌로 정직하게 거절한다. 예전 버그는 여기서 클라이
+//    언트가 삭제 큐의 기준 버전을 서버가 돌려준 "최신" 버전으로 몰래
+//    바꿔서, 다음 저장 때 그 최신 수정(NEW IMPORTANT NOTE)째로 통째로
+//    삭제해 버렸다 — 최신 수정을 검토·병합한 적이 전혀 없는데도.
+// =====================================================================
+{
+  const email = 'sync-devices-4@example.com';
+  const city = '삭제우회도시';
+  const pA = await newPage('A4');
+  await loginViaUi(pA, email);
+  await pA.evaluate((cityName) => {
+    foodMap.places = [{ id: 'p', name: '원래 장소', note: '원래 메모', cat: '기타', catConfirmed: true, city: cityName, cityKnown: true, cityConfirmed: true, sourceLists: [] }];
+    A.saveFoodMap(foodMap);
+  }, city);
+  await pA.evaluate(() => daSyncPushSafe());
+  await pA.waitForTimeout(300); // 서버 버전 1.
+
+  const pB = await newPage('B4');
+  await loginViaUi(pB, email);
+  await pB.waitForTimeout(300);
+  await pB.evaluate(() => { foodMap.places.find((p) => p.id === 'p').note = 'NEW IMPORTANT NOTE'; A.saveFoodMap(foodMap); });
+  await pB.evaluate(() => daSyncPushSafe());
+  await pB.waitForTimeout(300); // 서버 버전 2, note='NEW IMPORTANT NOTE'.
+
+  // A는 이 사실을 전혀 모른 채(기준 버전 1 그대로), 이 장소를 삭제
+  // 큐에 넣고(재현 원문 그대로 — resolveDup을 거치지 않고 데이터
+  // 수준에서 직접) daSyncPush를 부른다.
+  await pA.evaluate(() => {
+    foodMap.places = [];
+    foodMap.deletedPlaceIds = [{ id: 'p', baseVersion: 1 }];
+    A.saveFoodMap(foodMap);
+  });
+  const push1 = await pA.evaluate(() => daSyncPush(A.sessionToken(foodMap)));
+  await pA.waitForTimeout(200);
+  t('4) 삭제 충돌 응답 후 최신 내용(NEW IMPORTANT NOTE)이 로컬에 되살아남(사라지지 않음)', push1.placesOk === true);
+  const restored = await pA.evaluate(() => foodMap.places.find((p) => p.id === 'p'));
+  t('4) 되살아난 장소가 실제로 최신 메모를 담고 있음', !!restored && restored.note === 'NEW IMPORTANT NOTE');
+  const queueAfter = await pA.evaluate(() => foodMap.deletedPlaceIds || []);
+  t('4) 삭제 큐가 기준 버전을 몰래 갈아서 재시도하지 않고 비워짐(자동 재삭제 금지)', queueAfter.length === 0);
+
+  // 혹시라도 다음 저장이 나가더라도(A가 화면을 계속 쓰는 정상 흐름)
+  // 서버의 최신 수정이 지워지면 안 된다 — 재현 원문의 "다음
+  // daSyncPush 호출 시 서버 장소 수가 0이 됨"이 더 이상 일어나지
+  // 않는지 직접 확인한다.
+  await pA.evaluate(() => daSyncPushSafe());
+  await pA.waitForTimeout(300);
+  const serverToken = await pA.evaluate(() => foodMap.session.token);
+  const serverView = await fetch(`${apiBase}/api/places`, { headers: { Authorization: `Bearer ${serverToken}` } }).then((r) => r.json());
+  t('4) 다음 저장 이후에도 서버 장소 수가 0이 되지 않음(삭제 보호 우회 차단)', serverView.places.filter((p) => !p.deleted).length === 1);
+  t('4) 서버에 남은 장소도 최신 메모를 그대로 유지함', serverView.places.find((p) => p.id === 'p' && !p.deleted).note === 'NEW IMPORTANT NOTE');
+}
+
+// =====================================================================
+// 5) 2026-09-11 재검토(9차) 재현 B — 같은 필드를 두 기기가 서로
+//    다르게 고친 진짜 충돌. 예전엔 mine만 채택하고 theirs(서버 값)는
+//    완전히 사라져 다음 자동 저장으로 덮였다("양쪽 수정 보존"과 다른
+//    실제 동작). 이제 내 값을 지키되 서버 값도 _fieldConflicts로
+//    남겨 사용자가 확인할 수 있어야 한다.
+// =====================================================================
+{
+  const email = 'sync-devices-5@example.com';
+  const city = '같은필드충돌도시';
+  const pA = await newPage('A5');
+  await loginViaUi(pA, email);
+  await pA.evaluate((cityName) => {
+    foodMap.places = [{ id: 'p', name: '원래 장소', note: 'base', cat: '기타', catConfirmed: true, city: cityName, cityKnown: true, cityConfirmed: true, sourceLists: [] }];
+    A.saveFoodMap(foodMap);
+  }, city);
+  await pA.evaluate(() => daSyncPushSafe());
+  await pA.waitForTimeout(300); // 서버 버전 1, note='base' — 두 기기가 공유하는 기준.
+
+  const pB = await newPage('B5');
+  await loginViaUi(pB, email);
+  await pB.waitForTimeout(300); // B도 기준(base v1, note='base')을 실제로 받아 옴.
+
+  // B가 먼저 note를 'SERVER'로 고쳐 성공적으로 저장한다(서버 버전 2).
+  await pB.evaluate(() => { foodMap.places.find((p) => p.id === 'p').note = 'SERVER'; A.saveFoodMap(foodMap); });
+  await pB.evaluate(() => daSyncPushSafe());
+  await pB.waitForTimeout(300);
+
+  // A는 이 사실을 전혀 모른 채(기준 여전히 v1, note='base') 같은
+  // 필드를 'LOCAL'로 고쳐 저장을 시도한다 — 서버가 기준 버전 불일치로
+  // 거절해야 하는 진짜 충돌이다.
+  await pA.evaluate(() => { foodMap.places.find((p) => p.id === 'p').note = 'LOCAL'; A.saveFoodMap(foodMap); });
+  await pA.evaluate(() => daSyncPushSafe());
+  await pA.waitForTimeout(400); // 충돌 응답 처리 + 자동 재시도까지 기다린다.
+
+  const afterConflict = await pA.evaluate(() => foodMap.places.find((p) => p.id === 'p'));
+  t('5) 같은 필드 충돌에서도 내 값(LOCAL)이 조용히 사라지지 않고 유지됨', afterConflict.note === 'LOCAL');
+  t('5) 서버 값(SERVER)도 완전히 사라지지 않고 _fieldConflicts로 보존됨', !!afterConflict._fieldConflicts && afterConflict._fieldConflicts.note && afterConflict._fieldConflicts.note.theirs === 'SERVER');
+
+  // 화면(장소 상세)에도 실제로 노출되는지 확인 — buildSpots가
+  // fieldConflicts를 그대로 넘기고, detail()이 안내+버튼을 그린다.
+  const detailText = await pA.evaluate(() => { detail('p'); return document.getElementById('sheetContent').innerText; });
+  t('5) 장소 상세 화면에 충돌 안내가 실제로 표시됨', /다른 기기와 다르게 저장/.test(detailText) && detailText.includes('SERVER'));
+
+  // "다른 기기 값으로 바꾸기"를 누르면 한 번에 해결되고, 반복 확인창
+  // 없이 그 값으로 정리된다.
+  await pA.evaluate(() => { document.querySelector('[data-conflict-resolve]').click(); });
+  await pA.waitForTimeout(100);
+  const afterResolve = await pA.evaluate(() => foodMap.places.find((p) => p.id === 'p'));
+  t('5) "다른 기기 값으로 바꾸기"를 누르면 실제로 그 값이 적용되고 충돌 표시가 사라짐', afterResolve.note === 'SERVER' && !afterResolve._fieldConflicts);
+}
+
+// =====================================================================
+// 6) 2026-09-11 재검토(9차) — "courses/trips/visits 응답도 conflicts를
+//    무시한 통째 대입으로 미저장 변경이 없어지지 않는지 확인하라"는
+//    지시로 발견한 실제 결함. trips.mjs의 syncTrips는 서버가 기준
+//    버전 불일치를 conflicts로 정직하게 보고하는데, 클라이언트가 그
+//    conflicts를 전혀 안 보고 서버가 돌려준 배열(반려된 여행은 옛
+//    값 그대로)을 통째로 덮어써 방금 고친 여행 이름이 조용히
+//    사라졌다.
+// =====================================================================
+{
+  const email = 'sync-devices-6@example.com';
+  const city = '여행충돌도시';
+  const pA = await newPage('A6');
+  await loginViaUi(pA, email);
+  const tripId = await pA.evaluate(async (cityName) => {
+    const token = A.sessionToken(foodMap);
+    const r = await A.api('/api/trips', { method: 'POST', token, body: { city: cityName, name: '원래 여행 이름' } });
+    foodMap.trips = foodMap.trips || [];
+    foodMap.trips.push(r.json.trip);
+    A.saveFoodMap(foodMap);
+    return r.json.trip.tripId;
+  }, city);
+  await pA.waitForTimeout(200); // 서버 버전 1.
+
+  const pB = await newPage('B6');
+  await loginViaUi(pB, email);
+  await pB.evaluate(() => daSyncPushSafe()); // 빈 trips로 push해도 서버 목록을 그대로 받아 온다.
+  await pB.waitForTimeout(300);
+  await pB.evaluate(() => { foodMap.trips.find((t) => t.name === '원래 여행 이름').name = 'B가 바꾼 이름'; });
+  await pB.evaluate(() => daSyncPushSafe());
+  await pB.waitForTimeout(300); // 서버 버전 2, name='B가 바꾼 이름'.
+
+  // A는 이 사실을 전혀 모른 채(기준 여전히 v1) 같은 여행의 이름을
+  // 'A가 바꾼 이름'으로 고쳐 저장을 시도한다 — 기준 버전 불일치로
+  // 거절돼야 하는 진짜 충돌이다.
+  await pA.evaluate(() => { foodMap.trips.find((t) => t.name === '원래 여행 이름').name = 'A가 바꾼 이름'; A.saveFoodMap(foodMap); });
+  await pA.evaluate(() => daSyncPushSafe());
+  await pA.waitForTimeout(400);
+
+  const afterConflict = await pA.evaluate((id) => foodMap.trips.find((t) => t.tripId === id), tripId);
+  t('6) 여행 정보 충돌에서도 내가 방금 고친 이름이 조용히 사라지지 않음', afterConflict.name === 'A가 바꾼 이름');
+
+  await pA.waitForTimeout(400); // 재시도(자동 재병합 로직이 새 버전으로 다시 시도)까지 기다린다.
+  const serverToken = await pA.evaluate(() => foodMap.session.token);
+  const serverView = await fetch(`${apiBase}/api/trips`, { headers: { Authorization: `Bearer ${serverToken}` } }).then((r) => r.json());
+  const onServer = serverView.trips.find((t) => t.tripId === tripId);
+  t('6) 재시도로 결국 A의 최신 수정이 서버에도 반영됨', onServer.name === 'A가 바꾼 이름');
+}
+
 t('최종 콘솔/런타임 오류 0', errs.length === 0);
 if (errs.length) console.log(errs);
 

@@ -102,17 +102,41 @@ function daToast(msg) {
    "서버 데이터와 내 미저장 수정 둘 다 보존"이 대부분의 실제 상황
    (서로 다른 필드를 고침)에서 정확히 맞아떨어지고, 정말 같은 필드를
    양쪽이 고친 드문 경우에도 최소한 내 수정이 조용히 사라지진 않는다. */
+/* 2026-09-11 재검토(9차) — ChatGPT가 실제 코드로 재현한 두 가지 결함을
+   고쳤다.
+   (재현 B-1) 기준(base)을 모를 때 예전엔 {...theirs}만 반환해 아직
+   서버에 한 번도 안 보낸 로컬 미저장 값을 통째로 지웠다. 이제
+   base가 없으면 "mine이 실제로 뭘 고쳤는지" 판별할 방법이 없다고
+   보고, 모든 필드를 "건드렸을 수 있다"고 안전하게 가정해 mine 값을
+   지킨다(서버 값을 잃는 대신, 우연히 같은 값인 필드만 충돌 아님으로
+   건너뛴다).
+   (재현 B-2) 정확히 같은 필드를 양쪽이 서로 다르게 고친 진짜 충돌일
+   때, 예전엔 mine만 채택하고 theirs 쪽 값은 완전히 사라졌다(다음
+   자동 저장으로 덮여 "서버 값도 보존"이라는 보고와 달랐다). 이제
+   mine 값을 지키되(조용히 사라지지 않게) theirs 값도
+   `_fieldConflicts`에 나란히 남겨 둔다 — 사용자가 장소 상세에서
+   "다른 기기 값 쓰기"를 눌러 직접 한 번 풀 수 있게(반복 확인창이
+   아니라 상세 화면의 조용한 안내 + 버튼 하나). 이 값은 다음에 이
+   병합 결과가 실제로 성공 저장되는 순간(성공 경로는 serverPlace를
+   그대로 쓰므로 이 필드가 없다) 자연히 사라진다 — 별도 정리 로직이
+   필요 없다. */
 function daRemergePlaceConflict(mine, base, theirs) {
-  if (!mine) return theirs;
-  if (!base) return { ...theirs }; // 기준 내용을 모르면(극히 드묾) 서버 값을 그대로 신뢰한다.
+  if (!mine) return { ...theirs };
   const merged = { ...theirs };
+  const fieldConflicts = {};
   for (const key of Object.keys(mine)) {
-    if (key === 'id' || key === 'version' || key === 'updatedAt') continue;
-    if (JSON.stringify(mine[key]) !== JSON.stringify(base[key])) merged[key] = mine[key];
+    if (key === 'id' || key === 'version' || key === 'updatedAt' || key === '_fieldConflicts') continue;
+    const mineChanged = base ? (JSON.stringify(mine[key]) !== JSON.stringify(base[key])) : true;
+    if (!mineChanged) continue; // 안 건드림 — 서버 값(merged엔 이미 theirs) 그대로.
+    if (JSON.stringify(mine[key]) === JSON.stringify(theirs[key])) continue; // 우연히 같은 값 — 충돌 아님.
+    merged[key] = mine[key]; // 내가 고쳤을 수 있는 값은 조용히 사라지지 않는다.
+    const theirsChanged = base ? (JSON.stringify(theirs[key]) !== JSON.stringify(base[key])) : true;
+    if (theirsChanged) fieldConflicts[key] = { mine: mine[key], theirs: theirs[key] };
   }
   merged.id = mine.id;
   merged.version = theirs.version; // 다음 시도의 기준 버전 — 서버가 방금 알려준 값.
   merged.updatedAt = new Date().toISOString();
+  if (Object.keys(fieldConflicts).length) merged._fieldConflicts = fieldConflicts;
   return merged;
 }
 
@@ -154,6 +178,7 @@ async function daSyncPush(token) {
   // 적용하지 않는다(그 최신 호출이 알아서 반영한다).
   if (mySeq !== daSyncPushSeq) return { placesOk: false, coursesOk: false, tripsOk: false, visitsOk: false, allOk: false, stale: true };
 
+  let localViewNeedsRefresh = false; // 재병합/삭제충돌 복구로 화면이 보는 spots/cities를 즉시 갱신해야 하는지.
   const placesOk = !!(placesRes.ok && placesRes.json && Array.isArray(placesRes.json.places));
   const coursesOk = !!(coursesRes.ok && coursesRes.json && Array.isArray(coursesRes.json.courses));
   const tripsOk = !!(tripsRes.ok && tripsRes.json && Array.isArray(tripsRes.json.trips));
@@ -170,6 +195,12 @@ async function daSyncPush(token) {
     // 않고, 각 장소마다 "요청 시점 이후 로컬이 더 바뀌었는지"(저장 중
     // 추가 수정) 또는 "충돌로 반려됐는지"를 확인해 필요하면 3-way
     // 재병합한다.
+    // 2026-09-11 재검토(9차) — 재병합이 일어난 장소는 병합 결과(내가
+    // 고른 값)가 아니라 "서버가 지금 실제로 확정한 값"을 다음 기준선
+    // (baseline)으로 남겨야 한다. 병합 결과를 기준으로 삼으면, 방금
+    // 지킨 내 값과 기준이 똑같아져 버려 다음 충돌 때 "안 건드림"으로
+    // 오인해 조용히 서버 값으로 되돌려질 수 있다(ChatGPT 재현).
+    const baselineOverrides = new Map();
     const merged = placesRes.json.places.map((serverPlace) => {
       const mine = (foodMap.places || []).find((p) => p.id === serverPlace.id);
       if (!mine) return serverPlace;
@@ -180,25 +211,51 @@ async function daSyncPush(token) {
       if (!conflict && !changedDuringFlight) return serverPlace; // 가장 흔한 경우 — 그대로 받아들인다.
       const base = A.getPlaceBaseline(serverPlace.id);
       remergedAny = true;
-      return daRemergePlaceConflict(mine, base, conflict ? conflict.serverPlace : serverPlace);
+      const theirsUsed = conflict ? conflict.serverPlace : serverPlace; // 서버가 지금 실제로 갖고 있는 값.
+      baselineOverrides.set(serverPlace.id, theirsUsed);
+      return daRemergePlaceConflict(mine, base, theirsUsed);
     });
     foodMap.places = merged;
-    // 서버가 확정한 값(또는 그 위에 재병합한 값)을 새 기준으로 삼는다
-    // — 지금 이 기기에서 "또" 고친 게 아니라 방금 확정된 값이므로,
-    // 다음 저장 때 이 반영 자체를 새 수정으로 오인하지 않게 한다.
-    A.resyncPlacesBaseline(foodMap.places);
+    // 서버가 확정한 값을 새 기준으로 삼는다 — 재병합이 일어난
+    // 장소는 baselineOverrides에 담아 둔 "서버가 지금 실제로 갖고
+    // 있는 값"을 쓰고(내가 고른 병합 결과가 아니라), 그 외에는
+    // 배열의 값(=serverPlace) 그대로 쓴다.
+    A.resyncPlacesBaseline(foodMap.places, baselineOverrides);
 
-    // 삭제 요청 중 기준 버전이 안 맞아 반려된 것은(그 사이 다른 기기가
-    // 실제로 그 장소를 고쳤다는 뜻) 큐에서 지우지 않고, 서버가 알려준
-    // 최신 버전을 새 기준으로 삼아 다음 시도 때 다시 붙는다 — 이
-    // 기기의 삭제 의도 자체는 잃지 않는다.
+    // 2026-09-11 재검토(9차) — ChatGPT가 재현한 우회: 삭제 요청이
+    // "기준 버전이 안 맞다"고 반려됐을 때(다른 기기가 그 사이 이
+    // 장소를 실제로 고쳤다는 뜻) 예전엔 서버가 돌려준 최신 버전을
+    // 그대로 새 기준으로 삼아 다음 저장 때 다시 삭제를 시도했다 —
+    // 그런데 그 사이 생긴 최신 수정(예: 새 메모)은 생존 장소에 전혀
+    // 병합된 적이 없으므로, 재시도가 성공하는 순간 그 수정이 통째로
+    // 사라진다. 절대 자동으로 재삭제하지 않는다 — 서버의 최신 내용을
+    // 그대로 로컬에 되살리고(데이터 보존), 병합 당시의 survivor와
+    // 다시 중복 후보로 이어 사용자가 최신 내용을 보고 직접 한 번 더
+    // 정리하게 한다(반복 확인창이 아니라 지나가는 안내 하나 + 중복
+    // 후보 표시).
     const deleteConflictById = new Map(conflicts.filter((c) => c.reason === 'stale-base-version-delete' && c.serverPlace).map((c) => [c.placeId, c]));
-    const carriedOver = pendingDeleted.map((item) => {
+    let restoredAny = false;
+    for (const item of pendingDeleted) {
       const dc = deleteConflictById.get(item.id);
-      return dc ? { id: item.id, baseVersion: dc.serverPlace.version } : null;
-    }).filter(Boolean);
+      if (!dc) continue;
+      if ((foodMap.places || []).some((p) => p.id === item.id)) continue; // 이미 다른 경로로 되살아나 있음(중복 방지).
+      const restored = { ...dc.serverPlace, mergeConflictRestored: true };
+      foodMap.places.push(restored);
+      const survivor = item.survivorId ? (foodMap.places || []).find((p) => p.id === item.survivorId) : null;
+      if (survivor) {
+        survivor.dupCandidateIds = Array.isArray(survivor.dupCandidateIds) ? survivor.dupCandidateIds : [];
+        if (!survivor.dupCandidateIds.includes(restored.id)) survivor.dupCandidateIds.push(restored.id);
+        restored.dupCandidateIds = [survivor.id];
+      }
+      restoredAny = true;
+    }
+    // 반려된 삭제는 큐에서 완전히 제거한다(재시도 금지) — 나머지(이번
+    // 응답과 무관하게 이미 있던) 대기 항목만 그대로 남긴다.
     const stillNew = (foodMap.deletedPlaceIds || []).filter((d) => !pendingDeleted.some((pd) => pd.id === d.id));
-    foodMap.deletedPlaceIds = [...carriedOver, ...stillNew];
+    foodMap.deletedPlaceIds = stillNew;
+    if (restoredAny) {
+      daToast('다른 기기에서 방금 수정된 장소가 있어 병합을 취소했어요. 중복 후보에서 다시 확인해 주세요.');
+    }
 
     if (remergedAny) {
       daToast('다른 기기의 수정과 함께 자동으로 합쳐진 장소가 있어요.');
@@ -207,17 +264,73 @@ async function daSyncPush(token) {
       // 막지 않는다).
       setTimeout(() => daSyncPushSafe(), 0);
     }
+    localViewNeedsRefresh = remergedAny || restoredAny;
   }
+  // 2026-09-11 재검토(9차) — ChatGPT가 지적한 점검: "HTTP 200과 충돌
+  // 해결 완료는 다르다"는 원칙이 courses/trips에도 적용되는지 확인한
+  // 결과, 둘 다 places와 똑같은 결함이 있었다 — 서버(account-data.mjs
+  // 의 syncCourses, trips.mjs의 syncTrips)는 기준 버전이 안 맞으면
+  // 그 항목을 반영하지 않고 conflicts로 보고할 뿐인데, 클라이언트는
+  // conflicts를 전혀 안 보고 서버가 돌려준 배열(=반려된 항목은 옛
+  // 값 그대로)을 통째로 대입했다 — 방금 고친 로컬 값이 조용히
+  // 사라진다. places처럼 기준(base) 스냅샷을 따로 추적하진 않지만,
+  // "충돌난 항목은 내가 뭘 고쳤는지 몰라도 최소한 조용히 안 지운다"
+  // 는 원칙(daRemergePlaceConflict의 base-없음 경로와 동일)을 그대로
+  // 적용한다 — 내 값을 지키고 기준 버전만 서버 값으로 올려 재시도한다.
+  // visits는 서버가 충돌 시에도 합집합으로 병합해 돌려주므로(날짜를
+  // 절대 버리지 않음) 그대로 대입해도 안전하다 — 여기서 손대지 않는다.
   if (coursesOk) {
+    const conflicts = Array.isArray(coursesRes.json.conflicts) ? coursesRes.json.conflicts : [];
+    const courseKey = (c) => `${c.city}__${c.date}`;
+    const conflictByKey = new Map(conflicts.filter((c) => c.city && c.date && c.serverCourse).map((c) => [courseKey(c), c]));
+    const mineByKey = new Map((foodMap.courses || []).filter((c) => !c.tripId).map((c) => [courseKey(c), c]));
+    const mergedLegacy = coursesRes.json.courses.map((serverCourse) => {
+      const conflict = conflictByKey.get(courseKey(serverCourse));
+      if (!conflict) return serverCourse;
+      const mine = mineByKey.get(courseKey(serverCourse));
+      if (!mine) return serverCourse;
+      return { ...mine, version: conflict.serverVersion };
+    });
     // account_courses는 tripId 없는 레거시 코스만 담당한다 — trip에
     // 딸린 코스(foodMap.courses 중 tripId 있는 것)는 그대로 두고, 그
     // 부분만 서버의 병합 결과로 맞춘다.
     const tripCourses = (foodMap.courses || []).filter((c) => c.tripId);
-    foodMap.courses = [...coursesRes.json.courses, ...tripCourses];
+    foodMap.courses = [...mergedLegacy, ...tripCourses];
+    if (conflictByKey.size) { daToast('다른 기기와 코스 정보가 달라 다시 맞추는 중이에요.'); setTimeout(() => daSyncPushSafe(), 0); }
   }
-  if (tripsOk) foodMap.trips = tripsRes.json.trips;
+  if (tripsOk) {
+    const conflicts = Array.isArray(tripsRes.json.conflicts) ? tripsRes.json.conflicts : [];
+    const conflictByTripId = new Map(conflicts.filter((c) => c.tripId && c.serverTrip).map((c) => [c.tripId, c]));
+    if (conflictByTripId.size) {
+      const mineByTripId = new Map((foodMap.trips || []).map((t) => [t.tripId, t]));
+      foodMap.trips = tripsRes.json.trips.map((serverTrip) => {
+        const conflict = conflictByTripId.get(serverTrip.tripId);
+        if (!conflict) return serverTrip;
+        const mine = mineByTripId.get(serverTrip.tripId);
+        if (!mine) return serverTrip;
+        return { ...mine, version: conflict.serverVersion };
+      });
+      daToast('다른 기기와 여행 정보가 달라 다시 맞추는 중이에요.');
+      setTimeout(() => daSyncPushSafe(), 0);
+    } else {
+      foodMap.trips = tripsRes.json.trips;
+    }
+  }
   if (visitsOk) foodMap.visits = visitsRes.json.visits;
   A.saveFoodMap(foodMap);
+  // 2026-09-11 재검토(9차) — 재병합·삭제충돌 복구는 사용자가 아무
+  // 조작도 안 했는데 백그라운드에서 foodMap을 바꾼다. 화면이 보는
+  // spots/cities(모듈 전역, buildSpots 결과)를 여기서 갱신해 두지
+  // 않으면 지금 열려 있는 화면(장소 상세의 _fieldConflicts 안내 등)이
+  // 낡은 데이터를 계속 보여준다 — 저장소 왕복(A.loadFoodMap) 없이
+  // 지금 이 foodMap으로 바로 다시 그린다(refreshFromStorage처럼).
+  if (localViewNeedsRefresh) {
+    built = A.buildSpots(foodMap);
+    if (built.spots.length > 0) {
+      usingSample = false; spots = built.spots; cities = built.cities;
+      if (!cities.some((c) => c.name === city)) city = cities[0].name;
+    }
+  }
   return { placesOk, coursesOk, tripsOk, visitsOk, allOk: placesOk && coursesOk && tripsOk && visitsOk };
 }
 function daSyncPushSafe() {
@@ -380,6 +493,19 @@ function detail(id) {
       cityBlock += `<div class="inline-note">${lookupMsg}` +
         (p.url ? `<br><a class="text-button" href="${A.esc(p.url)}" target="_blank" rel="noopener noreferrer">Google 지도에서 직접 열어 확인하기 ↗</a>` : '') +
         `<br><button class="text-button" data-lookup-place="${id}" style="padding:6px 0">서버로 위치 후보 찾아보기 ↗</button></div>`;
+    }
+    if (p.fieldConflicts && Object.keys(p.fieldConflicts).length) {
+      // 2026-09-11 재검토(9차) — 같은 필드를 두 기기가 다르게 고친
+      // 진짜 충돌. 지금은 내 값을 지키고 있다고 밝히고, 원하면 다른
+      // 기기 값으로 한 번에 바꿀 수 있게 한다(반복 확인창이 아니라
+      // 상세 화면의 조용한 안내 + 버튼 하나).
+      const fieldLabel = { note: '메모', cat: '유형', city: '도시', name: '이름', address: '주소' };
+      cityBlock += Object.entries(p.fieldConflicts).map(([key, v]) => {
+        const label = fieldLabel[key] || key;
+        return `<div class="inline-note">${A.esc(label)}이(가) 다른 기기와 다르게 저장돼 있어요 — 지금은 내 값을 유지 중이에요.<br>` +
+          `내 값: “${A.esc(String(v.mine))}” · 다른 기기 값: “${A.esc(String(v.theirs))}”<br>` +
+          `<button class="text-button" data-conflict-resolve="${id}|${A.esc(key)}">다른 기기 값으로 바꾸기</button></div>`;
+      }).join('');
     }
     if (p.dupCandidateIds && p.dupCandidateIds.length) {
       const others = p.dupCandidateIds.map((did) => spots.find((s) => s.id === did)).filter(Boolean);
@@ -1521,6 +1647,7 @@ $('#sheetContent').onclick = (e) => {
   }
   if (b.dataset.dupMerge) { const [x, y] = b.dataset.dupMerge.split('|'); return resolveDup(x, y, 'merge'); }
   if (b.dataset.dupDismiss) { const [x, y] = b.dataset.dupDismiss.split('|'); return resolveDup(x, y, 'dismiss'); }
+  if (b.dataset.conflictResolve) { const [pid, key] = b.dataset.conflictResolve.split('|'); return resolveFieldConflict(pid, key); }
   /* 2026-09-10 재검토(3차): 샘플은 로그인 없이 곧바로 buildCourseSheet로
      간다. 실제 데이터는 daGateThenBuildCourseSheet가 로그인부터
      확인한다 — 무료체험/이용권 여부는 실제 생성 시도 때 서버가
@@ -1569,6 +1696,23 @@ $('#sheetContent').onclick = (e) => {
   if (b.dataset.streetVideoOpen) return window.StreetVideo.openPanel(b.dataset.streetVideoOpen);
   if (b.hasAttribute('data-street-video-close')) return window.StreetVideo.closePanel();
 };
+/* 2026-09-11 재검토(9차) — 진짜 필드 충돌(daRemergePlaceConflict가
+   남긴 _fieldConflicts)을 사용자가 한 번에 해결한다. "다른 기기 값"을
+   선택하면 그 값을 적용하고 충돌 표시를 지운다(내 값은 지금까지
+   그대로 쓰였으니 "내 값 유지"는 이미 적용된 상태라 별도 버튼이
+   필요 없다 — 아무것도 안 누르면 자동으로 내 값이 유지된다). */
+function resolveFieldConflict(placeId, key) {
+  const p = (foodMap.places || []).find((x) => x.id === placeId);
+  if (!p || !p._fieldConflicts || !p._fieldConflicts[key]) return;
+  p[key] = p._fieldConflicts[key].theirs;
+  delete p._fieldConflicts[key];
+  if (!Object.keys(p._fieldConflicts).length) delete p._fieldConflicts;
+  const saved = A.saveFoodMap(foodMap);
+  if (!saved) { foodMap = A.loadFoodMap(); alert('저장에 실패했어요. 브라우저 저장 공간을 확인해 주세요.'); return; }
+  daSyncPushSafe();
+  refreshFromStorage();
+  detail(placeId);
+}
 function resolveDup(aId, bId, action) {
   const result = A.resolveDup(foodMap.places, aId, bId, action);
   if (!result) return;
@@ -1610,7 +1754,13 @@ function resolveDup(aId, bId, action) {
   if (result.mergedId) {
     foodMap.deletedPlaceIds = foodMap.deletedPlaceIds || [];
     if (!foodMap.deletedPlaceIds.some((d) => d.id === result.mergedId)) {
-      foodMap.deletedPlaceIds.push({ id: result.mergedId, baseVersion: result.mergedVersion || 0 });
+      // 2026-09-11 재검토(9차) — survivorId를 함께 실어 둔다. 이 삭제가
+      // 서버에서 "기준 버전이 안 맞다"고 반려되면(다른 기기가 그 사이
+      // 이 장소를 실제로 고쳤다는 뜻) daSyncPush가 자동으로 재삭제하지
+      // 않고, 되살린 최신 내용을 이 survivor와 다시 중복 후보로 이어야
+      // 하는데 그때는 이미 원래 merge 호출 문맥을 알 수 없다 — 그래서
+      // 지금 이 자리에서 미리 남겨 둔다.
+      foodMap.deletedPlaceIds.push({ id: result.mergedId, baseVersion: result.mergedVersion || 0, survivorId: result.survivorId || null });
     }
   }
   const saved = A.saveFoodMap(foodMap);
