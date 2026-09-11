@@ -596,10 +596,22 @@ async function daSyncPush(token) {
     const conflicts = Array.isArray(tagsRes.json.conflicts) ? tagsRes.json.conflicts : [];
     const conflictByTagId = new Map(conflicts.filter((c) => c.tagId && c.serverTag).map((c) => [c.tagId, c]));
     const mineByTagId = new Map((A.rawCustomTags || []).map((tg) => [tg.id, tg]));
+    // 2026-09-11 재검토(13차) — ChatGPT 재현: 태그 저장 요청을 보낸 뒤
+    // (응답 대기 중) 같은 태그를 로컬에서 지우면, 그 태그는 이제
+    // rawCustomTags에 없으므로 mine이 없다 — 예전 코드는 이를 무조건
+    // "다른 기기가 방금 만든, 이 기기가 모르는 태그"로 오인해 응답의
+    // serverTag를 그대로 되살렸다(deletedTagIds엔 여전히 삭제된 것으로
+    // 남아 있는데 목록에는 다시 보이는 모순 상태). 지금 이 시점의
+    // deletedTagIds(요청을 보낸 뒤 새로 추가된 삭제 의사까지 포함)에
+    // 있는 id는 절대 되살리지 않는다 — 화면·로컬 상태 어느 쪽에도.
+    const currentlyDeletedTagIds = new Set((A.deletedTagIds || []).map((d) => d.id));
     const tagBaselineOverrides = new Map();
     const merged = tagsRes.json.tags.map((serverTag) => {
       const mine = mineByTagId.get(serverTag.id);
-      if (!mine) return serverTag; // 이 기기가 모르는 태그(다른 기기가 만듦) — 그대로 받아들인다.
+      if (!mine) {
+        if (currentlyDeletedTagIds.has(serverTag.id)) return null; // 삭제 의사 유지 — 부활시키지 않는다.
+        return serverTag; // 이 기기가 모르는 태그(다른 기기가 만듦) — 그대로 받아들인다.
+      }
       const conflict = conflictByTagId.get(serverTag.id);
       const baseKey = tagRequestSnapshot.get(serverTag.id);
       const mineKey = A.tagContentKey(mine);
@@ -610,7 +622,7 @@ async function daSyncPush(token) {
       const theirsUsed = conflict ? conflict.serverTag : serverTag; // 서버가 지금 실제로 갖고 있는 값.
       tagBaselineOverrides.set(serverTag.id, theirsUsed);
       return daRemergeGenericConflict(mine, base, theirsUsed, ['id']);
-    });
+    }).filter(Boolean);
     const mergedIds = new Set(merged.map((tg) => tg.id));
     const addedDuringOrAfterFlight = (A.rawCustomTags || []).filter((tg) => tg && tg.id && !mergedIds.has(tg.id) && !tagRequestSnapshot.has(tg.id));
     foodMap.customTags = [...merged, ...addedDuringOrAfterFlight];
@@ -659,10 +671,15 @@ async function daSyncPush(token) {
   // "네트워크·서버 응답이 전부 성공했다"만 뜻하고, 별도의
   // hasUnresolvedConflicts로 "그래도 사용자가 아직 정리할 게
   // 남았다"를 구분해 알린다(로그아웃 확인 등에서 사용).
+  // 2026-09-11 재검토(13차) — ChatGPT 지적: hasUnresolvedConflicts가
+  // places/courses/trips만 보고 customTags는 빠뜨려서, 태그 필드
+  // 충돌(_fieldConflicts)이 남아 있어도 fullySynced가 잘못 true로
+  // 보고됐다(로그아웃 시 "미해결 충돌 있음" 경고를 못 띄우는 등).
   const hasUnresolvedConflicts =
     (foodMap.places || []).some((p) => p && p._fieldConflicts && Object.keys(p._fieldConflicts).length) ||
     (foodMap.courses || []).some((c) => c && c._fieldConflicts && Object.keys(c._fieldConflicts).length) ||
-    (foodMap.trips || []).some((tr) => tr && tr._fieldConflicts && Object.keys(tr._fieldConflicts).length);
+    (foodMap.trips || []).some((tr) => tr && tr._fieldConflicts && Object.keys(tr._fieldConflicts).length) ||
+    (foodMap.customTags || []).some((tg) => tg && tg._fieldConflicts && Object.keys(tg._fieldConflicts).length);
   const allOk = placesOk && coursesOk && tripsOk && visitsOk && tagsOk;
   return { placesOk, coursesOk, tripsOk, visitsOk, tagsOk, allOk, hasUnresolvedConflicts, fullySynced: allOk && !hasUnresolvedConflicts };
 }

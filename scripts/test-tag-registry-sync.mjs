@@ -343,6 +343,15 @@ async function seedOnePlace(page, cityName) {
   t('7) 같은 필드를 양쪽이 다르게 고치면 조용히 버리지 않고 내 값을 유지함', afterConflict.label === 'my device label');
   t('7) 다른 기기 값도 사라지지 않고 충돌로 보존됨(_fieldConflicts)', !!afterConflict.conflict && afterConflict.conflict.theirs === 'other device label');
 
+  // 2026-09-11 재검토(13차) — ChatGPT 지적: hasUnresolvedConflicts가
+  // places/courses/trips만 보고 customTags는 빠뜨려서, 태그 필드
+  // 충돌이 이렇게 남아 있어도 fullySynced가 잘못 true였다. 지금 이
+  // 시점(태그에 _fieldConflicts가 실제로 남아 있음)에 daSyncPush를
+  // 다시 불러 반환값을 직접 확인한다.
+  const pushResultWithTagConflict = await pA.evaluate((tok) => daSyncPush(tok), token);
+  t('7) 태그에 미해결 필드 충돌이 남아 있으면 hasUnresolvedConflicts가 true(customTags 반영)', pushResultWithTagConflict.hasUnresolvedConflicts === true);
+  t('7) fullySynced도 함께 false로 보고됨', pushResultWithTagConflict.fullySynced === false);
+
   // 태그 편집 화면에서 이 충돌이 실제로 보이고, 버튼으로 해결할 수 있음.
   await pA.evaluate((c) => { city = c; updateCity(); tagsEditSheet('p1'); }, city);
   await pA.waitForTimeout(150);
@@ -360,6 +369,77 @@ async function seedOnePlace(page, cityName) {
   t('7) 해결하면 충돌 표시가 사라짐', !afterResolve.hasConflict);
   const placeTagsAfterResolve = await pA.evaluate(() => foodMap.places.find((p) => p.id === 'p1').tags);
   t('7) 장소에 붙어 있던 태그 문자열도 새 이름으로 함께 바뀜(연결 유지)', placeTagsAfterResolve.includes('other device label') && !placeTagsAfterResolve.includes('my device label'));
+
+  await pA.close();
+}
+
+// =====================================================================
+// 8) 2026-09-11 재검토(13차) — ChatGPT가 지시한 재현: 태그 저장 요청을
+//    보낸 뒤(응답 대기 중) 그 태그를 로컬에서 삭제하면, 늦게 온 응답의
+//    "mine 없음" 처리가 "다른 기기가 만든 낯선 태그"로 오인해 삭제한
+//    태그를 부활시켰다(deletedTagIds엔 여전히 삭제됐다고 남아 있는데
+//    목록엔 다시 보이는 모순). 실제 네트워크 지연 응답으로 재현한다.
+// =====================================================================
+{
+  const email = 'tagreg-8@example.com';
+  const city = '삭제중되살아남도시';
+  const pA = await newPage('A8');
+  await loginViaUi(pA, email);
+  await seedOnePlace(pA, city);
+  // 주의: 이 태그를 장소에는 붙이지 않는다 — 붙이면 daDeleteCustomTag가
+  // 그 장소의 tags 배열도 함께 바꾸는데, 그러면 "저장 중 장소가 또
+  // 바뀜" 보호 로직(changedDuringFlight)이 별도로 반응해 즉시 재시도
+  // 푸시를 스스로 발동시켜(daScheduleConflictRetry) 이 시나리오가 노리는
+  // "느리게 돌아온 응답"을 새 재시도가 앞질러 버린다 — 태그 레지스트리
+  // 자체의 되살리기 버그만 순수하게 재현하려면 장소 연결 없이 만든다.
+  const created = await pA.evaluate(() => {
+    const r = A.createTag('지울태그');
+    A.saveFoodMap(foodMap);
+    return r.tag.id;
+  });
+  await pA.evaluate(() => daSyncPushSafe());
+  await pA.waitForTimeout(300); // 첫 동기화(기준선 확립)가 실제로 끝날 때까지 기다린다.
+  const idAfterFirstSync = await pA.evaluate((tid) => (A.rawCustomTags.find((t) => t.id === tid) || {}).id, created);
+  t('8) 준비 확인 — 첫 동기화로 태그가 실제로 서버에 저장됨', idAfterFirstSync === created);
+
+  // 다음 /api/tags 요청 응답을 일부러 늦춘다(진짜 네트워크 지연 재현).
+  let delayedOnce = false;
+  await pA.route('**/api/tags', async (route) => {
+    if (route.request().method() === 'PUT' && !delayedOnce) {
+      delayedOnce = true;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    await route.continue();
+  });
+  // 저장 요청을 시작한다(이 순간의 로컬 내용 = '지울태그'가 여전히 존재하는 채로 나감).
+  await pA.evaluate(() => { window.__pushDone8 = daSyncPushSafe(); });
+  await pA.waitForTimeout(80); // 요청이 실제로 나간 뒤, 응답이 오기 전.
+  // 바로 그 사이(응답 대기 중) 이 태그를 로컬에서 지운다(실제 삭제 흐름 그대로).
+  await pA.evaluate((tid) => {
+    const tag = A.rawCustomTags.find((x) => x.id === tid);
+    A.deleteCustomTag(tid, foodMap.places);
+    A.saveFoodMap(foodMap);
+  }, created);
+  const rightAfterDelete = await pA.evaluate((tid) => ({
+    stillInRegistry: A.rawCustomTags.some((x) => x.id === tid),
+  }), created);
+  t('8) 삭제 직후 — 태그 레지스트리에서 즉시 빠짐', !rightAfterDelete.stillInRegistry);
+
+  await pA.waitForTimeout(700); // 지연된 응답이 처리될 시간을 준다.
+  const afterDelayedResponse = await pA.evaluate((tid) => ({
+    revivedInRegistry: A.rawCustomTags.some((x) => x.id === tid),
+    stillMarkedDeleted: (A.deletedTagIds || []).some((d) => d.id === tid),
+  }), created);
+  t('8) 늦게 온 저장 응답이 삭제한 태그를 레지스트리에 되살리지 않음', !afterDelayedResponse.revivedInRegistry);
+  t('8) deletedTagIds에는 여전히 삭제된 것으로 남아 다음 push에서 재시도됨(모순 상태 없음)', afterDelayedResponse.stillMarkedDeleted);
+
+  // 이어지는 daSyncPushSafe(재시도)까지 실제로 끝난 뒤 서버 쪽도 정말
+  // 삭제됐는지(부활한 채로 서버에 반영되지 않았는지) 확인한다.
+  await pA.evaluate(() => daSyncPushSafe());
+  await pA.waitForTimeout(300);
+  const token8 = await pA.evaluate(() => foodMap.session.token);
+  const serverTags8 = await fetch(`${apiBase}/api/tags`, { headers: { Authorization: `Bearer ${token8}` } }).then((r) => r.json());
+  t('8) 서버에도 최종적으로 삭제가 실제로 반영됨', !serverTags8.tags.some((x) => x.id === created));
 
   await pA.close();
 }
