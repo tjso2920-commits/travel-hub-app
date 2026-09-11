@@ -6,11 +6,19 @@
  * 뺐다(사용자가 직접 유형을 고르는 드롭다운에 노출되면 안 되는
  * 내부용 구분이기 때문).
  *
- * diagnostic은 딱 4개 키(appBuild/screen/errorCode/deviceType)만
- * 허용한다 — "전체 저장목록·정밀 GPS·결제정보는 기본으로 절대 수집
- * 하지 않는다"는 지시를 코드 구조로 보장하기 위해 화이트리스트 이외의
- * 어떤 키도 저장하지 않는다(클라이언트가 실수로든 고의로든 더 많이
- * 보내도 서버가 걸러낸다).
+ * diagnostic은 딱 5개 키(appBuild/screen/errorCode/deviceType/
+ * browserType)만 허용한다 — "전체 저장목록·정밀 GPS·결제정보는 기본
+ * 으로 절대 수집하지 않는다"는 지시를 코드 구조로 보장하기 위해
+ * 화이트리스트 이외의 어떤 키도 저장하지 않는다(클라이언트가 실수로든
+ * 고의로든 더 많이 보내도 서버가 걸러낸다).
+ *
+ * 2026-09-11 재검토(12차) — "실기기는 소수 베타 참가자에게 배분할
+ * 체크리스트로, 자동검사는 기기·브라우저·실패단계·오류ID를 함께
+ * 확인할 수 있게 준비하라"는 지시 반영. deviceType(iOS/Android/
+ * Desktop)만으로는 "어느 브라우저·인앱 브라우저였는지"를 구분할 수
+ * 없어 browserType 키를 추가했다(daBrowserBucket, src/design/spots.js
+ * — User-Agent 문자열 기반 최선의 추정일 뿐, 실제 브라우저 식별을
+ * 보장하지 않는다는 한계를 그대로 인정한다).
  */
 import { openDb, uuid, nowIso } from './db.mjs';
 import { config } from './config.mjs';
@@ -18,7 +26,7 @@ import { checkAndIncrement, dayWindow } from './rate-limit.mjs';
 
 export const ALLOWED_FEEDBACK_TYPES = new Set(['import', 'location-route', 'usage', 'payment', 'other']);
 const ALLOWED_STATUSES = ['received', 'in_progress', 'resolved'];
-const DIAGNOSTIC_ALLOWED_KEYS = ['appBuild', 'screen', 'errorCode', 'deviceType'];
+const DIAGNOSTIC_ALLOWED_KEYS = ['appBuild', 'screen', 'errorCode', 'deviceType', 'browserType'];
 
 function sanitizeDiagnostic(raw) {
   const out = {};

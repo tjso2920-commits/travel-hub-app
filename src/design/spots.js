@@ -130,6 +130,24 @@ function daDeviceTypeBucket() {
   if (/Android/.test(ua)) return 'Android';
   return 'Desktop';
 }
+/* 2026-09-11 재검토(12차) — "기기뿐 아니라 브라우저도 함께 확인할 수
+   있게" 지시 반영. User-Agent 문자열만으로 하는 최선의 추정이다 —
+   순서가 판정에 중요하다(인앱 브라우저·Samsung Internet은 그 안에
+   Chrome/Safari 흔적 문자열도 함께 들어 있어서, 더 구체적인 표시부터
+   먼저 검사해야 오분류하지 않는다). 실제 브라우저 식별을 보장하지
+   않는다 — UA 문자열은 언제든 다를 수 있고 위조도 가능하다. */
+function daBrowserBucket() {
+  const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
+  if (/Instagram/i.test(ua)) return 'Instagram 인앱';
+  if (/(?:BARCELONA|Barcelona).*Threads|Threads/i.test(ua)) return 'Threads 인앱';
+  if (/FBAN|FBAV|FB_IAB/i.test(ua)) return 'Facebook 인앱';
+  if (/SamsungBrowser/i.test(ua)) return 'Samsung Internet';
+  if (/EdgiOS|Edg\//i.test(ua)) return 'Edge';
+  if (/CriOS|Chrome/i.test(ua)) return 'Chrome';
+  if (/FxiOS|Firefox/i.test(ua)) return 'Firefox';
+  if (/Safari/i.test(ua) && !/Chrome/i.test(ua)) return 'Safari';
+  return '알수없음';
+}
 
 /* 2026-09-10 재검토(7차) — "계정 전환 후 늦게 도착한 응답이 다른 계정
    화면에 섞이지 않게 하라"는 지시. 로그인·로그아웃마다 1씩 올리는
@@ -2163,7 +2181,7 @@ function feedbackSheet() {
     const contact = $('#fbContact').value.trim();
     const btn = $('#fbSendBtn'); btn.disabled = true; btn.textContent = '보내는 중…';
     const token = A.sessionToken(foodMap);
-    const diagnostic = { appBuild: APP_BUILD, screen: currentScreenLabel, deviceType: daDeviceTypeBucket(), errorCode: lastErrorCode || undefined };
+    const diagnostic = { appBuild: APP_BUILD, screen: currentScreenLabel, deviceType: daDeviceTypeBucket(), browserType: daBrowserBucket(), errorCode: lastErrorCode || undefined };
     const r = await A.api('/api/feedback', { method: 'POST', token: token || undefined, body: { type, description, contact: contact || undefined, diagnostic } });
     if (!r.ok || !r.json || !r.json.ok) {
       btn.disabled = false; btn.textContent = '보내기';

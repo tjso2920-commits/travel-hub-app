@@ -70,7 +70,11 @@ const savedFeedback = openDb().prepare("SELECT type, description, diagnostic FRO
 t('2) 서버에 실제로 접수됨(유형/설명 그대로)', savedFeedback && savedFeedback.type === 'import' && savedFeedback.description.includes('UI 테스트'));
 const diag = JSON.parse(savedFeedback.diagnostic);
 t('2) 최소 진단정보(appBuild/screen/deviceType)가 실제로 같이 실림', !!diag.appBuild && !!diag.screen && !!diag.deviceType);
-t('2) 진단정보에 저장 목록·정밀 위치 등 허용 안 된 값은 전혀 없음', Object.keys(diag).every((k) => ['appBuild', 'screen', 'errorCode', 'deviceType'].includes(k)));
+// 2026-09-11 재검토(12차) — "기기뿐 아니라 브라우저도 함께 확인할 수
+// 있게" 지시로 browserType이 새로 추가됨. Chromium으로 실행하는 이
+// 테스트에서는 Chrome으로 잡혀야 한다.
+t('2) 브라우저 종류(browserType)도 같이 실림(12차 신규)', diag.browserType === 'Chrome');
+t('2) 진단정보에 저장 목록·정밀 위치 등 허용 안 된 값은 전혀 없음', Object.keys(diag).every((k) => ['appBuild', 'screen', 'errorCode', 'deviceType', 'browserType'].includes(k)));
 
 // =====================================================================
 // 3. 코스 생성 직후 짧은 설문 — 코스 사용을 막지 않고(카드일 뿐), 실제

@@ -148,7 +148,7 @@ async function loadFeedback() {
       `<span class="pill">${typeLabels[it.type] || it.type}</span>` +
       (pri >= 2 ? '<span class="pill priority">우선</span>' : '') +
       `<div>${escapeHtml(it.description)}</div>` +
-      `<small>${it.contact ? '연락처: ' + escapeHtml(it.contact) + ' · ' : ''}${new Date(it.created_at).toLocaleString('ko-KR')} · ${escapeHtml((it.diagnostic && it.diagnostic.deviceType) || '')} ${escapeHtml((it.diagnostic && it.diagnostic.screen) || '')} ${escapeHtml((it.diagnostic && it.diagnostic.errorCode) || '')}</small>` +
+      `<small>${it.contact ? '연락처: ' + escapeHtml(it.contact) + ' · ' : ''}${new Date(it.created_at).toLocaleString('ko-KR')} · ${escapeHtml((it.diagnostic && it.diagnostic.deviceType) || '')} ${escapeHtml((it.diagnostic && it.diagnostic.browserType) || '')} · ${escapeHtml((it.diagnostic && it.diagnostic.screen) || '')} ${escapeHtml((it.diagnostic && it.diagnostic.errorCode) || '')}</small>` +
       `<div style="margin-top:8px">` +
       (it.status !== 'in_progress' ? `<button class="small ghost" data-status="${it.id}|in_progress">처리 중으로</button>` : '') +
       (it.status !== 'resolved' ? `<button class="small ghost" data-status="${it.id}|resolved">해결됨으로</button>` : '') +
