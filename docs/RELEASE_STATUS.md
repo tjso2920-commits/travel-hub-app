@@ -1,6 +1,42 @@
 # 출시 상태 (RELEASE_STATUS)
 
-## -2. 12차 재검토 갱신 요약(가장 최신 — 여기부터 읽기)
+## -3. 13차 재검토 갱신 요약(가장 최신 — 여기부터 읽기)
+
+ChatGPT가 12차 결과물을 검토한 뒤 (1) 우선 재현·수정할 버그 3건,
+(2) Google 로그인 기본화, (3) 한국 가져오기 방향 확정 + 지도 링크
+추가, (4) 실제 AI 공급자 연결, (5) 일본어 실전 회화 연결, (6)~(8)
+가격·실연결 체크리스트·마케팅 문서 확인, (9) 문서 정리를 지시했다.
+아래는 이번 라운드에서 실제로 한 일만 담는다 — 표기 원칙은 이전과
+동일: `실사용 가능` / `코드는 있으나 화면 미연결` / `모의(mock)로만
+검증` / `실제 공급자 미연결` / `실기기(iPhone) 미검증` / `사용자
+다음 행동 필요`.
+
+| 항목 | 수정 위치 | 재현/검증 결과 | 완료 여부 | 상태 | 다음 행동(사용자) |
+|---|---|---|---|---|---|
+| R13-1 태그 저장 중 삭제 복원 버그 | `src/design/spots.js`(daSyncPush 태그 병합, hasUnresolvedConflicts) | 저장 요청 응답 대기 중 같은 태그를 로컬에서 삭제하면 늦게 온 응답이 "다른 기기가 만든 낯선 태그"로 오인해 되살리던 버그를 실제 지연 응답으로 재현·수정(응답 처리 시점의 deletedTagIds를 확인해 부활 차단). hasUnresolvedConflicts가 places/courses/trips만 보고 customTags를 빠뜨려 태그 필드충돌이 남아도 fullySynced가 잘못 true였던 점도 함께 수정. git stash로 재현 확인(`scripts/test-tag-registry-sync.mjs` 8번 신규) | 완료 | `실사용 가능` | 없음 |
+| R13-2 AI 분류 부분 겹침 동시요청 결과 유실 | `server/routes/ai-classify.mjs` | Promise.all([classifyBatchRoute(acc,[shared]), classifyBatchRoute(acc,[shared,other])])로 정확히 재현 — 두 번째 요청의 shared 결과가 사라지던 버그(둘 다 ok:true라 조용히 성공처럼 보임). "지금 진행 중"이라고 발견하는 순간 Promise 참조를 붙잡아 두고 나중에 맵을 다시 조회하지 않도록 수정. unresolvedCount 필드를 응답에 추가해 유실을 성공으로 위장하지 않게 함. git stash로 재현 확인(`server/test/ai-classify-cache-and-budget-race.test.mjs` 7절 신규) | 완료 | `실사용 가능`(순수 서버 로직) | 없음 |
+| R13-3 날씨 공유 조회 fetchedAt 밀리초 불일치 | `server/routes/weather.mjs` | 공유 Promise를 기다리는 각 호출자가 각자 nowIso()를 불러 fetchedAt이 갈라지던 버그(빠른 로컬 실행에선 우연히 같은 밀리초에 걸려 안 보일 수도 있음) — fetchedAt을 실제 조회가 끝나는 .then 콜백 안에서 한 번만 계산해 공유하도록 수정. 밀리초 경계를 운에 맡기지 않고 new Date() 호출마다 강제로 다른 값을 주는 결정론적 테스트로 재현(`server/test/weather-fetchedat-consistency.test.mjs` 신규, 기존 `weather-merge-cap.test.mjs`는 assertion 완화 없이 그대로 통과) | 완료 | `실사용 가능` | 없음 |
+| R13-4 Google 로그인을 기본 진입 방식으로 추가 | `server/adapters/google-auth.mjs`(신규), `server/auth.mjs`, `server/config.mjs`, `server/index.mjs`, `src/design/spots.js` | ID 토큰을 서버가 Google 공개 JWKS로 직접 서명 검증(클라 시크릿 미사용 설계). 이메일 코드 로그인과 완전히 같은 계정 연결 경로(loginOrCreateAccount)를 재사용해, 같은 이메일이면 로그인 방식이 바뀌어도 같은 accountId·같은 무료체험/이용권 상태로 이어짐을 실제로 검증. GOOGLE_CLIENT_ID 없으면 서버 시작은 안 막되 서비스가 정직하게 unavailable(부가 기능). 클라이언트는 GSI 스크립트 로드 실패·인앱 브라우저 차단 시 조용히 이메일 로그인만 남김(깨진 버튼 없음). git stash 불필요(신규 기능, `server/test/google-auth.test.mjs` 16개 + `scripts/test-google-signin-ui.mjs`/`test-google-signin-configured.mjs` 실제 Chromium 검증) | 완료 | `모의(mock)로만 검증`(실제 Google 계정 연결 검증 아님), 코드 구현 완료 | Google Cloud Console에서 실제 OAuth 클라이언트 ID 발급 필요(`OPERATIONS_SETUP.md` 1-5c절) |
+| R13-5 한국 가져오기 방향 확정 + 지도 링크 추가 | `server/routes/place-link.mjs`(신규), `src/design/spots.js` | 한국이 Google Data Portability API 미지원국임을 확인 — 자동 가져오기를 약속·구현하지 않음(기존 확정 흐름 그대로 유지 확인). 신규: 구글맵 장소 링크(축약 링크 포함) 붙여넣기로 한 곳 추가 — Places API 미호출(비용 없음, 이름·좌표 힌트만 추출), 실제 위치 확인은 기존 이용권 한도가 그대로 적용됨. SSRF 방어(축약 링크 최종 호스트도 구글 도메인인지 재확인), 지원 안 하는 링크는 명시적으로 실패 반환(조용한 성공 없음). git stash 불필요(신규 기능, `server/test/place-link.test.mjs` 12개 + `scripts/test-map-link-add.mjs` 실제 Chromium 검증) | 완료 | `실사용 가능` | 없음 |
+| R13-6 실제 AI 자동분류 공급자(Anthropic Claude Haiku 4.5) 연결 | `server/adapters/ai-classify.mjs`, `server/config.mjs` | 공식 가격 확인(WebSearch 교차 확인 — 이 세션에서 anthropic.com 직접 열람은 네트워크 정책상 차단돼 제약을 그대로 남김): 입력 $1/1M, 출력 $5/1M 토큰. raw fetch로 실제 Anthropic Messages API를 부르는 어댑터 신규(이 저장소의 다른 실제 어댑터와 동일한 무-SDK 관례). 응답은 기존 validateClassifyResult로 그대로 검증(AI 출력 맹신 안 함). AI_CLASSIFY_ENABLE_REAL=true AND 실제 ANTHROPIC_API_KEY 둘 다 있어야만 real 모드 켜짐(이중 게이트) — 운영 기본값은 계속 비활성. 실제 키 검증은 안 함 — fetch를 가짜 응답으로 대체한 모의 검증까지(`server/test/ai-classify-real-adapter.test.mjs` 14개) | 완료(모의 검증까지) | `모의(mock)로만 검증`, `실제 공급자 미연결` | 실제 공급자로 켤지, 켠다면 언제 결정(선정 전까지 계속 비활성) |
+| R13-7 일본어 실전 회화("여기서 쓸 말") 연결 | `src/design/phrasebook.js`(신규), `src/design/spots.js` | 기존 옛 디자인의 "일본어" 탭을 확인한 결과 친교용 잡담 고정문장 + 화면 열 때마다 AI가 즉석에서 만드는 13주 커리큘럼뿐이라 그대로 옮기지 않고, 요구된 다섯 상황(주문·계산·교통·숙소·재질문)에 맞는 12문장을 새로 정리(표준 교재 정중체, 원어민 감수 안 받음을 화면에 명시). 기기 SpeechSynthesis만 사용(클릭 시에만 재생), 음성없음/재생실패를 각각 정직하게 안내. 일본 목적지 장소에서만 노출. 실제 Chromium 검증(`scripts/test-phrasebook.mjs` 14개) | 완료 | `실사용 가능`(문장 자체는 원어민 감수 전) | 필요하면 원어민 감수를 별도로 진행 |
+| R13-8 가격·무료/유료 기준 확인 | `docs/BUSINESS_DECISIONS.md`(3-3-9절 신규) | 9,900원 유지(4,900원 베타 여전히 미확정), 무료체험 재열람 무차감을 코드로 재확인(getCourse가 entitlement 미접촉), 로그인 방식 변경해도 무료체험 안 초기화됨을 R13-4 테스트로 실증. 원가표를 API/AI/결제수수료/서버 + 무료비용/실패재시도/환불/지원부담으로 구분 재정리. 내부 안전상한을 확정 이익처럼 서술하지 않는다는 원칙 재확인 | 완료 | `실사용 가능`(문서·검증 작업) | 없음 |
+| R13-9 실제연결·기기검증 체크리스트 + 마케팅 문서 갱신 | `docs/OPERATIONS_SETUP.md`, `docs/MARKETING_LAUNCH_PLAN.md` | Google Cloud Console OAuth 설정 절차, Anthropic 이중 게이트 설정법, 우선순위 체크리스트(이메일·결제→Places/Routes→베타배포→Google로그인→날씨→AI 순) 신규. 마케팅 문서에 13차 신규 기능 상태표 반영 + "Google 로그인하면 자동으로 들어온다"는 오해 소지 문구 금지 추가, 제휴 클릭≠매출 원칙 재확인(기존에 이미 코드로 보장돼 있었음, 문서로 재확인만) | 완료 | `실사용 가능`(문서 작업) | 없음 |
+| R13-10 최종 회귀 + 문서 표 수정 + 전달 | 본 문서, `docs/전달문서_통합본.md` | 문서 4개 전체에서 Markdown 표 헤더/본문 열개수 불일치를 실제로 스캔해 발견(이 문서의 R11/R12 표가 5열 헤더에 6열 본문이었음 — "완료" 칸이 헤더 없이 끼어 있었음) → "완료 여부" 열을 헤더에 추가해 수정. 서버 테스트 전체 + 화면(Chromium) 테스트 전체를 마지막에 한 번에 실행해 회귀 확인 | 완료 | `실사용 가능`(문서·검증 작업) | 없음 |
+
+**이번 라운드에서 실제로 검증한 것과 안 한 것을 분명히 구분**:
+- **실제로 재현·수정하고 자동 테스트로 검증한 것**: 위 표의 R13-1~3
+  (버그 수정), R13-5(지도 링크 추가), R13-7(회화 기능), R13-8~10
+  (문서·회귀).
+- **코드는 실제로 작성했지만 실제 서비스로 검증하지 못한 것**:
+  R13-4(Google 로그인 — 실제 Google 계정 연결 미검증), R13-6(AI
+  공급자 — 실제 API 키 미검증). 둘 다 운영 기본값은 비활성/미설정
+  상태로 남겨 뒀다.
+- **여전히 안 한 것**: 실제 계정·크리덴셜 발급, 실제 결제, 실제
+  기기(iPhone 등) 검증, SNS 게시, git 히스토리 재작성 — 지시대로
+  전부 안 했다.
+
+## -2. 12차 재검토 갱신 요약
 
 ChatGPT가 11차 결과물을 독립적으로 검증(서버 테스트 41개 직접 실행,
 trips 충돌 보존·통합문서 구성 재확인)한 뒤, **기존 테스트에는 없었던
@@ -9,8 +45,8 @@ trips 충돌 보존·통합문서 구성 재확인)한 뒤, **기존 테스트�
 `실사용 가능` / `코드는 있으나 화면 미연결` / `모의(mock)로만 검증` /
 `실제 공급자 미연결` / `실기기(iPhone) 미검증` / `사용자 다음 행동 필요`.
 
-| 항목 | 수정 위치 | 재현/검증 결과 | 상태 | 다음 행동(사용자) |
-|---|---|---|---|---|
+| 항목 | 수정 위치 | 재현/검증 결과 | 완료 여부 | 상태 | 다음 행동(사용자) |
+|---|---|---|---|---|---|
 | R12-1 태그 저장 중 수정 유실 | `src/design/spots.js`(daSyncPush 태그 병합), `src/design/import-adapter.js`(태그 기준선 신규) | ChatGPT가 지적한 정확한 재현 조건(저장 요청 응답 대기 중 같은 태그를 로컬에서 또 고침)을 실제 지연 응답으로 재현 — 예전엔 "태그 충돌은 드물어서 서버값 우선"이라는 처리 때문에 방금 한 수정이 조용히 사라졌다. places/courses/trips와 같은 3-way 재병합(기준선 대조)을 적용해 저장 중 수정을 보존하고, 진짜 같은 필드 충돌은 `_fieldConflicts`로 남겨 태그 편집 화면에서 직접 해결하게 했다(해결 시 장소에 붙은 태그 문자열도 함께 갱신 — 연결 유지). 삭제 충돌이 옛 버전으로 영원히 재시도되던 문제도 서버가 알려준 최신 버전으로 갱신해 수렴하게 고쳤다. git stash로 재현 확인(`scripts/test-tag-registry-sync.mjs` 시나리오 6~7 신규) | 완료 | `실사용 가능` | 없음 |
 | R12-2 AI 분류 캐시 localId 오염 | `server/routes/ai-classify.mjs` | localId A로 분류→캐시된 뒤 완전히 다른 localId B가 우연히 같은 이름·주소·확인유형으로 요청하면 B의 응답에 A의 localId가 그대로 실려 나가던 결함을 실제로 재현. 캐시에는 분류 내용만 저장하고(localId 제외), 응답 조립 시 항상 지금 요청의 localId로 재라벨링하도록 수정. git stash로 재현 확인(`server/test/ai-classify-cache-and-budget-race.test.mjs` 5절 신규) | 완료 | `실사용 가능`(순수 서버 로직) | 없음 |
 | R12-3 AI 동시 요청 중복 처리·비용 이중기록 | `server/routes/ai-classify.mjs` | 같은 계정·입력·분류버전의 캐시미스 요청 두 개를 Promise.all로 보내면 둘 다 독립적으로 분류·과금되던 결함(비용 2배)을 실제로 재현. places.mjs의 기존 동시요청 병합 패턴(inFlightLookups)과 같은 방식으로, (계정,입력해시,버전) 키 하나당 공유 Promise 하나로만 실제 작업이 진행되고 비용도 한 번만 청구되게 수정 — 배치 내 동일 입력도 같은 방식으로 한 번만 처리됨. 실패해도 in-flight 항목은 항상 정리돼 다음 재시도가 영구 잠금에 안 걸림. git stash로 재현 확인(같은 파일 6절 신규) | 완료 | `실사용 가능`(순수 서버 로직, 이 프로세스 안에서만 유효 — 수평 확장 시 프로세스별 중복 제거는 기존 한계와 동일) | 없음 |
@@ -71,8 +107,8 @@ DB만 쓴다는 ChatGPT의 지적이 정확함을 인정한다. 이미 맞았던
 "전체 회귀"에 정정 반영한다. 상태: `실사용 가능`(문서 정정 작업이라
 코드 영향 없음).
 
-| 항목 | 수정 위치 | 재현/검증 결과 | 상태 | 다음 행동(사용자) |
-|---|---|---|---|---|
+| 항목 | 수정 위치 | 재현/검증 결과 | 완료 여부 | 상태 | 다음 행동(사용자) |
+|---|---|---|---|---|---|
 | R11-2 trips/courses 충돌 기록 소실 + 필드 삭제 부활 | `src/design/spots.js`(daRemergeGenericConflict, daSyncPush), `src/design/import-adapter.js`, `server/db.mjs`(trips.field_conflicts 컬럼), `server/routes/trips.mjs`(syncTrips) | ①같은 필드를 두 기기가 다르게 고치면 trips/courses도 `_fieldConflicts`로 보존되고(예전엔 서버가 고정 컬럼만 저장해 재제출 시 조용히 사라짐), ②로컬에서 명시적으로 지운 필드가 상대 기기 값으로 부활하던 버그(`Object.keys(mine)`만 순회하던 결함)를 union-of-keys로 수정, ③trips/courses에도 장소와 같은 실제 충돌 해결 화면(선택 버튼)을 신규 연결, ④HTTP 200과 "완전히 동기화됨"을 구분(`hasUnresolvedConflicts`/`fullySynced`), ⑤로그아웃 시 "저장은 됐지만 아직 정리할 값이 남음"과 "저장 자체가 실패함"을 다른 문구로 구분. 테스트 작성 중 **별도로 새로 발견한 버그**(제3의 기기의 무해한 재동기화가 trips 버전을 불필요하게 올려 다른 기기의 정상 수정이 스푸리어스 충돌을 일으킴)도 `syncTrips`에 `contentUnchanged` 보호를 추가해 함께 수정. git stash로 수정 전 실제 재현 확인(`server/test/trips-field-conflicts.test.mjs` 10개, `scripts/test-sync-conflict-devices.mjs` 시나리오 10~13 신규) | 완료 | `실사용 가능`(순수 클라이언트+서버 로직, 별도 연결 없음) | 없음 |
 | R11-3 태그 실제 화면·계정 저장 완성 | `src/design/import-adapter.js`(태그 레지스트리 override 구조), `src/design/spots.js`(tagsEditSheet, bulkTagEditSheet), `server/db.mjs`(account_tags), `server/routes/tags.mjs`(신규) | 기존 태그 편집 화면 안에 이름바꾸기/삭제 추가(새 대형 관리화면 안 만듦, 지시대로), 다중선택 일괄 태그 추가/삭제 신규, 계정별 태그 레지스트리(커스텀 태그+기본태그 표시명 override) 동기화 신규(로그아웃/재접속/다른기기 생존, 계정 전환 격리 확인), 기본 태그 이름을 바꿔도 공유 전역 배열은 절대 안 바뀌고 계정별 override로만 저장, `daInferTags`를 기본(builtin) 태그만 순회하도록 제한해 개인 취향 태그("꼭 가기" 등)가 절대 다른 장소에 자동으로 안 번지게 구조적으로 차단, 다른 기기가 준 미지 태그를 편집 화면에서 안 지움, 새 태그 저장 실패 시 롤백. git stash로 재현 확인(`server/test/tags-sync.test.mjs` 7개, `scripts/test-tag-registry-sync.mjs` 14개) | 완료 | `실사용 가능` | 없음 |
 | R11-4 AI 분류 클라이언트 연결 + 원가 통제 강화 | `src/design/spots.js`(daRunAiClassifyQueueOnce), `src/design/import-adapter.js`(daNeedsAiClassify 등), `server/routes/ai-classify.mjs`, `server/config.mjs`, `server/entitlement-usage.mjs`, `server/db.mjs`(ai_classify_cache) | 가져오기 완료/로그인 동기화 직후 규칙으로 못 정한 곳만 골라 백그라운드로 분류 요청(화면 안 막힘, 응답 대기 중 사용자가 직접 확정/삭제하면 결과 폐기)을 신규 연결. 개인 메모(note)를 입력에서 완전히 제거하고 confirmedTypes로 대체. 입력해시+분류버전+계정별 캐시로 중복 호출·중복 과금 방지. 전체(서비스 전역) 하루 배치 한도 신규(계정별 한도와 별개). 헤드룸 예약을 실제 코스 세그먼트·SKU 등급 기준으로 정확화하고, 헤드룸-확인-후-차감 경합을 원자적 트랜잭션이 직접 막도록 수정. 유료 이용권(50곳+30회)과 기존 3,500원 안전상한이 실제로 공존 가능함을 구체적 숫자로 보고(BUSINESS_DECISIONS.md 3-3-7절). git stash로 재현 확인(`server/test/ai-classify-cache-and-budget-race.test.mjs` 12개, `scripts/test-ai-classify-client-queue.mjs` 8개) | **구조 연결 완료. 실제 AI 분류는 여전히 미완료**(실제 공급자 없음) | `모의(mock)로만 검증`, `실제 공급자 미연결` | AI 공급자·모델 선정 여부 결정(선정 전까지 계속 비활성) |
