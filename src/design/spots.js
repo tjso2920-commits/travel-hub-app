@@ -1684,11 +1684,110 @@ async function daGateThenBuildCourseSheet(opts) {
   buildCourseSheet(opts);
 }
 
-/* 로그인 — 이메일 + 매직 코드(비밀번호 없음). 성공하면 onSuccess를
-   이어서 부른다(원래 하려던 동작을 로그인 때문에 처음부터 다시
-   누르게 하지 않는다). */
+/* 2026-09-11 재검토(13차) 2절 — Google 로그인을 기본 진입 방식으로
+   추가한다(기존 이메일 코드 로그인은 대체가 아니라 그대로 폴백으로
+   남는다). 로그인 성공 후 공통으로 해야 하는 일(세대 증가·세션 저장·
+   손님 데이터 동기화·가입 이벤트 등)을 한 곳으로 모아, 이메일 코드
+   로그인과 Google 로그인이 완전히 같은 후속 동작을 하도록 한다 — 그래야
+   "로그인 방식을 바꿔도 무료체험/이용권 등 계정 상태가 그대로 유지"
+   되는 게 코드로도 보장된다(같은 accountId면 서버가 이미 같은 상태를
+   돌려주지만, 클라이언트 쪽 후속 처리가 갈라지면 화면에 다르게 반영될
+   위험이 있다). */
+async function daFinishLogin(token, email, isNew, onSuccess) {
+  // 2026-09-10 재검토(7차) — 로그인마다 세대(epoch)를 올려, 이전
+  // 계정(또는 로그인 전 손님 상태)에서 걸려 있던 늦은 응답이 지금
+  // 막 로그인한 계정 화면에 섞이지 않게 막는다.
+  sessionEpoch++;
+  foodMap.session = { token, email };
+  A.saveFoodMap(foodMap);
+  if (isNew) daTrackSafe('signup_completed', {});
+  await daSyncPullAndMerge(token);
+  A.refreshTestAccess(token);
+  refreshFromStorage();
+  updateCity();
+  onSuccess();
+}
+
+/* Google Identity Services 스크립트는 실제로 로그인 시트를 열 때만(그리고
+   서버가 클라이언트 ID를 실제로 내려줄 때만) 불러온다 — 평소에는 아무
+   외부 스크립트도 안 불러온다. 로드가 실패해도(네트워크 차단·인앱
+   브라우저 제한 등) 예외를 던질 뿐 화면을 절대 깨뜨리지 않는다 —
+   호출부가 잡아서 조용히 이메일 로그인만 남긴다. */
+function daLoadGoogleIdentityScript() {
+  if (window.google && window.google.accounts && window.google.accounts.id) return Promise.resolve();
+  if (window.__gsiLoadPromise) return window.__gsiLoadPromise;
+  window.__gsiLoadPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client';
+    s.async = true; s.defer = true;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('gsi-load-failed'));
+    document.head.appendChild(s);
+    setTimeout(() => reject(new Error('gsi-load-timeout')), 4000);
+  }).catch((e) => { window.__gsiLoadPromise = null; throw e; }); // 실패하면 다음 시도 때 다시 불러올 수 있게 캐시를 비운다.
+  return window.__gsiLoadPromise;
+}
+let _googleAuthConfigCache; // undefined=아직 안 물어봄, null=서버가 unavailable, object=사용 가능.
+async function daEnsureGoogleAuthConfig() {
+  if (_googleAuthConfigCache !== undefined) return _googleAuthConfigCache;
+  try {
+    const r = await A.api('/api/auth/google/config');
+    _googleAuthConfigCache = (r.ok && r.json && r.json.ok && r.json.clientId) ? r.json : null;
+  } catch (e) { _googleAuthConfigCache = null; }
+  return _googleAuthConfigCache;
+}
+/* 이 시트가 열려 있는 동안에만 유효한 버튼을 그린다 — 서버 설정이
+   없거나(개발 환경 등) 스크립트 로드가 막히면 아무 일도 안 하고
+   조용히 끝난다(깨진 버튼을 절대 안 보여준다 — 이메일 로그인은 이미
+   그 위/아래에서 정상 동작 중이므로 사용자는 항상 로그인할 방법이
+   있다). */
+async function daTryRenderGoogleButton(onSuccess) {
+  try {
+    const cfg = await daEnsureGoogleAuthConfig();
+    if (!cfg) return;
+    await daLoadGoogleIdentityScript();
+    const slot = $('#googleAuthSlot');
+    if (!slot) return; // 그 사이 시트가 닫혔거나 다른 화면으로 넘어감.
+    window.google.accounts.id.initialize({
+      client_id: cfg.clientId,
+      callback: async (resp) => {
+        if (!resp || !resp.credential) { daGoogleAuthFailMsg(); return; }
+        slot.style.opacity = '0.6'; slot.style.pointerEvents = 'none';
+        const r = await A.api('/api/auth/google', { method: 'POST', body: { idToken: resp.credential } });
+        if (!r.ok || !r.json || !r.json.token) {
+          slot.style.opacity = '1'; slot.style.pointerEvents = '';
+          daGoogleAuthFailMsg();
+          return;
+        }
+        await daFinishLogin(r.json.token, r.json.email, r.json.isNew, onSuccess);
+      },
+    });
+    window.google.accounts.id.renderButton(slot, { theme: 'outline', size: 'large', width: 280, text: 'continue_with', locale: 'ko' });
+    const divider = $('#googleAuthDivider');
+    if (divider) divider.hidden = false;
+  } catch (e) {
+    // 로드·초기화 실패(네트워크 차단, Instagram/Threads 등 인앱 브라우저의
+    // 팝업·서드파티 스크립트 제한 등) — 사용자에게 따로 알리지 않는다.
+    // 이미 화면에 정상 동작하는 이메일 로그인이 있으므로 그걸로 계속하면
+    // 된다(가짜/깨진 Google 버튼을 보여주는 것보다 조용히 생략하는 쪽이
+    // 낫다는 판단 — "실패를 성공처럼 보이게 하지 않는다"와 같은 원칙을
+    // 반대 방향으로 적용: 여기서는 "실패를 화면에 실패로 드러내지 않고
+    // 대안으로 자연스럽게 넘어간다"가 사용자에게 더 유용하다).
+  }
+}
+function daGoogleAuthFailMsg() {
+  const el = document.getElementById('loginMsg');
+  if (el) { el.textContent = 'Google 로그인에 실패했어요. 아래 이메일로 계속해 주세요.'; el.hidden = false; }
+}
+
+/* 로그인 — Google로 계속하기(기본, 설정돼 있을 때) + 이메일 코드
+   (항상 동작하는 대안). 성공하면 onSuccess를 이어서 부른다(원래
+   하려던 동작을 로그인 때문에 처음부터 다시 누르게 하지 않는다). */
 function showLoginSheet(onSuccess) {
-  open('로그인', `<div class="detail"><h2>이메일로 계속하기</h2><p>비밀번호 없이, 이메일로 받은 코드로 로그인해요.</p>` +
+  open('로그인', `<div class="detail"><h2>계속하기</h2>` +
+    `<div id="googleAuthSlot" style="min-height:0"></div>` +
+    `<p class="inline-note" id="googleAuthDivider" hidden style="margin:14px 0;text-align:center">또는</p>` +
+    `<h3 style="margin:0 0 4px">이메일로 계속하기</h3><p>비밀번호 없이, 이메일로 받은 코드로 로그인해요.</p>` +
     `<input class="xinput" id="loginEmail" type="email" placeholder="이메일 주소" style="width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit">` +
     `<button class="primary" id="loginSendBtn" style="margin-top:10px">코드 받기</button>` +
     `<p class="inline-note" id="loginMsg" hidden></p></div>`);
@@ -1700,6 +1799,7 @@ function showLoginSheet(onSuccess) {
     if (!r.ok) { msg('코드를 보내지 못했어요. 이메일 주소를 확인해 주세요.'); return; }
     showLoginCodeSheet(email, onSuccess);
   };
+  daTryRenderGoogleButton(onSuccess); // fire-and-forget 향상 — 실패해도 위 이메일 흐름은 이미 정상 동작.
 }
 function showLoginCodeSheet(email, onSuccess) {
   // 6-4절 — 초대 코드는 평소엔 아무 의미가 없다(서버가 요구하지 않는
@@ -1733,29 +1833,7 @@ function showLoginCodeSheet(email, onSuccess) {
       msg(reasonMsg || '코드가 맞지 않거나 만료됐어요. 다시 시도해 주세요.');
       return;
     }
-    // 2026-09-10 재검토(7차) — 로그인마다 세대(epoch)를 올려, 이전
-    // 계정(또는 로그인 전 손님 상태)에서 걸려 있던 늦은 응답이 지금
-    // 막 로그인한 계정 화면에 섞이지 않게 막는다(daSyncPush/
-    // daSyncPullAndMerge의 세대 확인 참고).
-    sessionEpoch++;
-    foodMap.session = { token: r.json.token, email };
-    A.saveFoodMap(foodMap);
-    if (r.json.isNew) daTrackSafe('signup_completed', {});
-    /* 2026-09-10 재검토(3차): 개인화 코스 생성 자체가 이제 로그인
-       뒤에만 가능해졌으므로(daGateThenBuildCourseSheet 참고), "로그인
-       전에 만든 코스의 무료체험을 서버에 뒤늦게 알리는" 예전 문제는
-       더 이상 생기지 않는다 — 대신 이 기기에 있던 손님 데이터(장소·
-       코스)를 계정과 동기화한다(비회원 데이터 보존 + 다른 기기 데이터
-       병합). */
-    await daSyncPullAndMerge(r.json.token);
-    // 2026-09-11 재검토(10차) 7절 — 이 계정이 서버 승인 테스트 계정인지
-    // 로그인 때마다 다시 물어본다(예전처럼 URL 파라미터로 브라우저에
-    // 영구히 남지 않는다 — 관리자가 나중에 권한을 빼면 다음 로그인부터
-    // 바로 반영된다).
-    A.refreshTestAccess(r.json.token);
-    refreshFromStorage();
-    updateCity();
-    onSuccess();
+    await daFinishLogin(r.json.token, email, r.json.isNew, onSuccess);
   };
 }
 /* 이용권 제시 — 금액·기간·자동결제 여부를 분명히 보여준다.

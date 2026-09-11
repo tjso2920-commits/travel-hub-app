@@ -20,7 +20,8 @@
 import http from 'node:http';
 import { config, assertBootReady } from './config.mjs';
 import { openDb } from './db.mjs';
-import { requestLoginCode, verifyLoginCode, accountForToken, logout } from './auth.mjs';
+import { requestLoginCode, verifyLoginCode, accountForToken, logout, googleSignIn } from './auth.mjs';
+import { checkAndIncrement, hourWindow } from './rate-limit.mjs';
 import { getCourse, saveCourse } from './routes/course.mjs';
 import { trialStatus, consumeTrial } from './routes/trial.mjs';
 import { checkEntitlement, checkTestAccess, setTestAccessByEmail } from './routes/entitlement.mjs';
@@ -120,6 +121,28 @@ async function handle(req, res) {
     if (req.method === 'POST' && pathname === '/api/auth/logout') {
       const result = logout(bearerToken(req));
       return sendJson(res, 200, result);
+    }
+    // 2026-09-11 재검토(13차) 2절 — Google 로그인. clientId는 비밀이
+    // 아니므로(TOSS_CLIENT_KEY와 같은 성격) payment/config와 같은 패턴
+    // 으로 그대로 내려준다 — 설정 안 됐으면(로컬 개발·아직 발급 전)
+    // 정직하게 unavailable로 답해 클라이언트가 가짜 버튼을 안 그리게
+    // 한다.
+    if (req.method === 'GET' && pathname === '/api/auth/google/config') {
+      if (config.services.googleAuth !== 'real') return sendJson(res, 200, { ok: false, reason: 'google-auth-unavailable' });
+      return sendJson(res, 200, { ok: true, clientId: config.googleAuth.clientId });
+    }
+    if (req.method === 'POST' && pathname === '/api/auth/google') {
+      // ID 토큰 자체가 Google 서명으로 보호되지만, 검증 시도(JWKS 조회·
+      // 서명 계산)를 반복 요청으로 남용하지 못하게 이메일 코드 로그인의
+      // IP 한도(login-ip)와 같은 수준으로 가볍게 막는다.
+      const ip = clientIp(req);
+      if (ip) {
+        const ipCheck = checkAndIncrement(`login-ip:${ip}`, hourWindow(), Math.max(20, config.loginMaxVerifyAttempts * 4));
+        if (!ipCheck.allowed) return sendJson(res, 429, { ok: false, reason: 'ip-rate-limited' });
+      }
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const result = await googleSignIn(body.idToken, body.inviteCode);
+      return sendJson(res, result.status || (result.ok ? 200 : 400), result);
     }
 
     // 계정별 서버 저장 — 장소 보관함·날짜별 일정(2026-09-10 신규).

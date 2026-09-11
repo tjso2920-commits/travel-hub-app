@@ -78,6 +78,16 @@ export function buildConfig(env) {
   // 그냥 'unavailable'로만 둔다(routing/placeLookup과 같은 원칙).
   const hasWeatherKey = !!env.WEATHER_API_KEY;
   const webhookSecretIsDefault = !env.PAYMENT_WEBHOOK_SECRET || env.PAYMENT_WEBHOOK_SECRET === 'test-webhook-secret-not-for-production';
+  // 2026-09-11 재검토(13차) 2절 — Google 로그인. 클라이언트 ID는
+  // 비밀값이 아니다(OAuth 클라이언트 ID는 공개 식별자로, 화면에 그대로
+  // 내려줘도 안전하다 — TOSS_CLIENT_KEY와 같은 성격). 이 서버는 클라
+  // 시크릿을 아예 쓰지 않는다 — Google Identity Services가 발급하는
+  // ID 토큰을 서버가 Google의 공개 JWKS로 직접 서명 검증하는 방식만
+  // 쓰므로, 절대 노출되면 안 되는 비밀값 자체가 없다(설계로 회피).
+  // 키가 없으면 결제·이메일처럼 서버 시작을 막지 않는다 — 이메일 코드
+  // 로그인이 이미 있는 필수 경로이므로 Google은 "있으면 기본, 없어도
+  // 서비스 자체는 정상 동작"인 부가 기능이다.
+  const hasGoogleClientId = !!env.GOOGLE_CLIENT_ID;
 
   // 2026-09-11 재검토(10차) 5절 — AI 보조 분류는 "실제 공급자 미확정,
   // 운영 AI 호출은 기본 비활성"이 명시된 요구사항이다. 다른 서비스처럼
@@ -99,6 +109,11 @@ export function buildConfig(env) {
       email: hasEmailKey ? 'real' : 'unavailable',
       weather: hasWeatherKey ? 'real' : 'unavailable',
       aiClassify: aiClassifyMode,
+      // 비용·과금과 무관한 순수 서명 검증이라 dev/test/prod 모두 "키가
+      // 있으면 real"로 통일한다(가짜 응답을 만들 필요 자체가 없다 —
+      // 실제 검증 로직을 그대로 쓰고, 테스트는 JWKS 조회 함수만
+      // 주입해서 자체 서명한 테스트 토큰으로 검증한다).
+      googleAuth: hasGoogleClientId ? 'real' : 'unavailable',
     };
   } else {
     services = {
@@ -108,6 +123,7 @@ export function buildConfig(env) {
       email: serviceModeDev(forceTest, hasEmailKey, env.EMAIL_ADAPTER),
       weather: serviceModeDev(forceTest, hasWeatherKey, env.WEATHER_ADAPTER),
       aiClassify: aiClassifyMode,
+      googleAuth: hasGoogleClientId ? 'real' : 'unavailable',
     };
   }
 
@@ -121,8 +137,11 @@ export function buildConfig(env) {
     // disabled/mock뿐이라(위 설명 참고) 이 "전부 test인지" 요약 판정에서
     // 제외한다 — 안 그러면 다른 서비스가 전부 test여도 aiClassify가
     // 'disabled'라는 이유만으로 testMode가 항상 false가 되는 회귀가
-    // 생긴다.
-    testMode: !isProd && (forceTest || Object.entries(services).every(([k, m]) => k === 'aiClassify' || m === 'test')),
+    // 생긴다. 2026-09-11 재검토(13차) — googleAuth도 같은 이유로 제외한다
+    // (real/unavailable 이분법뿐이라 GOOGLE_CLIENT_ID를 안 준 보통의
+    // 테스트 환경에서 'unavailable'이 나오는 건 정상이지, "test 모드가
+    // 아님"을 뜻하지 않는다).
+    testMode: !isProd && (forceTest || Object.entries(services).every(([k, m]) => k === 'aiClassify' || k === 'googleAuth' || m === 'test')),
     port: Number(env.PORT || 8787),
     dbPath: env.DB_PATH || path.join(HERE, 'data', 'app.db'),
 
@@ -341,6 +360,20 @@ export function buildConfig(env) {
       placesApiBase: env.GOOGLE_PLACES_API_BASE || 'https://places.googleapis.com',
       routesKey: env.GOOGLE_ROUTES_API_KEY || '',
       routesApiBase: env.GOOGLE_ROUTES_API_BASE || 'https://routes.googleapis.com',
+    },
+    // 2026-09-11 재검토(13차) 2절 — Google 로그인(Google Identity
+    // Services). clientId는 공개 식별자(비밀 아님) — 실제 값은 Google
+    // Cloud Console에서 사용자가 직접 발급해 GOOGLE_CLIENT_ID로 넣어야
+    // 한다(OPERATIONS_SETUP.md에 절차 문서화). 클라 시크릿은 이 서버
+    // 구조에 아예 등장하지 않는다(ID 토큰을 서버가 Google 공개키로
+    // 직접 서명 검증하는 방식만 씀 — 인가 코드 교환 방식이 아니다).
+    googleAuth: {
+      clientId: env.GOOGLE_CLIENT_ID || '',
+      jwksUri: env.GOOGLE_JWKS_URI || 'https://www.googleapis.com/oauth2/v3/certs',
+      // Google이 실제로 발급하는 두 표기(프로토콜 유무)를 모두 받는다 —
+      // 공식 문서 기준 'accounts.google.com'과 'https://accounts.google.com'
+      // 둘 다 유효한 iss 값으로 나타난다.
+      issuers: ['accounts.google.com', 'https://accounts.google.com'],
     },
     // 2026-09-10 재검토(7차) 4절 — 착장 판단용 날씨 카드. WeatherAPI.com
     // 무료 등급(공식 가격표 확인 — https://www.weatherapi.com/pricing.aspx:

@@ -25,6 +25,7 @@ import { sendEmail } from './adapters/email.mjs';
 import { checkAndIncrement, hourWindow } from './rate-limit.mjs';
 import { isRecruitmentPaused } from './app-flags.mjs';
 import { checkInviteCodeForNewAccount, consumeInviteCodeForNewAccount } from './invite-codes.mjs';
+import { verifyGoogleIdToken } from './adapters/google-auth.mjs';
 
 function genCode() {
   return String(crypto.randomInt(0, 1000000)).padStart(6, '0');
@@ -74,7 +75,12 @@ export async function requestLoginCode(email, ip) {
    보존). 켜져 있을 때만, "이 이메일로 계정이 아직 없을 때"(진짜
    신규 가입일 때)만 초대 코드를 확인·소모한다 — 이미 있는 계정의
    재로그인은 초대 코드와 전혀 무관하다. */
-function loginOrCreateAccount(db, email, inviteCode) {
+// 2026-09-11 재검토(13차) 2절 — Google 로그인도 이 함수를 그대로
+// 재사용한다(export). "같은 이메일이면 같은 계정"이라는 판단·초대코드
+// 게이트 정책이 이메일 코드 로그인과 완전히 동일해야, 로그인 방식을
+// 바꿔도 무료체험·이용권 같은 계정별 상태가 그대로 이어진다(계정
+// 식별자가 그대로이므로 별도 "이전" 로직 자체가 필요 없다).
+export function loginOrCreateAccount(db, email, inviteCode) {
   const existing = db.prepare('SELECT id FROM accounts WHERE email = ?').get(email);
   if (existing) return { ok: true, accountId: existing.id, isNew: false };
   if (config.requireInviteCodeForSignup) {
@@ -113,6 +119,14 @@ function clearFailures(db, email) {
   db.prepare('DELETE FROM login_attempts WHERE email = ?').run(email);
 }
 
+function createSession(db, accountId) {
+  const token = crypto.randomBytes(24).toString('hex');
+  const expiresAt = new Date(Date.now() + config.sessionTtlSeconds * 1000).toISOString();
+  db.prepare('INSERT INTO sessions (token, account_id, created_at, expires_at) VALUES (?, ?, ?, ?)')
+    .run(token, accountId, nowIso(), expiresAt);
+  return token;
+}
+
 export function verifyLoginCode(email, code, inviteCode) {
   const normalized = String(email || '').trim().toLowerCase();
   const db = openDb();
@@ -140,11 +154,26 @@ export function verifyLoginCode(email, code, inviteCode) {
   const accountResult = loginOrCreateAccount(db, normalized, inviteCode);
   if (!accountResult.ok) return { ok: false, reason: accountResult.reason };
   const accountId = accountResult.accountId;
-  const token = crypto.randomBytes(24).toString('hex');
-  const expiresAt = new Date(Date.now() + config.sessionTtlSeconds * 1000).toISOString();
-  db.prepare('INSERT INTO sessions (token, account_id, created_at, expires_at) VALUES (?, ?, ?, ?)')
-    .run(token, accountId, nowIso(), expiresAt);
+  const token = createSession(db, accountId);
   return { ok: true, token, accountId, isNew: accountResult.isNew };
+}
+
+/* 2026-09-11 재검토(13차) 2절 — Google 로그인. "이메일 문자열만 보고
+   계정을 합치지 않는다"를 실제로 지키는 지점은 verifyGoogleIdToken이다
+   — 거기서 Google 서명을 직접 검증하고 email_verified:true까지
+   확인해야만 이 함수가 그 이메일을 "소유권이 증명된" 값으로 받는다.
+   그 이후로는 이메일 코드 로그인과 완전히 같은 loginOrCreateAccount·
+   createSession을 재사용해, 같은 이메일이면 반드시 같은 계정(→같은
+   무료체험/이용권 상태)으로 이어지게 한다. */
+export async function googleSignIn(idToken, inviteCode, verifyOpts) {
+  if (config.services.googleAuth !== 'real') return { ok: false, status: 503, reason: 'google-auth-unavailable' };
+  const verified = await verifyGoogleIdToken(idToken, verifyOpts);
+  if (!verified.ok) return { ok: false, status: 401, reason: verified.reason };
+  const db = openDb();
+  const accountResult = loginOrCreateAccount(db, verified.email, inviteCode);
+  if (!accountResult.ok) return { ok: false, status: 400, reason: accountResult.reason };
+  const token = createSession(db, accountResult.accountId);
+  return { ok: true, status: 200, token, accountId: accountResult.accountId, isNew: accountResult.isNew, email: verified.email };
 }
 
 export function accountForToken(token) {
