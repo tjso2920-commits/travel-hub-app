@@ -73,3 +73,16 @@ nav button{font-weight:500;font-size:13px;letter-spacing:-.025em}
 .photo-empty{display:flex;align-items:center;justify-content:center;
   color:#b7c2c0;font-size:15px;font-weight:600;letter-spacing:.02em}
 .detail-photo.photo-empty{height:250px}
+
+/* ── 일본어 실전 회화("여기서 쓸 말") ──────────────────────────────────
+   기존 .inline-note·.city-option과 같은 톤(흰 카드, 부드러운 그림자,
+   파랑/청록 포인트)을 그대로 따른다 — 새 색을 만들지 않는다. */
+.phrase-cat-title{font-size:14px;font-weight:600;color:#5e7e84;margin:22px 0 10px}
+.phrase-cat-title:first-of-type{margin-top:16px}
+.phrase-list{display:flex;flex-direction:column;gap:10px}
+.phrase-row{background:#fffefa;border:1px solid #e8ece5;border-radius:16px;padding:14px 16px}
+.phrase-jp{font-size:17px;font-weight:600;color:var(--ink);line-height:1.5}
+.phrase-reading{font-size:13px;color:#8b9c9b;margin-top:3px}
+.phrase-ko{font-size:14px;color:#5e7e84;margin-top:6px}
+.phrase-speak-btn{margin-top:8px;min-height:40px;padding:8px 14px;background:#e5efee;border-radius:20px;font-size:13px;color:var(--blue)}
+.phrase-speak-btn:disabled{opacity:.65;cursor:default}

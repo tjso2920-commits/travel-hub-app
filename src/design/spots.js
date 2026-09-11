@@ -992,7 +992,13 @@ function detail(id) {
   const tagsBlock = usingSample ? '' :
     `<div class="tag-chips">${(p.tags || []).map((t) => `<span class="tag-chip">${A.esc(t)}</span>`).join('')}` +
     `<button class="text-button" data-tags-edit="${id}" style="padding:0;font-size:11px">${(p.tags && p.tags.length) ? '세부 태그 수정' : '세부 태그 추가'}</button></div>`;
-  open(usingSample ? '샘플 장소' : '내 장소', `<div class="detail">${photoHTML(p, 'detail-photo')}<h2>${A.esc(p.name)}</h2><span class="category">${A.esc(p.category)}${!usingSample && !p.catConfirmed ? '(짐작)' : ''}</span>${catBlock}${!usingSample ? ` <span class="category">${A.esc(p.city)}${p.cityKnown && !p.cityConfirmed ? '(짐작)' : ''}</span>` : ''}${tagsBlock}<p>${A.esc(p.area) || '위치 정보 없음'}</p>${p.memo ? `<p>“${A.esc(p.memo)}”</p>` : ''}<button class="primary" data-detail-pick="${id}">${selected.has(id) ? '선택에서 빼기' : '오늘 갈 곳으로 선택'}</button>${mapHref ? `<a target="_blank" rel="noopener noreferrer" href="${mapHref}">${mapLabel}</a>` : ''}${visitBlockHTML(id)}${cityBlock}${notes.map((n) => `<small>${n}</small>`).join('')}</div>`);
+  // 2026-09-11 재검토(13차) 5절 — 일본 목적지에만 "여기서 쓸 말" 진입점을
+  // 보여준다(다른 나라 장소에 일본어 기능이 섞여 보이면 안 된다는 지시).
+  const phraseBlock = (typeof daIsJapanCity === 'function' && daIsJapanCity(p.city))
+    ? `<button class="text-button" data-open-phrasebook style="padding:6px 0">🇯🇵 여기서 쓸 말</button>` : '';
+  open(usingSample ? '샘플 장소' : '내 장소', `<div class="detail">${photoHTML(p, 'detail-photo')}<h2>${A.esc(p.name)}</h2><span class="category">${A.esc(p.category)}${!usingSample && !p.catConfirmed ? '(짐작)' : ''}</span>${catBlock}${!usingSample ? ` <span class="category">${A.esc(p.city)}${p.cityKnown && !p.cityConfirmed ? '(짐작)' : ''}</span>` : ''}${tagsBlock}<p>${A.esc(p.area) || '위치 정보 없음'}</p>${p.memo ? `<p>“${A.esc(p.memo)}”</p>` : ''}<button class="primary" data-detail-pick="${id}">${selected.has(id) ? '선택에서 빼기' : '오늘 갈 곳으로 선택'}</button>${mapHref ? `<a target="_blank" rel="noopener noreferrer" href="${mapHref}">${mapLabel}</a>` : ''}${phraseBlock}${visitBlockHTML(id)}${cityBlock}${notes.map((n) => `<small>${n}</small>`).join('')}</div>`);
+  const phraseBtn = document.getElementById('sheetContent').querySelector('[data-open-phrasebook]');
+  if (phraseBtn) phraseBtn.onclick = () => phrasebookSheet();
 }
 /* 유형 지정 시트 — 확인된 유형(실제 데이터에 있던 분류)을 이름 기반 추정
    보다 우선하지만, 추정이 틀렸으면 사용자가 여기서 직접 고칠 수 있다.
@@ -2215,7 +2221,9 @@ async function profile() {
     `<button class="text-button" id="testLocCustomBtn" style="padding:6px 0">이 좌표로 적용</button>` +
     (testLoc ? `<button class="text-button" id="testLocClearBtn" style="padding:6px 0">테스트 위치 끄기</button>` : '')
     : '';
-  open('내 프로필', `<div class="profile"><div class="avatar">Y</div><h2>나의 여행 기록</h2><p>가고 싶은 곳을 하나씩 모으는 중</p><div class="stats"><div><b>${realCount}</b><span>저장한 스팟</span></div><div><b>${cities.length}</b><span>도시</span></div><div><b>${route.size}</b><span>오늘 갈 곳</span></div></div><p>${A.esc(city)} · ${usingSample ? '샘플 컬렉션' : '내 데이터'}</p>${loggedInEmail ? `<p class="inline-note">${A.esc(loggedInEmail)}로 로그인됨</p>` : ''}${usageHTML}<button class="primary" data-dismiss>내 스팟으로 돌아가기</button>${usingSample ? '<p>샘플 프로필입니다.</p>' : ''}<button class="text-button" data-feedback-open>불편함 보내기</button>${loggedInEmail ? '<button class="text-button" data-logout>로그아웃</button>' : ''}${testLocationHTML}</div>`);
+  open('내 프로필', `<div class="profile"><div class="avatar">Y</div><h2>나의 여행 기록</h2><p>가고 싶은 곳을 하나씩 모으는 중</p><div class="stats"><div><b>${realCount}</b><span>저장한 스팟</span></div><div><b>${cities.length}</b><span>도시</span></div><div><b>${route.size}</b><span>오늘 갈 곳</span></div></div><p>${A.esc(city)} · ${usingSample ? '샘플 컬렉션' : '내 데이터'}</p>${loggedInEmail ? `<p class="inline-note">${A.esc(loggedInEmail)}로 로그인됨</p>` : ''}${usageHTML}<button class="primary" data-dismiss>내 스팟으로 돌아가기</button>${usingSample ? '<p>샘플 프로필입니다.</p>' : ''}<button class="text-button" data-tools-open>여행 도구</button><button class="text-button" data-feedback-open>불편함 보내기</button>${loggedInEmail ? '<button class="text-button" data-logout>로그아웃</button>' : ''}${testLocationHTML}</div>`);
+  const toolsBtn = document.getElementById('sheetContent').querySelector('[data-tools-open]');
+  if (toolsBtn) toolsBtn.onclick = () => travelToolsSheet();
   if (A.testModeAllowed()) {
     $('#sheetContent').querySelectorAll('[data-test-loc-preset]').forEach((b) => {
       b.onclick = () => {
