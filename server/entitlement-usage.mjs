@@ -169,9 +169,34 @@ function sweepStaleReservations(db, accountId) {
   }
 }
 
-function deleteReservation(db, reservationId) {
-  if (!reservationId) return;
-  db.prepare('DELETE FROM entitlement_place_reservations WHERE reservation_id = ?').run(reservationId);
+/* 2026-09-11 재검토(9차) — ChatGPT가 실제로 재현한 멱등성 결함: 예전
+   deleteReservation은 그냥 지우기만 하고 "정말 아직 진행 중이던 예약을
+   지운 건지" 확인하지 않았다. 그래서 같은 finalize(성공)를 두 번
+   부르면(재전송·재시도) 두 번째 호출이 "이미 확인된 실제 장소라 잠정
+   예약을 되돌린다"는 분기를 다시 타면서, 이미 첫 번째 호출이 확정해
+   지운 예약을 또 되돌리려 해 사용량을 잘못 차감했다(1 → 0). 스윕으로
+   회수된 예약의 뒤늦은 실패 결과가 다른(멀쩡한) 예약의 사용량까지
+   잘못 건드리는 것도 같은 원인이었다.
+   지금은 "그 예약 행이 실제로 아직 DB에 남아 있었는지"를 DELETE의
+   영향받은 행 수(changes)로 직접 확인한다 — 행이 없었으면(이미 다른
+   호출이 처리했거나 스윕됐으면) 이 호출은 완전히 없었던 일처럼
+   무시한다(사용량을 또 건드리지 않음). 계정·기간·로컬장소까지 함께
+   대조해 소유권도 같이 확인한다(다른 계정·다른 기간의 예약을 실수로
+   건드릴 수 없다). */
+function consumeReservationRow(db, accountId, period, localPlaceId, reservationId) {
+  if (!reservationId) return false;
+  const info = db.prepare(
+    'DELETE FROM entitlement_place_reservations WHERE reservation_id = ? AND account_id = ? AND period_id = ? AND local_place_id = ?'
+  ).run(reservationId, accountId, period.periodId, localPlaceId);
+  return info.changes > 0;
+}
+/* 예약이 "실제로 아직 진행 중이었을 때만" 사용량 +1을 되돌린다(위
+   consumeReservationRow의 반환값으로 판단) — 이미 확정됐거나(committed)
+   스윕으로 회수됐으면(released) 아무것도 안 한다. */
+function releaseIfStillPending(db, accountId, period, localPlaceId, reservationId) {
+  if (!consumeReservationRow(db, accountId, period, localPlaceId, reservationId)) return false;
+  db.prepare('UPDATE entitlement_usage SET place_lookups_used = MAX(0, place_lookups_used - 1), updated_at = ? WHERE account_id = ? AND period_id = ?').run(nowIso(), accountId, period.periodId);
+  return true;
 }
 
 export function reservePlaceLookupSlot(accountId, localPlaceId, queryFingerprint) {
@@ -238,8 +263,11 @@ export function releasePlaceLookupSlot(accountId, localPlaceId, period, reservat
   const db = openDb();
   db.exec('BEGIN IMMEDIATE');
   try {
-    db.prepare('UPDATE entitlement_usage SET place_lookups_used = MAX(0, place_lookups_used - 1), updated_at = ? WHERE account_id = ? AND period_id = ?').run(nowIso(), accountId, period.periodId);
-    deleteReservation(db, reservationId);
+    // 2026-09-11 재검토(9차) — 이 예약이 실제로 아직 진행 중이었을
+    // 때만 사용량을 되돌린다. 이미 스윕으로 회수됐거나 다른 finalize
+    // 호출이 먼저 처리했으면(예: 재전송·늦게 도착한 결과) 아무 것도
+    // 안 한다 — 멀쩡한 다른 예약의 사용량을 잘못 깎지 않기 위해서다.
+    releaseIfStillPending(db, accountId, period, localPlaceId, reservationId);
     db.exec('COMMIT');
   } catch (e) {
     try { db.exec('ROLLBACK'); } catch (e2) { /* noop */ }
@@ -294,11 +322,13 @@ function finalizeAsNewAttempt(accountId, localPlaceId, period, fp, realPlaceId, 
       if (already) {
         // 이 계정이 이 실제 장소를 (다른 로컬 id로든, 다른 검색
         // 조건으로든) 이미 확인한 적 있다 — 한도와 무관하게 비과금
-        // 성공이다. 잠정으로 이미 늘려둔 사용량이 있으면 되돌린다.
-        if (reservation.provisional) {
-          db.prepare('UPDATE entitlement_usage SET place_lookups_used = MAX(0, place_lookups_used - 1), updated_at = ? WHERE account_id = ? AND period_id = ?').run(nowIso(), accountId, period.periodId);
-        }
-        deleteReservation(db, reservation.reservationId);
+        // 성공이다. 잠정으로 이미 늘려둔 사용량이 있으면 되돌리되,
+        // 그 예약이 "지금도 실제로 진행 중"일 때만 되돌린다 — 같은
+        // finalize가 두 번(재전송 등) 불리면 두 번째 호출 시점엔 첫
+        // 번째 호출이 이미 이 예약을 확정·소비한 뒤라 예약 행이 없고,
+        // releaseIfStillPending이 그걸 확인해 아무 것도 안 한다(이미
+        // 확정된 다른 성공 건의 사용량을 잘못 또 깎지 않기 위해).
+        if (reservation.provisional) releaseIfStillPending(db, accountId, period, localPlaceId, reservation.reservationId);
         if (fp !== undefined) upsertLocalLinkTx(db, accountId, localPlaceId, realPlaceId, fp);
         db.exec('COMMIT');
         return { ok: true };
@@ -338,7 +368,10 @@ function finalizeAsNewAttempt(accountId, localPlaceId, period, fp, realPlaceId, 
         ON CONFLICT(account_id, period_id) DO UPDATE SET place_lookups_used = place_lookups_used + 1, updated_at = excluded.updated_at
       `).run(accountId, period.periodId, nowIso());
     }
-    deleteReservation(db, reservation.reservationId);
+    // 신규로 확정됐다(과금 여부와 무관하게 이 판정은 끝났다) — 예약을
+    // "소비됨"으로 지운다. 사용량은 이미 위에서 정확히 처리했으므로
+    // 여기서는 절대 다시 건드리지 않는다(그냥 진행 중 표시만 지움).
+    consumeReservationRow(db, accountId, period, localPlaceId, reservation.reservationId);
     if (fp !== undefined) upsertLocalLinkTx(db, accountId, localPlaceId, realPlaceId, fp);
     db.exec('COMMIT');
     return { ok: true };
