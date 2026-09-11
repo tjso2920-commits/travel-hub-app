@@ -1,5 +1,43 @@
 # 출시 상태 (RELEASE_STATUS)
 
+## 0. 9차 재검토 갱신 요약(가장 중요 — 여기부터 읽기)
+
+claude_round9_handoff.md의 지시대로 앞부분 재현된 오류(1~4)부터
+고치고, 그다음 확정 사업 방향·추가 요청(6-1~6-4)을 순서대로 구현했다.
+아래 표에 항목별 수정 위치·재현 결과·완료 여부·실제 연결 미검증
+여부·사용자가 다음에 할 일을 정리한다. **"완료"는 코드가 실제로
+동작하고 합성 데이터로 검증됐다는 뜻이지, 실제 Google/토스/Resend
+키·실제 iPhone 기기·실제 배포로 검증됐다는 뜻이 아니다** — 8절 참고.
+
+| 항목 | 수정 위치 | 재현 결과 | 상태 | 실연결 미검증 | 다음 행동(사용자) |
+|---|---|---|---|---|---|
+| R9-1 동기화 삭제충돌 우회 | `src/design/spots.js`(daSyncPush) | 두 기기 동시 삭제·수정 시나리오를 실제 재현 — 예전엔 삭제 큐가 서버의 새 버전으로 몰래 재무장돼 최신 내용이 사라짐. 고친 뒤엔 삭제를 영구 취소하고 최신 내용을 복원함을 확인(`scripts/test-sync-conflict-devices.mjs` 4번) | 완료 | 없음(순수 클라이언트 로직) | 없음 |
+| R9-2 같은 필드 충돌 보존 | `src/design/spots.js`(daRemergePlaceConflict) | 두 기기가 같은 필드를 다르게 고치는 시나리오 재현 — 예전엔 서버 값이 조용히 사라짐. 고친 뒤엔 `_fieldConflicts`로 양쪽 값을 보존하고 화면에서 선택하게 함을 확인(같은 테스트 5번) | 완료 | 없음 | 없음 |
+| R9-3 courses/trips 충돌 무시 | `src/design/spots.js` | 여행 정보 동시 수정 재현 — 서버의 반려 응답이 로컬 최신 수정을 덮어씀을 확인하고 수정(같은 테스트 6번). visits는 이미 안전했음(점검만) | 완료 | 없음 | 없음 |
+| R9-4 장소확인 예약 멱등성 | `server/entitlement-usage.mjs` | 이중 확정·스윕 후 뒤늦은 응답 두 시나리오를 실제로 재현해 확인(`server/test/place-lookup-reservation-idempotency.test.mjs`, 17개) | 완료 | 없음(로직 검증 — 실제 Google Places 키 연동 자체는 별도 항목) | 없음 |
+| R9-5 한도소진 후 비용 노출 | `server/entitlement-usage.mjs`, `server/config.mjs` | 한도 초과 후 새 검색 반복 시나리오 재현 — 계정당 하루 20회(제안값)로 상한(`server/test/entitlement-overlimit-verify-cap.test.mjs`, 9개) | 완료 | 상한값(20회) 자체는 확정 아님, 실사용 데이터로 조정 필요 | 실사용 데이터를 보고 상한값 조정 여부 결정 |
+| R9-6 날씨 이중소비+착장 날짜혼선 | `server/routes/weather.mjs`, `src/design/weather-card.js` | 동시 요청 병합 시 캡 이중 소비, 선택 날짜와 현재 날씨 혼용 두 버그 모두 실제 재현(`server/test/weather-merge-cap.test.mjs` 4개, `scripts/test-weather-outfit-note-date-scope.mjs` 7개) | 완료 | WeatherAPI.com 무료 등급 실제 키 연동은 별도 미검증 | 없음 |
+| R9-7 사업 방향 문서 갱신 | `docs/BUSINESS_DECISIONS.md` 1-2절 | 해당 없음(문서 작업) | 완료 | 문서일 뿐, 아래 남은 결정 사항은 여전히 사용자 승인 필요 | 4,900원 베타가·소규모 모집 규모 등 미결 항목 검토 |
+| R9-8 최소 제휴 준비 | `server/affiliates.mjs`, `src/design/affiliates.js` | 실제 등록 0건 상태에서 화면에 안 보이는지, 합성 데이터 주입 시 뜨는지 실제 확인(`server/test/affiliates.test.mjs` 14개, `scripts/test-affiliates.mjs` 15개) | 완료(구조만 — 실제 제휴 0건) | 실제 제휴사 계약·링크 전무(의도됨) | 실제 제휴 계약 체결 여부 결정 |
+| R9-9 정렬+메타데이터 분리 | `src/design/import-adapter.js`, `spots.js` | 재수입 시 firstAddedAt 유지, originalSavedAt 비파괴적 채움, 레거시 항목 정렬 시 뒤로 밀림(숨지 않음)을 실제로 확인(`scripts/test-sort-and-metadata.mjs` 22개) | 완료 | 숙소 좌표 없음(거리순 기준이 센트로이드일 뿐 GPS 아님) | GPS 옵트인 버튼 추가 여부 결정 |
+| R9-10 세계 공통 상위분류+다중 태그 | `src/design/import-adapter.js`, `spots.js` | 야키토리+이자카야 동시 태그, 동의어 통합, 사용자 확정 보호, 레거시 마이그레이션 전부 실제 확인(`scripts/test-tags-and-category.mjs` 17개) | 완료 | 태그 어휘 21개는 시작 세트일 뿐, 확정 목록 아님 | 태그 어휘 추가 필요 시 요청 |
+| R9-11 테스트 위치 모드 | `src/design/import-adapter.js`, `spots.js` | 잠금/해제 지속성, 프리셋 적용, 거리순 연동, 해제 복귀 전부 실제 확인(`scripts/test-test-location-mode.mjs` 14개) | 완료(개발자 전용 최소 구현) | 실제 계정 화이트리스트 메커니즘 없음(쿼리파라미터 방식) — 실제 GPS·로밍 검증 아님 | 아이폰 비공개 프리뷰 방법 3가지 중 택1 |
+| R9-12 소규모 베타·피드백 체계 | `server/feedback.mjs`, `server/invite-codes.mjs`, `src/design/admin.html` 등 | 접수/설문/관리자 인증/초대코드 게이트(기본 꺼짐) 전부 실제 확인(`server/test/*` 38개, `scripts/test-feedback-and-survey-ui.mjs` 16개) | 완료(실제 모집은 비활성 유지) | 화면 스크린샷 첨부 미구현(의도됨), 관리자 화면 실제 배포 안 됨 | 실제 모집 시작 여부·규모 결정 |
+| R9-13 거리영상 안정성 보강 | `src/design/street-video.js` | 로드 실패(onerror)·타임아웃·낡은 콜백 세 가지 모두 실제로 재현해 확인(`scripts/test-street-video.mjs` 8~10번, 27개 전체) | 완료 | 실제 방송 등록 여전히 0건(STREET_VIDEOS 빈 표) | 실제 방송 확인 후 영상 등록 |
+
+**이번 라운드에서 절대 안 한 것(문서에 없는 사업 기능 신규 추가
+금지 지시 준수)**: 실제 공개 배포, master 병합, 실과금, 유료 계약,
+SNS 게시, 외부 메시지 발송, git 히스토리 재작성, 가격/사용한도 값
+임의 변경, 저가 모집 로직 무단 추가.
+
+**전체 회귀**: 이번 라운드 마지막에 `scripts/test-*.mjs`·
+`server/test/*.test.mjs` 전체(53개 파일, 신규 R9 파일 8개 포함)를
+한 번에 실행해 전부 통과함을 확인했다(개별 파일 결과는 각 항목의
+테스트 이름으로 위 표에 남겼다 — 이 문서에 매 항목 반복 나열하지
+않는다).
+
+---
+
 작성: 2026-09-10(1차) · 갱신: 2026-09-10(2차 — 확정 상품 반영) ·
 갱신: 2026-09-10(3차 — 결제/이메일/경로 공급자 확정, 서버 집행 구조
 재설계) · 갱신: 2026-09-10(4차 — ChatGPT가 실제로 재현한 문제 수정,
@@ -22,7 +60,14 @@ API 비용 통제 실제 구현, 경유지 상한 반영) · 갱신: 2026-09-10(
 반환 장소가 바뀌면 다시 신규 판정), **날씨 시간대 버그 수정**(공급자
 epoch 필드 사용 — 서버 시간대와 무관하게 항상 정확), **현지 거리·
 옷차림 영상 신규**(클릭 시에만 공식 유튜브 플레이어 로드, 실제 영상
-등록은 미검증)) · 브랜치 `design-integration`
+등록은 미검증)) · 갱신: 2026-09-11(9차 — ChatGPT가 재현한 동기화
+삭제충돌 우회·같은 필드 충돌 손실·장소확인 예약 이중처리·비용 노출
+4건 실제 수정, **사업 방향 재확정**(세계 다도시·월 100만원 목표·이용권
++재구매 모델), **최소 제휴 준비 신규**, **저장 목록 정렬+메타데이터
+분리 신규**, **세계 공통 상위분류 유지+세부 다중 태그 신규**,
+**테스트 위치 모드 신규**, **소규모 베타·피드백 체계 신규**(초대코드는
+기본 꺼짐), **거리영상 안정성 보강**(loadIframeApi 오류·타임아웃·
+낡은 콜백 정리) — 자세한 항목별 표는 위 0절 참고) · 브랜치 `design-integration`
 
 **8차 갱신 배경**: 7차 코드를 ChatGPT가 실제로 재현·검토한 결과 세
 가지 결함이 드러났다. 첫째, `account_places` 동기화가 `버전 >= 저장된
@@ -418,7 +463,20 @@ node scripts/test-consumer-flow-e2e.mjs      # 17개 — 전체 통과(6차 신�
 node scripts/test-landing-page.mjs          # 전체 통과
 node scripts/test-weather-card.mjs          # 13개 — 전체 통과(7차 신규 — 실제 Chromium: 비회원도 날씨 확인, 현재/예보 라벨 구분, 이용량 미차감, 모바일 스크린샷)
 node scripts/test-sync-conflict-devices.mjs # 9개 — 전체 통과(8차 신규 — 실제 Chromium 두 기기: 동시 다른 필드 편집 3-way 재병합·수정vs삭제 충돌·저장 중 추가 편집 보존)
-node scripts/test-street-video.mjs          # 22개 — 전체 통과(8차 신규 — 실제 Chromium, 이 세션이 직접 주입한 합성 픽스처로 구조·표시 로직·닫기 동작·오류 대체 화면 검증. 빈 표 배포 상태에서 버튼이 실제로 숨겨지는 것도 확인됨)
+node scripts/test-street-video.mjs          # 27개 — 전체 통과(8차 신규, 9차 갱신 — 로드 실패(onerror)·타임아웃·낡은 콜백 정리 3건 추가 검증)
+node server/test/place-lookup-reservation-idempotency.test.mjs  # 17개 — 전체 통과(9차 신규 — 이중확정·스윕후지연응답 실제 재현)
+node server/test/entitlement-overlimit-verify-cap.test.mjs      # 9개 — 전체 통과(9차 신규 — 한도초과 후 검증 시도 일일 상한)
+node server/test/weather-merge-cap.test.mjs                     # 4개 — 전체 통과(9차 신규 — 병합요청 호출상한 이중소비 재현·수정)
+node scripts/test-weather-outfit-note-date-scope.mjs            # 7개 — 전체 통과(9차 신규 — 착장문구 날짜혼선 재현·수정)
+node server/test/affiliates.test.mjs                            # 14개 — 전체 통과(9차 신규 — 최소 제휴 준비 서버측)
+node scripts/test-affiliates.mjs                                # 15개 — 전체 통과(9차 신규 — 최소 제휴 준비 실브라우저)
+node scripts/test-sort-and-metadata.mjs                         # 22개 — 전체 통과(9차 신규 — 정렬+메타데이터 분리)
+node scripts/test-tags-and-category.mjs                         # 17개 — 전체 통과(9차 신규 — 세계 공통 상위분류+세부 다중 태그)
+node scripts/test-test-location-mode.mjs                        # 14개 — 전체 통과(9차 신규 — 테스트 위치 모드)
+node server/test/invite-codes.test.mjs                          # 15개 — 전체 통과(9차 신규 — 초대 코드 게이트가 켜졌을 때의 동작)
+node server/test/feedback.test.mjs                              # 20개 — 전체 통과(9차 신규 — 불편함 보내기·설문·관리자 API)
+node server/test/admin-not-configured.test.mjs                  # 3개 — 전체 통과(9차 신규 — ADMIN_TOKEN 미설정 시 501 안전장치)
+node scripts/test-feedback-and-survey-ui.mjs                    # 16개 — 전체 통과(9차 신규 — 불편함 보내기·설문 실브라우저 + 카드 제거 순서 버그 실제 재현·수정)
 node scripts/audit.mjs                      # 개인정보·하드코딩 키 잔존 검사 — 전체 통과
 node scripts/verify.mjs                     # 보호 블록·저장 키 무결성 — 전체 통과
 ```
