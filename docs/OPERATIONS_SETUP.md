@@ -139,7 +139,14 @@ curl -X POST https://your-domain/api/admin/test-access \
 운영자가 신경 쓸 값이 아니다(운영 서버에 이 변수를 넣어도 코드가
 무시한다). 실제 AI 공급자를 선정하면 이 절을 다시 채워야 한다 —
 아직은 "구조만 있고 실제 연결은 없다"는 상태다(`docs/BUSINESS_DECISIONS.md`
-3-3-6절 참고).
+3-3-6·3-3-7절 참고).
+
+**11차 신규(마찬가지로 운영자가 지금 손댈 값 아님, 참고용)**:
+`AI_CLASSIFY_RESERVED_ROUTE_SEGMENTS_PER_COURSE`(기본 1)와
+`AI_CLASSIFY_GLOBAL_DAILY_BATCH_LIMIT`(기본 2,000)이 새로 추가됐다 —
+둘 다 실제 AI 공급자가 없는 지금은 아무 효과가 없는 예산·한도
+계산용 값이다. 공급자를 선정한 뒤 실제 사용량을 보고서야 조정할
+값이므로 지금 바꾸지 않는다.
 
 ### 1-7. 선택 — 값 조정용(기본값 그대로 써도 된다)
 

@@ -1,5 +1,59 @@
 # 출시 상태 (RELEASE_STATUS)
 
+## -1. 11차 재검토 갱신 요약(가장 최신 — 여기부터 읽기)
+
+이번 목표는 ChatGPT의 지시 그대로 **"기능 확장이 아니라 데이터 손실
+해결과 이미 요청한 기능의 화면·저장·동기화 연결 완성"**이었다. 아래
+표기 원칙은 지금까지와 같다 — **"완료"는 코드가 실제로 동작하고
+합성 데이터·Chromium 실제 브라우저로 검증됐다는 뜻이지, 실제 Google/
+토스/Resend 키·실제 iPhone 기기·실제 배포로 검증됐다는 뜻이 아니다.**
+이번 라운드부터는 각 항목에 아래 6개 상태 표기 중 하나를 **명시적으로**
+붙인다(11차 지시):
+`실사용 가능` / `코드는 있으나 화면 미연결` / `모의(mock)로만 검증` /
+`실제 공급자 미연결` / `실기기(iPhone) 미검증` / `사용자 다음 행동 필요`
+— 한 항목이 여러 개 해당하면 전부 붙인다.
+
+**R11-1(보고 정정)**: ChatGPT의 10차 재현이 "Node + 인메모리 DB(jsdom
+아님)로만 이뤄졌고, 실제 브라우저·실제 iPhone 검증이 아니다"라는
+지적을 확인 — `scripts/test-*.mjs` 26개 전부가 실제로 Playwright/
+Chromium을 띄워 실행됨을 코드로 재확인했고(각 파일이 `chromium.launch`
+를 실제로 호출), `server/test/*.test.mjs` 41개는 순수 Node+인메모리
+DB만 쓴다는 ChatGPT의 지적이 정확함을 인정한다. 이미 맞았던 10차의
+파일 수(38+23)는 다시 세지 않고, 이번 라운드에서 늘어난 수만 아래
+"전체 회귀"에 정정 반영한다. 상태: `실사용 가능`(문서 정정 작업이라
+코드 영향 없음).
+
+| 항목 | 수정 위치 | 재현/검증 결과 | 상태 | 다음 행동(사용자) |
+|---|---|---|---|---|
+| R11-2 trips/courses 충돌 기록 소실 + 필드 삭제 부활 | `src/design/spots.js`(daRemergeGenericConflict, daSyncPush), `src/design/import-adapter.js`, `server/db.mjs`(trips.field_conflicts 컬럼), `server/routes/trips.mjs`(syncTrips) | ①같은 필드를 두 기기가 다르게 고치면 trips/courses도 `_fieldConflicts`로 보존되고(예전엔 서버가 고정 컬럼만 저장해 재제출 시 조용히 사라짐), ②로컬에서 명시적으로 지운 필드가 상대 기기 값으로 부활하던 버그(`Object.keys(mine)`만 순회하던 결함)를 union-of-keys로 수정, ③trips/courses에도 장소와 같은 실제 충돌 해결 화면(선택 버튼)을 신규 연결, ④HTTP 200과 "완전히 동기화됨"을 구분(`hasUnresolvedConflicts`/`fullySynced`), ⑤로그아웃 시 "저장은 됐지만 아직 정리할 값이 남음"과 "저장 자체가 실패함"을 다른 문구로 구분. 테스트 작성 중 **별도로 새로 발견한 버그**(제3의 기기의 무해한 재동기화가 trips 버전을 불필요하게 올려 다른 기기의 정상 수정이 스푸리어스 충돌을 일으킴)도 `syncTrips`에 `contentUnchanged` 보호를 추가해 함께 수정. git stash로 수정 전 실제 재현 확인(`server/test/trips-field-conflicts.test.mjs` 10개, `scripts/test-sync-conflict-devices.mjs` 시나리오 10~13 신규) | 완료 | `실사용 가능`(순수 클라이언트+서버 로직, 별도 연결 없음) | 없음 |
+| R11-3 태그 실제 화면·계정 저장 완성 | `src/design/import-adapter.js`(태그 레지스트리 override 구조), `src/design/spots.js`(tagsEditSheet, bulkTagEditSheet), `server/db.mjs`(account_tags), `server/routes/tags.mjs`(신규) | 기존 태그 편집 화면 안에 이름바꾸기/삭제 추가(새 대형 관리화면 안 만듦, 지시대로), 다중선택 일괄 태그 추가/삭제 신규, 계정별 태그 레지스트리(커스텀 태그+기본태그 표시명 override) 동기화 신규(로그아웃/재접속/다른기기 생존, 계정 전환 격리 확인), 기본 태그 이름을 바꿔도 공유 전역 배열은 절대 안 바뀌고 계정별 override로만 저장, `daInferTags`를 기본(builtin) 태그만 순회하도록 제한해 개인 취향 태그("꼭 가기" 등)가 절대 다른 장소에 자동으로 안 번지게 구조적으로 차단, 다른 기기가 준 미지 태그를 편집 화면에서 안 지움, 새 태그 저장 실패 시 롤백. git stash로 재현 확인(`server/test/tags-sync.test.mjs` 7개, `scripts/test-tag-registry-sync.mjs` 14개) | 완료 | `실사용 가능` | 없음 |
+| R11-4 AI 분류 클라이언트 연결 + 원가 통제 강화 | `src/design/spots.js`(daRunAiClassifyQueueOnce), `src/design/import-adapter.js`(daNeedsAiClassify 등), `server/routes/ai-classify.mjs`, `server/config.mjs`, `server/entitlement-usage.mjs`, `server/db.mjs`(ai_classify_cache) | 가져오기 완료/로그인 동기화 직후 규칙으로 못 정한 곳만 골라 백그라운드로 분류 요청(화면 안 막힘, 응답 대기 중 사용자가 직접 확정/삭제하면 결과 폐기)을 신규 연결. 개인 메모(note)를 입력에서 완전히 제거하고 confirmedTypes로 대체. 입력해시+분류버전+계정별 캐시로 중복 호출·중복 과금 방지. 전체(서비스 전역) 하루 배치 한도 신규(계정별 한도와 별개). 헤드룸 예약을 실제 코스 세그먼트·SKU 등급 기준으로 정확화하고, 헤드룸-확인-후-차감 경합을 원자적 트랜잭션이 직접 막도록 수정. 유료 이용권(50곳+30회)과 기존 3,500원 안전상한이 실제로 공존 가능함을 구체적 숫자로 보고(BUSINESS_DECISIONS.md 3-3-7절). git stash로 재현 확인(`server/test/ai-classify-cache-and-budget-race.test.mjs` 12개, `scripts/test-ai-classify-client-queue.mjs` 8개) | **구조 연결 완료. 실제 AI 분류는 여전히 미완료**(실제 공급자 없음) | `모의(mock)로만 검증`, `실제 공급자 미연결` | AI 공급자·모델 선정 여부 결정(선정 전까지 계속 비활성) |
+| R11-5 거리순 "내 위치 기준" 옵트인 + 위치 기능 정리 | `src/design/spots.js`(daRequestMyLocation, daLocationBasis, nearby), `src/design/index.html` | 앱을 여는 것만으로는 GPS를 절대 안 부르고, 거리순 옆 "내 위치 기준으로 보기" 버튼을 눌러야 그때 GPS를 요청함을 확인. GPS 거절 시 직접 좌표 입력 대안 제공(강제 종료 아님). "평균 위치"라는 표현을 정확히 씀("지정 위치"라고 잘못 부르지 않음). 예전에 "GPS 연결 전인 화면"이라던 `nearby()` 자리표시자를 실제 거리순+위치요청 동작으로 교체. 로그아웃 시 세션 GPS/직접입력 위치가 다음 계정에 안 새어 나감을 확인. 목적지 날씨(weather-card.js)는 의도적으로 GPS와 무관한 별개 기준이라는 경계를 그대로 지켰고, "향후 내 주변 날씨" 주석은 미구현임을 정직하게 남김(연결된 것처럼 보고하지 않음). git stash 불필요(신규 기능 자체를 새 테스트로 검증, `scripts/test-location-optin.mjs` 13개) | 완료 | `실사용 가능`(Chromium GPS 모킹으로 검증), `실기기(iPhone) 미검증` | 실제 iPhone에서 GPS 권한 팝업·거절 동작 직접 확인 필요 |
+| R11-6 최종 회귀 + 문서 정리 + 전달 | 본 문서, `docs/BUSINESS_DECISIONS.md`, `docs/전달문서_통합본.md` | 서버 테스트 41개 + 화면(Chromium) 테스트 26개(각각 R11-2~R11-5 신규 2개씩 포함) 전체를 이번 라운드 마지막에 한 번에 실행해 전부 종료코드 0 확인. 4개 원본 문서를 통합문서로 기계적으로 재생성(`scripts/build-combined-doc.mjs`) | 완료 | `실사용 가능`(문서·검증 작업) | 없음 |
+
+**이번 라운드에서 절대 안 한 것(9차·10차와 동일 원칙 유지)**: 실제
+공개 배포, master 병합, 실과금, 유료 계약(AI 포함), SNS 게시, 외부
+메시지 발송, git 히스토리 재작성, 가격/사용한도/안전상한 값 임의
+변경, 실제 AI 공급자 연결, 새 지역팩·AI 여행플래너·B2B·광고 기능
+추가.
+
+**아직 "출시 준비 완료"라고 말할 수 없는 이유(11차 지시 그대로
+명시)**: 실제 AI 공급자 연결, 실제 결제 테스트, 영구 저장·백업/복원의
+실제 운영 검증, 실제 iPhone 핵심 흐름 확인 중 아직 안 끝난 게 있다 —
+이 중 하나라도 남아 있으면 "출시 준비 완료"로 부르지 않는다. 지금
+시점엔 전부 위 조건에 걸린다(AI는 미연결, 결제는 토스 실키 미연결,
+iPhone 실기기 미검증 — 아래 8절 계속 참고).
+
+**전체 회귀(11차)**: 서버 테스트 `server/test/*.test.mjs` **41개**
+(10차 38개 + 신규 3개: trips 필드충돌, 태그 동기화, AI 캐시·예산
+경합), 화면 테스트 `scripts/test-*.mjs` **26개**(10차 23개 + 신규
+3개: 위치 옵트인, AI 분류 클라이언트 큐, 태그 레지스트리 동기화 —
+태그 레지스트리 동기화는 화면 테스트 쪽에도 별도 파일로 추가됐다).
+합계 **67개 파일**을 이번 라운드 마지막에 한 번에 실행해 전부
+종료코드 0(전체 통과)임을 확인했다.
+
+---
+
 ## 0. 9차 재검토 갱신 요약(가장 중요 — 여기부터 읽기)
 
 claude_round9_handoff.md의 지시대로 앞부분 재현된 오류(1~4)부터
