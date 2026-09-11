@@ -176,6 +176,23 @@ export function buildConfig(env) {
     // 엔드포인트뿐).
     placeLookupBatchMaxItemsPerCall: Number(env.PLACE_LOOKUP_BATCH_MAX_ITEMS || 40),
     placeLookupBatchDailyLimit: Number(env.PLACE_LOOKUP_BATCH_DAILY_LIMIT || 400),
+    // 2026-09-11 재검토(9차) 3절 — "한도 소진 후 유료 검색을 무제한
+    // 반복하면 비용 상한이 소진돼 다른(정당한) 요청까지 막힐 수
+    // 있다"는 지시. 이용권 한도(entitlementUsage.*PlaceLookupLimit)를
+    // 이미 다 쓴 계정이라도 "다른 로컬 id로 이미 확인된 실제 장소"
+    // 재사용은 한도와 무관하게 여전히 공짜여야 하므로(7차 약속) 이런
+    // 시도 자체를 막을 수는 없다 — 그런데 그 판정 자체가 실제 외부
+    // 호출 없인 안 되므로(재사용인지 신규인지는 공급자가 실제로
+    // 돌려준 식별자를 봐야 안다), 계정당 하루 "한도 초과 상태에서
+    // 시도해 볼 수 있는 횟수" 자체에 작은 상한을 둔다 — 정말 재사용
+    // 확인이 필요한 정상적인 몇 건은 통과시키되, 스크립트로 새 검색을
+    // 무한 반복해 비용 예산을 고갈시키는 시나리오는 막는다.
+    // 기본값 20 = 위치확인 단가(약 44.8원, docs/BUSINESS_DECISIONS.md
+    // 참고) 기준 계정당 하루 최대 약 896원 추가 노출 — 이용권 자체
+    // 안전상한(엔티틀먼트 기간 누적 700/3,500원)과 별개의 "하루 단위"
+    // 보조 안전판이다. 확정 수치가 아니라 제안값이며, 실사용 데이터로
+    // 조정해야 한다(docs/BUSINESS_DECISIONS.md에 근거를 남긴다).
+    entitlementOverLimitVerificationDailyLimit: Number(env.ENTITLEMENT_OVERLIMIT_VERIFY_DAILY_LIMIT || 20),
 
     // 외부 API 호출 전체에 공통 적용하는 타임아웃(2026-09-10 재검토(4차):
     // "모든 외부 요청에 제한 시간을 적용하라"). 타임아웃 자체가 "과금

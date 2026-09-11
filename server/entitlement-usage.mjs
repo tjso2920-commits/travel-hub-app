@@ -39,6 +39,7 @@ import { openDb, uuid, nowIso } from './db.mjs';
 import { config } from './config.mjs';
 import { checkEntitlement } from './routes/entitlement.mjs';
 import { periodCostMicros } from './cost-ledger.mjs';
+import { checkAndIncrement, dayWindow } from './rate-limit.mjs';
 
 /* 이 계정이 지금 속한 이용권 기간과 그 기간에 적용되는 한도. */
 export function currentPeriod(accountId) {
@@ -228,6 +229,26 @@ export function reservePlaceLookupSlot(accountId, localPlaceId, queryFingerprint
       // 거절하지 않는다. 사용량은 아직 늘리지 않은 채, finalize가
       // 실제 real_place_id를 보고 최종 판정하게 한다(진짜 신규로
       // 밝혀지면 그때 거절).
+      //
+      // 2026-09-11 재검토(9차) 3절 — ChatGPT 지적: 이 경로가 무제한
+      // 허용되면, 한도를 다 쓴 계정이 새 검색어를 계속 보내는 것만으로
+      // (재사용 여부와 무관하게) 매번 실제 유료 외부 호출을 발생시켜
+      // 비용 상한을 소진할 수 있다 — 정직한 다른 계정의 코스 생성까지
+      // 막을 위험이 있다. "재사용은 절대 막지 않는다"는 약속과
+      // "무제한 신규 검색은 안 된다"는 두 요구를 동시에 만족시키기
+      // 위해, 계정당 하루 "한도 초과 상태에서 시도해 볼 수 있는
+      // 횟수" 자체에 작은 안전판을 둔다(entitlementOverLimitVerificationDailyLimit,
+      // 기본 20 — docs/BUSINESS_DECISIONS.md 참고). 이 안전판에 걸리면
+      // 그때는 외부 호출 자체를 보내지 않고 정직하게 한도 초과로
+      // 거절한다(캐시·이미 확인된 실제 장소 재사용은 이 카운터를 아예
+      // 안 거치므로 여전히 무제한 공짜다 — 위 링크-일치 빠른 경로와
+      // places.mjs의 조회 결과 캐시가 먼저 처리한다).
+      const day = dayWindow();
+      const verifyCheck = checkAndIncrement(`entitlement-overlimit-verify:${accountId}`, day, config.entitlementOverLimitVerificationDailyLimit, 1);
+      if (!verifyCheck.allowed) {
+        db.exec('ROLLBACK');
+        return { ok: false, reason: 'entitlement-place-lookup-limit-reached', period, used, limit: period.placeLookupLimit };
+      }
       db.exec('COMMIT');
       return { ok: true, isNew: true, provisional: false, overLimit: true, period, used, limit: period.placeLookupLimit, queryFingerprint: fp };
     }
