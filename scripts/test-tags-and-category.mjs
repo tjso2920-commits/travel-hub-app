@@ -133,7 +133,11 @@ await p.click('#grid .spot:has-text("이름만있는곳") .spot-open');
 await p.waitForTimeout(100);
 await p.click('[data-tags-edit]');
 await p.waitForTimeout(100);
-await p.click('#tagEditChips button:has-text("카페")');
+// 2026-09-11 재검토(10차) 4절 — "자주 쓰는 태그"만 먼저 보이고 나머지는
+// "더 보기"로 접혀 있다(카페는 아직 아무 장소에도 안 붙어 있어 더
+// 보기 쪽에 있다).
+await p.click('#tagsMoreBtn');
+await p.click('#tagEditChipsMore button:has-text("카페")');
 await p.click('#tagsSaveBtn');
 await p.waitForTimeout(150);
 const savedTags = await p.evaluate(() => foodMap.places.find((x) => x.id === 'plain1').tags);

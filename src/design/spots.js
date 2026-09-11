@@ -485,6 +485,7 @@ async function daLogout() {
   delete foodMap.course;
   delete foodMap.courses;
   delete foodMap.trips;
+  delete foodMap.customTags;
   delete foodMap.visits;
   delete foodMap.currentTripByCity;
   delete foodMap.deletedPlaceIds;
@@ -688,20 +689,50 @@ function finishCatAssign(id, cat) {
    재수입·재동기화가 절대 안 덮는다(daSetTags/daMerge와 동일 규칙). */
 function tagsEditSheet(id) {
   const p = spots.find((s) => s.id === id); if (!p) return;
-  const known = A.knownTags;
   const current = new Set(p.tags || []);
+  // 2026-09-11 재검토(10차) 4·5절 — "분류가 많으면 자주 쓰는 것과
+  // 더 보기로 정리하고 전체 사전을 펼치지 마." 이 화면에 들어오자마자
+  // 21개+사용자 태그 전부를 늘어놓지 않고, 이 사용자가 실제로 이미
+  // 붙여 본 태그를 먼저 보여준 뒤 나머지는 "더 보기"로 접어 둔다.
+  const freq = new Map();
+  (foodMap.places || []).forEach((pl) => (pl.tags || []).forEach((t) => freq.set(t, (freq.get(t) || 0) + 1)));
+  const known = A.knownTags;
+  const frequent = known.filter((t) => freq.has(t)).sort((a, b) => (freq.get(b) - freq.get(a)) || a.localeCompare(b));
+  const rest = known.filter((t) => !freq.has(t));
+  const chipHTML = (t) => `<button data-tag-toggle="${A.esc(t)}" class="${current.has(t) ? 'active' : ''}" aria-pressed="${current.has(t)}">${A.esc(t)}</button>`;
   open('세부 태그', `<div class="detail"><h2>세부 태그를 골라 주세요</h2><p>${A.esc(p.name)}</p>` +
-    `<p class="inline-note">여러 개를 함께 고를 수 있어요(예: 야키토리+이자카야). 목록에 없는 특징은 아직 지원하지 않아요.</p>` +
-    `<div class="filters" id="tagEditChips" style="flex-wrap:wrap;overflow:visible">${known.map((t) => `<button data-tag-toggle="${A.esc(t)}" class="${current.has(t) ? 'active' : ''}" aria-pressed="${current.has(t)}">${A.esc(t)}</button>`).join('')}</div>` +
+    `<p class="inline-note">여러 개를 함께 고를 수 있어요(예: 야키토리+이자카야). 자동 추정이 틀렸으면 직접 고치거나 새 태그를 만들 수 있어요.</p>` +
+    `<div class="filters" id="tagEditChipsFrequent" style="flex-wrap:wrap;overflow:visible">${frequent.map(chipHTML).join('')}</div>` +
+    (rest.length ? `<button id="tagsMoreBtn" style="margin-top:10px">더 보기(${rest.length})</button>` : '') +
+    `<div class="filters" id="tagEditChipsMore" hidden style="flex-wrap:wrap;overflow:visible;margin-top:10px">${rest.map(chipHTML).join('')}</div>` +
+    `<div style="margin-top:14px;display:flex;gap:8px"><input id="tagsNewInput" placeholder="목록에 없으면 새 태그 이름 입력" maxlength="20" style="flex:1"><button id="tagsNewBtn">추가</button></div>` +
     `<button class="primary" id="tagsSaveBtn" style="margin-top:14px">저장</button></div>`);
-  $('#tagEditChips').querySelectorAll('[data-tag-toggle]').forEach((b) => {
+  const wireChip = (b) => {
     b.onclick = () => {
       const t = b.dataset.tagToggle;
       if (current.has(t)) current.delete(t); else current.add(t);
       b.classList.toggle('active', current.has(t));
       b.setAttribute('aria-pressed', current.has(t));
     };
-  });
+  };
+  $('#tagEditChipsFrequent').querySelectorAll('[data-tag-toggle]').forEach(wireChip);
+  $('#tagEditChipsMore').querySelectorAll('[data-tag-toggle]').forEach(wireChip);
+  if ($('#tagsMoreBtn')) {
+    $('#tagsMoreBtn').onclick = () => { $('#tagEditChipsMore').hidden = false; $('#tagsMoreBtn').hidden = true; };
+  }
+  $('#tagsNewBtn').onclick = () => {
+    const label = A.normalizeTagLabel($('#tagsNewInput').value);
+    if (!label) { alert('태그 이름을 확인해 주세요(1~20자, 빈 값 불가).'); return; }
+    const r = A.createTag(label);
+    if (!r.ok) { alert('태그를 만들지 못했어요.'); return; }
+    current.add(r.tag.label);
+    A.saveFoodMap(foodMap); // customTags는 foodMap의 일부라 즉시 저장해 둔다(다른 장소에서도 바로 보이게).
+    const btn = document.createElement('button');
+    btn.dataset.tagToggle = r.tag.label; btn.className = 'active'; btn.setAttribute('aria-pressed', 'true'); btn.textContent = r.tag.label;
+    wireChip(btn);
+    $('#tagEditChipsFrequent').appendChild(btn);
+    $('#tagsNewInput').value = '';
+  };
   $('#tagsSaveBtn').onclick = () => finishTagsEdit(id, Array.from(current));
 }
 function finishTagsEdit(id, tags) {

@@ -435,34 +435,164 @@ function daInfer(s) {
    시작 어휘일 뿐 필요하면 늘릴 수 있다("불확실하면 미분류" 원칙은
    daInferTags가 빈 배열을 돌려주는 것으로 지킨다 — 억지로 아무 태그나
    붙이지 않는다). */
-const FM_TAGS = [
-  ['야키토리', /焼き?鳥|やきとり|야키토리|닭꼬치|yakitori|chicken ?skewer/],
-  ['스시', /寿司|鮨|스시|초밥|\bsushi\b/],
-  ['라멘', /ラーメン|라멘|\bramen\b/],
-  ['우동·소바', /うどん|そば|蕎麦|우동|소바|\budon\b|\bsoba\b/],
-  ['이자카야', /居酒屋|이자카야|\bizakaya\b/],
-  ['주류샵', /酒屋|주류샵|주판점|리커샵|리큐어\s?샵|사케샵|와인샵|liquor ?store|bottle ?shop|off-licen[cs]e|wine ?shop/],
-  ['오코노미야키', /お好み焼き|오코노미야키|okonomiyaki/],
-  ['타코야키', /たこ焼き|타코야키|takoyaki/],
-  ['돈카츠', /とんかつ|돈카츠|tonkatsu|\bkatsu\b/],
-  ['텐푸라', /天ぷら|텐푸라|튀김|tempura/],
-  ['타이음식', /타이음식|타이푸드|팟타이|똠얌|thai food|pad ?thai|tom ?yum/],
-  ['이탈리안', /이탈리안|이태리 ?음식|ristorante|trattoria|osteria|파스타|\bpasta\b|피자|pizzeria/],
-  ['카페', /카페|커피|coffee|caf[eé]/],
-  ['베이커리·디저트', /베이커리|제과|빵집|디저트|bakery|p[aâ]tisserie|dessert/],
-  ['마사지', /마사지|massage/],
-  ['스파·온천', /스파|온천|찜질|\bspa\b|onsen|thermal|therme/],
-  ['바베큐·그릴', /바베큐|그릴|고기집|barbecue|\bbbq\b|\bgrill\b/],
-  ['프렌치', /프렌치|프랑스 ?요리|bistro|brasserie|french restaurant/],
-  ['멕시칸', /멕시칸|타케리아|taco|taquer[ií]a|mexican/],
-  ['인도·커리', /인도음식|커리|\bcurry\b|indian food/],
-  ['중식', /중식|중국요리|chinese restaurant|dim ?sum|딤섬/],
+/* 2026-09-11 재검토(10차) 4절 — ChatGPT가 실제로 재현한 두 가지 오분류:
+   ① daInferTags('居酒屋') → ['이자카야','주류샵'] : 酒屋가 居酒屋의
+      부분 문자열이라 이자카야 가게가 주류샵으로도 잘못 겹쳐 잡힌다.
+   ② daInferTags('스시 말고 라멘 먹기') → ['스시','라멘'] : "말고"(부정·
+      계획 문장)로 실제로는 뺀 항목을 업종 근거로 오인했다.
+   또한 "21개 고정 정규식이 허용 목록 전체"라는 설계를 버리고, 태그
+   ID·표시명·동의어·출처를 분리한 레지스트리로 바꾼다. 기존 데이터와의
+   호환을 위해 place.tags에는 지금처럼 "표시명(label) 문자열"을 그대로
+   저장한다(비파괴적 이전 — 데이터 마이그레이션이 필요 없다). id는
+   내부적으로 동의어 연결·향후 다국어 표시명 분리(영어 지원 구조,
+   10차 8절)에 쓰기 위한 안정적인 키일 뿐, 지금 저장 형식은 그대로다. */
+const TAG_REGISTRY_BUILTIN = [
+  { id: 'yakitori', label: '야키토리', pattern: /焼き?鳥|やきとり|야키토리|닭꼬치|yakitori|chicken ?skewer/, synonyms: [] },
+  { id: 'sushi', label: '스시', pattern: /寿司|鮨|스시|초밥|\bsushi\b/, synonyms: [] },
+  { id: 'ramen', label: '라멘', pattern: /ラーメン|라멘|\bramen\b/, synonyms: [] },
+  { id: 'udon_soba', label: '우동·소바', pattern: /うどん|そば|蕎麦|우동|소바|\budon\b|\bsoba\b/, synonyms: [] },
+  { id: 'izakaya', label: '이자카야', pattern: /居酒屋|이자카야|\bizakaya\b/, synonyms: [] },
+  // 2026-09-11 재검토(10차) — 酒屋 앞이 居가 아닐 때만 매칭(居酒屋의
+  // 부분 문자열로 잘못 겹쳐 잡히는 것 방지). 룩비하인드 대신 문자
+  // 클래스 제외를 써서 오래된 브라우저에서도 동작한다.
+  { id: 'liquor_shop', label: '주류샵', pattern: /(?:^|[^居])酒屋|주류샵|주판점|리커샵|리큐어\s?샵|사케샵|와인샵|liquor ?store|bottle ?shop|off-licen[cs]e|wine ?shop/, synonyms: [] },
+  { id: 'okonomiyaki', label: '오코노미야키', pattern: /お好み焼き|오코노미야키|okonomiyaki/, synonyms: [] },
+  { id: 'takoyaki', label: '타코야키', pattern: /たこ焼き|타코야키|takoyaki/, synonyms: [] },
+  { id: 'tonkatsu', label: '돈카츠', pattern: /とんかつ|돈카츠|tonkatsu|\bkatsu\b/, synonyms: [] },
+  { id: 'tempura', label: '텐푸라', pattern: /天ぷら|텐푸라|튀김|tempura/, synonyms: [] },
+  { id: 'thai_food', label: '타이음식', pattern: /타이음식|타이푸드|팟타이|똠얌|thai food|pad ?thai|tom ?yum/, synonyms: [] },
+  { id: 'italian', label: '이탈리안', pattern: /이탈리안|이태리 ?음식|ristorante|trattoria|osteria|파스타|\bpasta\b|피자|pizzeria/, synonyms: [] },
+  { id: 'cafe', label: '카페', pattern: /카페|커피|coffee|caf[eé]/, synonyms: [] },
+  { id: 'bakery_dessert', label: '베이커리·디저트', pattern: /베이커리|제과|빵집|디저트|bakery|p[aâ]tisserie|dessert/, synonyms: [] },
+  { id: 'massage', label: '마사지', pattern: /마사지|massage/, synonyms: [] },
+  { id: 'spa_onsen', label: '스파·온천', pattern: /스파|온천|찜질|\bspa\b|onsen|thermal|therme/, synonyms: [] },
+  { id: 'bbq_grill', label: '바베큐·그릴', pattern: /바베큐|그릴|고기집|barbecue|\bbbq\b|\bgrill\b/, synonyms: [] },
+  { id: 'french', label: '프렌치', pattern: /프렌치|프랑스 ?요리|bistro|brasserie|french restaurant/, synonyms: [] },
+  { id: 'mexican', label: '멕시칸', pattern: /멕시칸|타케리아|taco|taquer[ií]a|mexican/, synonyms: [] },
+  { id: 'indian_curry', label: '인도·커리', pattern: /인도음식|커리|\bcurry\b|indian food/, synonyms: [] },
+  { id: 'chinese', label: '중식', pattern: /중식|중국요리|chinese restaurant|dim ?sum|딤섬/, synonyms: [] },
 ];
+/* 사용자가 만든 태그(foodMap.customTags에 저장) — loadFoodMap이 채우고
+   CRUD 함수(daCreateTag/daRenameTag/daDeleteCustomTag)가 갱신한다.
+   세션 중엔 이 배열도 daInferTags/daKnownTags가 함께 참고한다. */
+let _customTags = [];
+function _allTagEntries() { return TAG_REGISTRY_BUILTIN.concat(_customTags); }
+function _slugifyTagId(label) {
+  const base = String(label || '').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '_').replace(/^_+|_+$/g, '') || 'tag';
+  let id = 'custom_' + base, n = 1;
+  const taken = new Set(_allTagEntries().map((t) => t.id));
+  while (taken.has(id)) { id = 'custom_' + base + '_' + (++n); }
+  return id;
+}
+/* 2026-09-11 재검토(10차) — "스시 말고 라멘 먹기" 같은 부정·계획 문장을
+   실제 업종으로 확정하지 말라는 지시 반영. "[매칭된 단어] 말고/아니고/
+   대신..." 형태로 곧바로 이어지면 그 항목은 실제로는 뺀 것으로 보고
+   제외한다. 완전한 문장 이해는 아니고 딱 이 패턴 하나를 가려내는
+   한정적 규칙이다(과도한 일반화 금지 — 문서에도 그대로 남긴다). */
+const NEGATION_AFTER = /^\s*(말고|아니고|아니라|대신|보다는|하지\s?말고)/;
 function daInferTags(s) {
   s = String(s || '').toLowerCase();
   const out = [];
-  for (let i = 0; i < FM_TAGS.length; i++) if (FM_TAGS[i][1].test(s)) out.push(FM_TAGS[i][0]);
+  for (const tag of _allTagEntries()) {
+    let hit = false;
+    if (tag.pattern) {
+      const flags = tag.pattern.flags.includes('g') ? tag.pattern.flags : tag.pattern.flags + 'g';
+      const re = new RegExp(tag.pattern.source, flags);
+      let m;
+      while ((m = re.exec(s))) {
+        const after = s.slice(m.index + m[0].length, m.index + m[0].length + 6);
+        if (!NEGATION_AFTER.test(after)) { hit = true; break; }
+        if (m.index === re.lastIndex) re.lastIndex++; // 빈 매치 무한루프 방지.
+      }
+    }
+    if (!hit && Array.isArray(tag.synonyms)) {
+      for (const syn of tag.synonyms) {
+        const idx = s.indexOf(String(syn).toLowerCase());
+        if (idx < 0) continue;
+        const after = s.slice(idx + String(syn).length, idx + String(syn).length + 6);
+        if (!NEGATION_AFTER.test(after)) { hit = true; break; }
+      }
+    }
+    if (hit) out.push(tag.label);
+  }
   return out;
+}
+/* 태그 CRUD — 사용자가 새 태그를 만들거나 이름을 바꾸거나 지울 수
+   있어야 한다는 지시(10차 4절) 반영. place.tags는 계속 label 문자열을
+   저장하므로, 이름 수정은 레지스트리의 label만 바꾸는 게 아니라 이미
+   저장된 장소들의 tags 배열 안 문자열도 함께 바꿔 줘야 데이터가
+   일관된다. 삭제는 태그 연결만 끊고 장소 자체는 절대 지우지 않는다. */
+function daFindTagByLabel(label) {
+  const norm = String(label || '').trim();
+  return _allTagEntries().find((t) => t.label === norm) || null;
+}
+function daCreateTag(label, synonyms) {
+  const norm = String(label || '').trim();
+  if (!norm) return { ok: false, reason: 'empty-label' };
+  // 중복 정규화 — 이미 같은(대소문자 무시) 표시명이 있으면 새로 안
+  // 만들고 기존 태그를 그대로 돌려준다(AI 제안 태그에도 같은 규칙을
+  // 적용할 수 있게 별도 함수로 분리해 둔다 — daNormalizeTagLabel 참고).
+  const existing = _allTagEntries().find((t) => t.label.toLowerCase() === norm.toLowerCase());
+  if (existing) return { ok: true, tag: existing, created: false };
+  const tag = { id: _slugifyTagId(norm), label: norm, synonyms: Array.isArray(synonyms) ? synonyms.filter(Boolean).map(String) : [], source: 'user', createdAt: new Date().toISOString() };
+  _customTags.push(tag);
+  return { ok: true, tag, created: true };
+}
+/* 새로 제안된 태그 라벨을 등록하기 전 항상 거치는 정규화 — 앞뒤 공백
+   제거, 너무 길거나 빈 값은 거절한다(10차 6절 "새 태그 제안은 중복
+   정규화·출력 검증을 거쳐 반영" — AI 어댑터(R10-5)도 이 함수를 그대로
+   재사용한다). */
+function daNormalizeTagLabel(label) {
+  const norm = String(label || '').trim().replace(/\s+/g, ' ');
+  if (!norm || norm.length > 20) return null;
+  return norm;
+}
+function daRenameTag(oldLabel, newLabelRaw, places) {
+  const newLabel = daNormalizeTagLabel(newLabelRaw);
+  if (!newLabel) return { ok: false, reason: 'invalid-label' };
+  const tag = daFindTagByLabel(oldLabel);
+  if (!tag) return { ok: false, reason: 'not-found' };
+  if (daFindTagByLabel(newLabel) && newLabel.toLowerCase() !== oldLabel.toLowerCase()) return { ok: false, reason: 'duplicate-label' };
+  tag.label = newLabel;
+  for (const p of (places || [])) {
+    if (!Array.isArray(p.tags)) continue;
+    const i = p.tags.indexOf(oldLabel);
+    if (i >= 0) p.tags[i] = newLabel;
+  }
+  return { ok: true, tag };
+}
+/* 태그를 지워도 장소는 절대 안 지운다 — 연결(tags 배열의 문자열)만
+   끊는다. 빌트인 태그는 정규식 매칭 자체를 없앨 수 없으므로(다음
+   자동분류 때 다시 붙을 수 있음) 삭제 대상은 사용자가 만든 태그로
+   한정한다. */
+function daDeleteCustomTag(id, places) {
+  const idx = _customTags.findIndex((t) => t.id === id);
+  if (idx < 0) return { ok: false, reason: 'not-found' };
+  const [removed] = _customTags.splice(idx, 1);
+  for (const p of (places || [])) {
+    if (!Array.isArray(p.tags)) continue;
+    p.tags = p.tags.filter((t) => t !== removed.label);
+  }
+  return { ok: true };
+}
+/* 일괄 편집 — 여러 장소에 한 태그를 한 번에 붙이거나 뗀다(10차 4절
+   "단일/일괄 편집"). 사용자가 직접 고른 결과이므로 tagsConfirmed를
+   확정 처리해 자동분류·재가져오기가 덮지 않게 한다. */
+function daBulkSetTag(places, placeIds, label, add) {
+  const norm = String(label || '').trim();
+  if (!norm) return 0;
+  const idSet = new Set(placeIds || []);
+  let changed = 0;
+  for (const p of (places || [])) {
+    if (!idSet.has(p.id)) continue;
+    const tags = new Set(p.tags || []);
+    const had = tags.has(norm);
+    if (add) tags.add(norm); else tags.delete(norm);
+    if (tags.has(norm) !== had) changed++;
+    p.tags = Array.from(tags);
+    p.tagsConfirmed = true;
+  }
+  return changed;
 }
 const FM_CITY_ALT = {
   '후쿠오카': '福岡|fukuoka|hakata|博多', '도쿄': '東京|tokyo|shibuya|shinjuku', '오사카': '大阪|osaka|namba|umeda',
@@ -1000,6 +1130,13 @@ window.DesignAdapter = {
   sessionToken: daSessionToken,
   loadFoodMap: () => {
     const fm = daLoad('foodmap_v1', { places: [], dest: '', destCountry: '' });
+    // 2026-09-11 재검토(10차) 4절 — 사용자가 만든 태그도 계정 데이터의
+    // 일부다. fm.customTags를 그대로 _customTags가 가리키게 해(별도
+    // 복사본을 안 둠) daCreateTag 등의 in-place 변경이 곧바로
+    // foodMap.customTags에도 반영되게 한다 — saveFoodMap 호출 때 별도
+    // 동기화 코드가 필요 없다.
+    fm.customTags = Array.isArray(fm.customTags) ? fm.customTags : [];
+    _customTags = fm.customTags;
     _stampPlaceVersions(fm.places); // 버전 필드가 없는(한 번도 저장 안 된) 장소만 0으로 초기화.
     _migrateTags(fm.places); // 6-2절 — tags 필드가 아예 없는 예전 장소(약 160곳 포함)를 1회 채움.
     // 2026-09-11 재검토(10차) — "지금 로컬에 있는 내용"이 아니라 "마지막
@@ -1031,7 +1168,17 @@ window.DesignAdapter = {
   setTags: daSetTags,
   inferTags: daInferTags,
   knownCats: FM_INFER.map((x) => x[0]).concat('기타'),
-  knownTags: FM_TAGS.map((x) => x[0]),
+  // 2026-09-11 재검토(10차) 4절 — getter로 둬서 세션 중 사용자가 만든
+  // 태그(daCreateTag)도 곧바로 반영되게 한다. 21개는 시작 어휘일 뿐
+  // 허용 목록 전체가 아니라는 지시를 그대로 구현한 부분이다.
+  get knownTags() { return _allTagEntries().map((t) => t.label); },
+  get tagEntries() { return _allTagEntries().map((t) => ({ id: t.id, label: t.label, source: t.source || 'builtin' })); },
+  createTag: daCreateTag,
+  renameTag: daRenameTag,
+  deleteCustomTag: daDeleteCustomTag,
+  bulkSetTag: daBulkSetTag,
+  findTagByLabel: daFindTagByLabel,
+  normalizeTagLabel: daNormalizeTagLabel,
   knownCities: Object.keys(FM_CITY_ALT),
   esc: daEsc,
   hasCoords: daHasCoords,
