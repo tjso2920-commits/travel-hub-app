@@ -453,17 +453,22 @@ function render() {
     && (activeTags.size === 0 || Array.from(activeTags).every((t) => Array.isArray(p.tags) && p.tags.includes(t)))
     && [p.name, p.area, p.category, p.memo].some((v) => String(v || '').toLowerCase().includes(q)));
   // 6-1절 — 정렬은 이미 필터링된 목록 위에서만 적용한다(도시·유형·검색
-  // 조건은 그대로 유지). 거리순 기준점은 지금 도시의 좌표 확인된
-  // 장소들의 평균 좌표("지정 위치") — 위치 권한도 유료 API 호출도 없다.
-  const cityRefPoint = A.centroid(spots.filter((p) => p.city === city));
+  // 조건은 그대로 유지). 거리순 기준점은 기본적으로 지금 도시의 좌표
+  // 확인된 장소들의 평균 좌표("지정 위치") — 위치 권한도 유료 API
+  // 호출도 없다. 6-3절 — 테스트 위치가 켜져 있으면(개발자 전용) 그
+  // 기준점을 대신 쓴다. 실제 GPS가 아니라는 걸 문구에서 항상 밝힌다.
+  const testLocForSort = A.getTestLocation();
+  const cityRefPoint = testLocForSort ? { lat: testLocForSort.lat, lng: testLocForSort.lng } : A.centroid(spots.filter((p) => p.city === city));
   list = A.sortSpots(list, { mode: sortMode, query: q, refPoint: cityRefPoint });
   const basisNote = $('#sortBasisNote');
   if (basisNote) {
     if (sortMode === 'distance') {
       basisNote.hidden = false;
-      basisNote.textContent = cityRefPoint
-        ? '기준: 이 도시에 저장된 곳들의 평균 위치(지정 위치) · 좌표 없는 곳은 맨 아래'
-        : '아직 좌표가 확인된 장소가 없어 거리순 기준을 정할 수 없어요';
+      basisNote.textContent = testLocForSort
+        ? `기준: 테스트 위치(${testLocForSort.label}) · 실제 GPS 아님 · 좌표 없는 곳은 맨 아래`
+        : (cityRefPoint
+          ? '기준: 이 도시에 저장된 곳들의 평균 위치(지정 위치) · 좌표 없는 곳은 맨 아래'
+          : '아직 좌표가 확인된 장소가 없어 거리순 기준을 정할 수 없어요');
     } else {
       basisNote.hidden = true;
     }
@@ -1508,7 +1513,52 @@ async function profile() {
         `남은 코스 생성: ${u.courseGenerations.remaining}회(전체 ${u.courseGenerations.limit}회 중)</div>`;
     }
   }
-  open('내 프로필', `<div class="profile"><div class="avatar">Y</div><h2>나의 여행 기록</h2><p>가고 싶은 곳을 하나씩 모으는 중</p><div class="stats"><div><b>${realCount}</b><span>저장한 스팟</span></div><div><b>${cities.length}</b><span>도시</span></div><div><b>${route.size}</b><span>오늘 갈 곳</span></div></div><p>${A.esc(city)} · ${usingSample ? '샘플 컬렉션' : '내 데이터'}</p>${loggedInEmail ? `<p class="inline-note">${A.esc(loggedInEmail)}로 로그인됨</p>` : ''}${usageHTML}<button class="primary" data-dismiss>내 스팟으로 돌아가기</button>${usingSample ? '<p>샘플 프로필입니다.</p>' : ''}${loggedInEmail ? '<button class="text-button" data-logout>로그아웃</button>' : ''}</div>`);
+  // 6-3절 — 테스트 위치(개발자/승인된 테스트 계정 전용). 지금은 별도
+  // 계정 화이트리스트가 없어 ?testmode=1 URL로 한 번 풀어 두는 최소
+  // 구현이다(A.testModeAllowed 주석 참고). 실제 GPS를 흉내 내지 않고,
+  // 앱 로직(거리순 정렬 등)이 참고하는 기준점만 사람이 명시적으로
+  // 바꿔치기한다 — 이걸로 실제 현지 GPS·로밍을 검증했다고 주장 못 함.
+  const testLoc = A.testModeAllowed() ? A.getTestLocation() : null;
+  const testLocationHTML = A.testModeAllowed() ?
+    `<div class="inline-note"><b>테스트 위치(개발자 전용)</b><br>실제 GPS를 흉내 내지 않습니다 — 거리순 정렬 등 앱 로직이 참고하는 기준점만 바뀝니다.<br>지금: ${testLoc ? A.esc(testLoc.label) : '사용 안 함(실제 저장 데이터 기준)'}</div>` +
+    `<div class="city-options">${A.testLocationPresets.map((tp) => `<button class="city-option" data-test-loc-preset="${A.esc(tp.id)}"><span><b>${A.esc(tp.label)}</b></span><span class="city-check">${testLoc && testLoc.label === tp.label ? '✓' : '›'}</span></button>`).join('')}</div>` +
+    `<label class="xsmall" style="display:block;margin:10px 0 6px">직접 좌표 입력<input class="xinput" id="testLocLat" placeholder="위도(예: 33.5904)" style="margin:6px 0;width:100%;box-sizing:border-box;padding:10px 14px;border-radius:16px;border:1px solid #e5e6e1;font:inherit"><input class="xinput" id="testLocLng" placeholder="경도(예: 130.4207)" style="margin:6px 0;width:100%;box-sizing:border-box;padding:10px 14px;border-radius:16px;border:1px solid #e5e6e1;font:inherit"></label>` +
+    `<button class="text-button" id="testLocCustomBtn" style="padding:6px 0">이 좌표로 적용</button>` +
+    (testLoc ? `<button class="text-button" id="testLocClearBtn" style="padding:6px 0">테스트 위치 끄기</button>` : '')
+    : '';
+  open('내 프로필', `<div class="profile"><div class="avatar">Y</div><h2>나의 여행 기록</h2><p>가고 싶은 곳을 하나씩 모으는 중</p><div class="stats"><div><b>${realCount}</b><span>저장한 스팟</span></div><div><b>${cities.length}</b><span>도시</span></div><div><b>${route.size}</b><span>오늘 갈 곳</span></div></div><p>${A.esc(city)} · ${usingSample ? '샘플 컬렉션' : '내 데이터'}</p>${loggedInEmail ? `<p class="inline-note">${A.esc(loggedInEmail)}로 로그인됨</p>` : ''}${usageHTML}<button class="primary" data-dismiss>내 스팟으로 돌아가기</button>${usingSample ? '<p>샘플 프로필입니다.</p>' : ''}${loggedInEmail ? '<button class="text-button" data-logout>로그아웃</button>' : ''}${testLocationHTML}</div>`);
+  if (A.testModeAllowed()) {
+    $('#sheetContent').querySelectorAll('[data-test-loc-preset]').forEach((b) => {
+      b.onclick = () => {
+        const preset = A.testLocationPresets.find((tp) => tp.id === b.dataset.testLocPreset);
+        if (!preset) return;
+        A.setTestLocation(preset);
+        renderTestLocationBanner();
+        render();
+        profile();
+      };
+    });
+    const customBtn = $('#testLocCustomBtn');
+    if (customBtn) customBtn.onclick = () => {
+      const lat = parseFloat($('#testLocLat').value);
+      const lng = parseFloat($('#testLocLng').value);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) { alert('위도·경도를 숫자로 입력해 주세요.'); return; }
+      A.setTestLocation({ lat, lng, label: `직접 입력(${lat.toFixed(4)}, ${lng.toFixed(4)})` });
+      renderTestLocationBanner();
+      render();
+      profile();
+    };
+    const clearBtn = $('#testLocClearBtn');
+    if (clearBtn) clearBtn.onclick = () => { A.clearTestLocation(); renderTestLocationBanner(); render(); profile(); };
+  }
+}
+/* 6-3절 — 화면 어디서든 보이는 "테스트 위치 사용 중" 표시. 실제
+   위치처럼 보이지 않도록 항상 "실제 위치 아님"을 같이 밝힌다. */
+function renderTestLocationBanner() {
+  const el = $('#testLocationBanner'); if (!el) return;
+  const loc = A.getTestLocation();
+  el.hidden = !loc;
+  if (loc) $('#testLocationBannerText').textContent = `🧪 테스트 위치 사용 중: ${loc.label} · 실제 위치 아님(수동 지정)`;
 }
 function updateCity() {
   $('#cityName').textContent = city;
@@ -1899,6 +1949,10 @@ $('#home').onclick = () => window.scrollTo({ top: 0, behavior: 'smooth' });
 $('#collection').onclick = () => $('.album').scrollIntoView({ behavior: 'smooth', block: 'center' });
 $('#cityPicker').onclick = cityPicker;
 $('#nearby').onclick = nearby;
+if ($('#testLocationBannerClear')) {
+  $('#testLocationBannerClear').onclick = () => { A.clearTestLocation(); renderTestLocationBanner(); render(); };
+}
 
 updateCity();
+renderTestLocationBanner();
 daResumeAfterTossRedirect();

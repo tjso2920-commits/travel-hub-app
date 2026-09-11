@@ -31,6 +31,36 @@ function daSave(k, v) {
   catch (e) { return false; }
 }
 
+/* 2026-09-11 재검토(9차) 6-3절 — "한국에 있으면서 현지 위치인 것처럼
+   테스트"하는 앱 안 기능. OS의 실제 GPS를 흉내 내거나 가로채지 않는다
+   (navigator.geolocation을 건드리지 않음) — 그냥 앱 로직이 참고하는
+   "위치"를 사람이 명시적으로 지정한 값으로 바꿔치기할 뿐이다. 그래서
+   이 기능만으로 실제 로밍·도보·현지 GPS 조건을 검증했다고 절대 주장할
+   수 없다(문서에도 그대로 남긴다).
+   허용 대상: 지금은 이 저장소에 "승인된 테스트 계정/스테이징" 화이트
+   리스트 메커니즘이 없어서, 최소 구현으로 URL에 ?testmode=1을 한 번
+   붙이면 이 브라우저에 계속 풀리는 방식을 쓴다. 실제로 특정 계정만
+   허용하려면 서버 쪽에 계정 화이트리스트(예: accounts.test_access
+   플래그)와 그걸 확인하는 API가 새로 필요하다 — 지금은 없다. */
+function daTestModeAllowed() {
+  try {
+    if (new URLSearchParams(location.search).get('testmode') === '1') {
+      localStorage.setItem(PFX + 'test_mode_unlocked_v1', '1');
+    }
+    return localStorage.getItem(PFX + 'test_mode_unlocked_v1') === '1';
+  } catch (e) { return false; }
+}
+const TEST_LOCATION_PRESETS = [
+  { id: 'hakata', label: '하카타역(테스트)', lat: 33.5904, lng: 130.4207 },
+  { id: 'tenjin', label: '텐진(테스트)', lat: 33.5911, lng: 130.3987 },
+];
+function daGetTestLocation() { return daLoad('test_location_v1', null); }
+function daSetTestLocation(loc) {
+  if (!loc || typeof loc.lat !== 'number' || typeof loc.lng !== 'number' || !Number.isFinite(loc.lat) || !Number.isFinite(loc.lng)) return false;
+  return daSave('test_location_v1', { lat: loc.lat, lng: loc.lng, label: String(loc.label || '테스트 위치') });
+}
+function daClearTestLocation() { try { localStorage.removeItem(PFX + 'test_location_v1'); return true; } catch (e) { return false; } }
+
 /* 2026-09-10 재검토(7차) — 장소마다 version을 매겨 서버 동기화가 버전
    비교로 충돌(오래된 기기가 최신 수정을 덮어쓰는 것)을 감지할 수 있게
    한다(account-data.mjs의 syncPlaces 참고).
@@ -913,4 +943,9 @@ window.DesignAdapter = {
   destNow: daDestNow,
   sortSpots: daSortSpots,
   centroid: daCentroid,
+  testModeAllowed: daTestModeAllowed,
+  testLocationPresets: TEST_LOCATION_PRESETS,
+  getTestLocation: daGetTestLocation,
+  setTestLocation: daSetTestLocation,
+  clearTestLocation: daClearTestLocation,
 };
