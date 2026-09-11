@@ -195,6 +195,31 @@ function _getTripBaseline(tripId) {
   if (!_tripsVersionSnapshot || !_tripsVersionSnapshot.has(tripId)) return null;
   try { return JSON.parse(_tripsVersionSnapshot.get(tripId)); } catch (e) { return null; }
 }
+/* 2026-09-11 재검토(12차) — ChatGPT가 실제로 재현한 결함: 태그 저장
+   요청이 나간 뒤 응답이 오기 전에 같은 태그를 로컬에서 또 고치면,
+   응답 처리가 "요청 시점 이후 로컬이 더 바뀌었는지"를 전혀 안 보고
+   서버가 돌려준(=요청 시점 값) 내용으로 무조건 덮어써 방금 한 수정을
+   잃어버렸다 — places/courses/trips에는 있던 기준선(baseline) 추적이
+   태그에는 아예 없었다. 같은 패턴을 태그에도 그대로 적용한다. */
+let _tagsVersionSnapshot = null; // Map<tagId, JSON 문자열(version 제외)>
+function _tagContentKey(tg) {
+  const { version, ...rest } = tg;
+  return JSON.stringify(rest);
+}
+function _resetTagsSnapshot(tags, overrides) {
+  const next = new Map();
+  for (const t of (tags || [])) {
+    if (!t || !t.id) continue;
+    const src = (overrides && overrides.has(t.id)) ? overrides.get(t.id) : t;
+    next.set(t.id, _tagContentKey(src));
+  }
+  _tagsVersionSnapshot = next;
+  _persistBaselines();
+}
+function _getTagBaseline(id) {
+  if (!_tagsVersionSnapshot || !_tagsVersionSnapshot.has(id)) return null;
+  try { return JSON.parse(_tagsVersionSnapshot.get(id)); } catch (e) { return null; }
+}
 /* 2026-09-11 재검토(10차) — ChatGPT가 점검하라고 지시한 세 번째 항목:
    "기준 스냅샷의 재시작 보존"을 실제로 재현해 확인한 결과, 이것도 진짜
    결함이었다(합성 재현: 오프라인/재시작 전 고친 값이 다른 기기의 늦은
@@ -212,22 +237,25 @@ function _getTripBaseline(tripId) {
    수 있어 특히 중요). */
 const BASELINE_STORAGE_KEY = 'sync_baseline_v1';
 function _persistBaselines() {
-  const places = {}, courses = {}, trips = {};
+  const places = {}, courses = {}, trips = {}, tags = {};
   if (_placesVersionSnapshot) for (const [k, v] of _placesVersionSnapshot) places[k] = v;
   if (_coursesVersionSnapshot) for (const [k, v] of _coursesVersionSnapshot) courses[k] = v;
   if (_tripsVersionSnapshot) for (const [k, v] of _tripsVersionSnapshot) trips[k] = v;
-  daSave(BASELINE_STORAGE_KEY, { places, courses, trips });
+  if (_tagsVersionSnapshot) for (const [k, v] of _tagsVersionSnapshot) tags[k] = v;
+  daSave(BASELINE_STORAGE_KEY, { places, courses, trips, tags });
 }
 function _restoreBaselinesFromStorage() {
   const persisted = daLoad(BASELINE_STORAGE_KEY, null);
   _placesVersionSnapshot = new Map(Object.entries((persisted && persisted.places) || {}));
   _coursesVersionSnapshot = new Map(Object.entries((persisted && persisted.courses) || {}));
   _tripsVersionSnapshot = new Map(Object.entries((persisted && persisted.trips) || {}));
+  _tagsVersionSnapshot = new Map(Object.entries((persisted && persisted.tags) || {}));
 }
 function _clearSyncBaselines() {
   _placesVersionSnapshot = new Map();
   _coursesVersionSnapshot = new Map();
   _tripsVersionSnapshot = new Map();
+  _tagsVersionSnapshot = new Map();
   try { localStorage.removeItem(PFX + BASELINE_STORAGE_KEY); } catch (e) { /* 무시 */ }
 }
 /* 2026-09-09 코드 검토 반영 — sale-mode 메타 태그를 바꾸는 것만으로는
@@ -1349,6 +1377,9 @@ window.DesignAdapter = {
   getCourseBaseline: _getCourseBaseline,
   resyncTripsBaseline: _resetTripsSnapshot,
   getTripBaseline: _getTripBaseline,
+  resyncTagsBaseline: _resetTagsSnapshot,
+  getTagBaseline: _getTagBaseline,
+  tagContentKey: _tagContentKey,
   clearSyncBaselines: _clearSyncBaselines,
   parseCsv: daCsv,
   parseJson: daJsonPlaces,

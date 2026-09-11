@@ -240,6 +240,130 @@ async function seedOnePlace(page, cityName) {
   await pA.close();
 }
 
+// =====================================================================
+// 6) 2026-09-11 재검토(12차) — ChatGPT가 실제로 재현한 "태그 저장 중
+//    수정 유실" 버그. 저장 요청이 나간 뒤(응답 대기 중) 같은 태그를
+//    로컬에서 또 고치면, 예전 코드는 응답(=요청을 보낸 시점의 값)을
+//    무조건 그대로 받아들여 방금 한 수정을 조용히 지웠다. 실제
+//    네트워크 지연 응답으로 재현한다(지시대로 "지연 응답으로 재현").
+// =====================================================================
+{
+  const email = 'tagreg-6@example.com';
+  const city = '저장중수정도시';
+  const pA = await newPage('A6');
+  await loginViaUi(pA, email);
+  await seedOnePlace(pA, city);
+  const created = await pA.evaluate(() => {
+    const r = A.createTag('old label');
+    A.saveFoodMap(foodMap);
+    return r.tag.id;
+  });
+  await pA.evaluate(() => daSyncPushSafe());
+  await pA.waitForTimeout(300); // 첫 동기화(기준선 확립)가 실제로 끝날 때까지 기다린다.
+  const tagIdAfterFirstSync = await pA.evaluate((tid) => (A.rawCustomTags.find((t) => t.id === tid) || {}).id, created);
+  t('6) 준비 확인 — 첫 동기화로 태그가 실제로 서버에 저장됨(id 유지)', tagIdAfterFirstSync === created);
+
+  // 다음 /api/tags 요청 응답을 일부러 늦춘다(진짜 네트워크 지연 재현).
+  let delayedOnce = false;
+  await pA.route('**/api/tags', async (route) => {
+    if (route.request().method() === 'PUT' && !delayedOnce) {
+      delayedOnce = true;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    await route.continue();
+  });
+  // 저장 요청을 시작한다(이 순간의 로컬 내용 = 'old label'이 그대로 나감).
+  await pA.evaluate(() => { window.__pushDone = daSyncPushSafe(); });
+  await pA.waitForTimeout(80); // 요청이 실제로 나간 뒤, 응답이 오기 전.
+  // 바로 그 사이(응답 대기 중) 같은 태그를 로컬에서 또 고친다.
+  await pA.evaluate((tid) => {
+    const tag = A.rawCustomTags.find((x) => x.id === tid);
+    tag.label = 'new local label';
+    A.saveFoodMap(foodMap);
+  }, created);
+  await pA.waitForTimeout(700); // 지연된 응답이 처리될 시간을 준다.
+  const finalLabel = await pA.evaluate((tid) => (A.rawCustomTags.find((x) => x.id === tid) || {}).label, created);
+  t('6) 응답 대기 중에 한 수정이 뒤늦게 온 응답에 지워지지 않고 그대로 남음', finalLabel === 'new local label');
+  const hasSpuriousConflict = await pA.evaluate((tid) => {
+    const tag = A.rawCustomTags.find((x) => x.id === tid);
+    return !!(tag && tag._fieldConflicts && tag._fieldConflicts.label);
+  }, created);
+  t('6) 서버가 실제로 다르게 고친 적은 없으므로 불필요한 충돌 알림은 안 뜸', !hasSpuriousConflict);
+
+  await pA.close();
+}
+
+// =====================================================================
+// 7) 진짜 같은 필드 양쪽 수정(다른 기기가 그 사이 서버에서 실제로 값을
+//    바꿈) — 조용히 버려지지 않고 보존되며, 태그 편집 화면에서 직접
+//    골라 해결할 수 있어야 한다("같은 필드 충돌은 조용히 버리지 말고
+//    보존·해결 가능하게" 지시).
+// =====================================================================
+{
+  const email = 'tagreg-7@example.com';
+  const city = '같은필드충돌도시';
+  const pA = await newPage('A7');
+  await loginViaUi(pA, email);
+  await seedOnePlace(pA, city);
+  const created = await pA.evaluate(() => {
+    const r = A.createTag('base label');
+    foodMap.places.find((p) => p.id === 'p1').tags.push('base label'); // 이 태그를 실제 장소에 붙여 둔다(연결 유지 검증용).
+    A.saveFoodMap(foodMap);
+    return r.tag.id;
+  });
+  await pA.evaluate(() => daSyncPushSafe());
+  await pA.waitForTimeout(300);
+  const token = await pA.evaluate(() => foodMap.session.token);
+
+  // "다른 기기"가 서버에서 곧바로 같은 태그의 label을 바꾼다(baseVersion=1 그대로 통과 — 이 기기가 아직 모르는 변경).
+  const otherDeviceRes = await fetch(`${apiBase}/api/tags`, {
+    method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tags: [{ id: created, label: 'other device label', synonyms: [], source: 'user', version: 1 }], deletedIds: [] }),
+  }).then((r) => r.json());
+  t('7) 준비 확인 — 다른 기기의 수정이 실제로 서버에 반영됨', otherDeviceRes.ok && otherDeviceRes.tags.some((x) => x.id === created && x.label === 'other device label'));
+
+  // 이 기기는(서버의 새 변경을 모른 채) 같은 태그의 label을 독립적으로
+  // 고친다 — 실제 이름바꾸기 흐름과 같이 장소에 붙은 문자열도 함께 바꾼다.
+  await pA.evaluate((tid) => {
+    const tag = A.rawCustomTags.find((x) => x.id === tid);
+    const oldLabel = tag.label;
+    tag.label = 'my device label';
+    const p1 = foodMap.places.find((p) => p.id === 'p1');
+    const i = p1.tags.indexOf(oldLabel);
+    if (i >= 0) p1.tags[i] = 'my device label';
+    A.saveFoodMap(foodMap);
+  }, created);
+  await pA.evaluate(() => daSyncPushSafe());
+  await pA.waitForTimeout(400);
+
+  const afterConflict = await pA.evaluate((tid) => {
+    const tag = A.rawCustomTags.find((x) => x.id === tid);
+    return { label: tag && tag.label, conflict: tag && tag._fieldConflicts && tag._fieldConflicts.label };
+  }, created);
+  t('7) 같은 필드를 양쪽이 다르게 고치면 조용히 버리지 않고 내 값을 유지함', afterConflict.label === 'my device label');
+  t('7) 다른 기기 값도 사라지지 않고 충돌로 보존됨(_fieldConflicts)', !!afterConflict.conflict && afterConflict.conflict.theirs === 'other device label');
+
+  // 태그 편집 화면에서 이 충돌이 실제로 보이고, 버튼으로 해결할 수 있음.
+  await pA.evaluate((c) => { city = c; updateCity(); tagsEditSheet('p1'); }, city);
+  await pA.waitForTimeout(150);
+  await pA.selectOption('#tagManageSelect', 'my device label');
+  await pA.waitForTimeout(100);
+  const resolveBtnVisible = await pA.evaluate(() => !!document.querySelector('[data-tag-conflict-resolve]'));
+  t('7) 태그 편집 화면에서 충돌 해결 버튼이 실제로 보임', resolveBtnVisible);
+  await pA.click('[data-tag-conflict-resolve]');
+  await pA.waitForTimeout(200);
+  const afterResolve = await pA.evaluate((tid) => {
+    const tag = A.rawCustomTags.find((x) => x.id === tid);
+    return { label: tag && tag.label, hasConflict: !!(tag && tag._fieldConflicts) };
+  }, created);
+  t('7) 버튼을 누르면 다른 기기 값으로 실제로 바뀜', afterResolve.label === 'other device label');
+  t('7) 해결하면 충돌 표시가 사라짐', !afterResolve.hasConflict);
+  const placeTagsAfterResolve = await pA.evaluate(() => foodMap.places.find((p) => p.id === 'p1').tags);
+  t('7) 장소에 붙어 있던 태그 문자열도 새 이름으로 함께 바뀜(연결 유지)', placeTagsAfterResolve.includes('other device label') && !placeTagsAfterResolve.includes('my device label'));
+
+  await pA.close();
+}
+
 t('최종 콘솔/런타임 오류 0', errs.length === 0);
 if (errs.length) console.log(errs);
 

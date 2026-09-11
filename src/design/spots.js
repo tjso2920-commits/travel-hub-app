@@ -315,7 +315,7 @@ function daRemergePlaceConflict(mine, base, theirs) {
    courses/trips에도 재사용할 수 있게 공통 렌더러로 뽑는다. mine이
    삭제한 필드(theirs만 값이 있고 mine은 undefined)도 "(삭제됨)"으로
    정직하게 보여준다(문자열 "undefined"를 그대로 보여주지 않는다). */
-const DA_FIELD_CONFLICT_LABELS = { note: '메모', cat: '유형', city: '도시', name: '이름', address: '주소', startDate: '시작일', endDate: '종료일', lodging: '숙소', memo: '메모' };
+const DA_FIELD_CONFLICT_LABELS = { note: '메모', cat: '유형', city: '도시', name: '이름', address: '주소', startDate: '시작일', endDate: '종료일', lodging: '숙소', memo: '메모', label: '태그 이름', synonyms: '동의어' };
 function daFieldConflictBlockHTML(conflicts, resolveAttrName, idForAttr) {
   if (!conflicts || !Object.keys(conflicts).length) return '';
   const fmt = (v) => (v === undefined ? '(삭제됨)' : A.esc(String(typeof v === 'object' && v !== null ? JSON.stringify(v) : v)));
@@ -357,7 +357,12 @@ async function daSyncPush(token) {
   // 남긴다.
   const outgoingTags = (A.rawCustomTags || []).map((tg) => ({ ...tg }));
   const pendingDeletedTags = (A.deletedTagIds || []).slice();
-  const tagRequestSnapshot = new Set(outgoingTags.map((tg) => tg.id));
+  // 2026-09-11 재검토(12차) — "저장 중 수정" 보호(places와 같은 이유):
+  // id만 기억하던 이전 Set으로는 "이 태그가 요청을 보낸 뒤 또 바뀌었는지"
+  // 를 전혀 알 수 없었다(응답을 그냥 그대로 받아들여 방금 한 로컬 수정을
+  // 잃는 버그로 이어졌다) — 이제 id뿐 아니라 요청 시점의 내용까지 함께
+  // 남긴다.
+  const tagRequestSnapshot = new Map(outgoingTags.map((tg) => [tg.id, A.tagContentKey(tg)]));
   const [placesRes, coursesRes, tripsRes, visitsRes, tagsRes] = await Promise.all([
     A.api('/api/places', { method: 'PUT', token, body: { places: outgoingPlaces, deletedIds: pendingDeleted } }),
     A.api('/api/courses', { method: 'PUT', token, body: { courses: (foodMap.courses || []).filter((c) => !c.tripId) } }),
@@ -557,32 +562,63 @@ async function daSyncPush(token) {
     A.resyncTripsBaseline(foodMap.trips, tripBaselineOverrides);
   }
   if (visitsOk) foodMap.visits = visitsRes.json.visits;
-  // 2026-09-11 재검토(11차) — 태그 레지스트리 동기화 응답 반영. 태그는
-  // 여러 기기가 동시에 같은 태그를 서로 다르게 고치는 일이 드물고,
-  // 지시도 trips/courses처럼 별도 충돌 해결 화면을 요구하지 않으므로
-  // 여기서는 places/courses보다 단순하게 처리한다 — 충돌이 나면(아주
-  // 드문 경우) 서버가 지금 갖고 있는 값을 그대로 받아들인다(다음
-  // 화면에서 바로 보인다). 다만 "저장 중 새로 만든 태그"는 장소와
-  // 같은 이유로 잃지 않는다 — 응답에도, 요청 스냅샷에도 없는 태그는
-  // 이 요청이 나간 뒤 새로 생긴 것이 확실하므로 그대로 살려 둔다.
+  // 2026-09-11 재검토(11차, 12차에서 재현·수정) — 태그 레지스트리 동기화
+  // 응답 반영. **12차 지적(ChatGPT 실제 재현) — "태그 충돌은 드물어서
+  // 서버값을 우선한다"는 예전 처리가 진짜 데이터 손실 버그였다**: 태그
+  // 저장 요청이 나간 뒤(응답 대기 중) 같은 태그를 로컬에서 또 고치면,
+  // 서버 응답엔 "요청을 보낸 시점의 값"만 있는데 예전 코드는 그 값을
+  // (명시적 버전 충돌이 없는 한) 무조건 그대로 받아들여 방금 한 로컬
+  // 수정을 조용히 지웠다. places/courses/trips와 똑같은 3-way 재병합
+  // (daRemergeGenericConflict, 기준선 baseline 대조)을 태그에도 적용해
+  // 이 문제를 없앤다 — "저장 중 수정"과 "서버가 보고한 진짜 충돌" 둘 다
+  // 같은 로직으로 잡아낸다.
   const tagsOk = !!(tagsRes.ok && tagsRes.json && Array.isArray(tagsRes.json.tags));
+  let tagsRemergedAny = false;
   if (tagsOk) {
     const conflicts = Array.isArray(tagsRes.json.conflicts) ? tagsRes.json.conflicts : [];
-    const conflictById = new Map(conflicts.filter((c) => c.tagId && c.serverTag).map((c) => [c.tagId, c.serverTag]));
-    const merged = tagsRes.json.tags.map((serverTag) => conflictById.get(serverTag.id) || serverTag);
+    const conflictByTagId = new Map(conflicts.filter((c) => c.tagId && c.serverTag).map((c) => [c.tagId, c]));
+    const mineByTagId = new Map((A.rawCustomTags || []).map((tg) => [tg.id, tg]));
+    const tagBaselineOverrides = new Map();
+    const merged = tagsRes.json.tags.map((serverTag) => {
+      const mine = mineByTagId.get(serverTag.id);
+      if (!mine) return serverTag; // 이 기기가 모르는 태그(다른 기기가 만듦) — 그대로 받아들인다.
+      const conflict = conflictByTagId.get(serverTag.id);
+      const baseKey = tagRequestSnapshot.get(serverTag.id);
+      const mineKey = A.tagContentKey(mine);
+      const changedDuringFlight = baseKey !== undefined && mineKey !== baseKey;
+      if (!conflict && !changedDuringFlight) return serverTag; // 가장 흔한 경우 — 그대로 받아들인다.
+      tagsRemergedAny = true;
+      const base = A.getTagBaseline(serverTag.id);
+      const theirsUsed = conflict ? conflict.serverTag : serverTag; // 서버가 지금 실제로 갖고 있는 값.
+      tagBaselineOverrides.set(serverTag.id, theirsUsed);
+      return daRemergeGenericConflict(mine, base, theirsUsed, ['id']);
+    });
     const mergedIds = new Set(merged.map((tg) => tg.id));
     const addedDuringOrAfterFlight = (A.rawCustomTags || []).filter((tg) => tg && tg.id && !mergedIds.has(tg.id) && !tagRequestSnapshot.has(tg.id));
     foodMap.customTags = [...merged, ...addedDuringOrAfterFlight];
-    // 반려된 삭제(기준 버전이 안 맞음)는 큐에서 빼지 않고 그대로 두면
-    // 다음 push 때 다시 시도된다 — places의 "삭제 충돌"과 달리 되살릴
-    // 필요는 없다(태그 삭제는 연결만 끊는 저위험 작업이라 자동
-    // 재시도만으로 충분하다). 실제로 반영된(성공했거나, 서버가 이미
-    // 몰라서 그냥 넘어간) 것만 큐에서 제거한다.
-    const deleteConflictIds = new Set(conflicts.filter((c) => c.reason === 'stale-base-version-delete').map((c) => c.tagId));
-    foodMap.deletedTagIds = (A.deletedTagIds || []).filter((d) => !pendingDeletedTags.some((pd) => pd.id === d.id) || deleteConflictIds.has(d.id));
+    // 서버가 지금 실제로 확정한 값을 다음 기준선으로 남긴다(재병합
+    // 결과가 아니라) — places/courses/trips와 같은 이유(9차 재검토
+    // 버그 재발 방지: 병합 결과를 기준선으로 삼으면 다음 충돌 때 방금
+    // 지킨 내 값을 "안 건드림"으로 오인해 서버 값으로 되돌릴 수 있다).
+    A.resyncTagsBaseline(merged, tagBaselineOverrides);
+    if (tagsRemergedAny) daToast('다른 기기와 태그 정보가 달라 자동으로 합쳐졌어요.');
+    // 2026-09-11 재검토(12차) — "삭제 충돌이 같은 구버전으로 무한
+    // 재시도되지 않게" 지시 반영. 예전엔 stale-base-version-delete
+    // 충돌이 나도 큐의 baseVersion을 그대로 둬서, 서버 버전이 바뀐
+    // 뒤에도 계속 옛 버전으로만 재시도해 영원히 거절당했다(진짜
+    // 무한루프). 서버가 알려준 현재 버전으로 큐의 baseVersion을 갱신해
+    // 다음 push부터는 최신 버전 기준으로 다시 시도되게 한다(삭제
+    // 자체는 취소하지 않는다 — 여전히 "이 기기는 지우고 싶다"는 의사가
+    // 유효하다).
+    const deleteConflictById = new Map(conflicts.filter((c) => c.reason === 'stale-base-version-delete').map((c) => [c.tagId, c]));
+    foodMap.deletedTagIds = (A.deletedTagIds || []).map((d) => {
+      const dc = deleteConflictById.get(d.id);
+      return dc ? { ...d, baseVersion: dc.serverVersion } : d;
+    }).filter((d) => !pendingDeletedTags.some((pd) => pd.id === d.id) || deleteConflictById.has(d.id));
     A.resyncCustomTagsRef(foodMap);
   }
-  if (placesOk && coursesOk && tripsOk && !placesRemergedAny && !coursesRemergedAny && !tripsRemergedAny) {
+  if (tagsRemergedAny) daScheduleConflictRetry(); // 재병합된 태그도 다음 push로 서버에 다시 반영돼야 한다 — courses/trips와 같은 이유.
+  if (placesOk && coursesOk && tripsOk && tagsOk && !placesRemergedAny && !coursesRemergedAny && !tripsRemergedAny && !tagsRemergedAny) {
     daSyncConflictRetryCount = 0; // 충돌 없이 조용히 끝난 push — 재시도 카운터 원복.
   }
   A.saveFoodMap(foodMap);
@@ -977,7 +1013,7 @@ function tagsEditSheet(id) {
   // 버튼을 보여준다(기본 태그는 이름만 바꿀 수 있고, 이 계정만의
   // 표시명으로 저장된다 — daRenameTag 참고).
   const manageEntries = A.tagEntries.slice().sort((a, b) => a.label.localeCompare(b.label));
-  const manageOptionsHTML = manageEntries.map((t) => `<option value="${A.esc(t.label)}" data-source="${A.esc(t.source)}">${A.esc(t.label)}${t.source === 'user' ? ' (내가 만든 태그)' : ''}</option>`).join('');
+  const manageOptionsHTML = manageEntries.map((t) => `<option value="${A.esc(t.label)}" data-source="${A.esc(t.source)}" data-id="${A.esc(t.id)}">${A.esc(t.label)}${t.source === 'user' ? ' (내가 만든 태그)' : ''}</option>`).join('');
   open('세부 태그', `<div class="detail"><h2>세부 태그를 골라 주세요</h2><p>${A.esc(p.name)}</p>` +
     `<p class="inline-note">여러 개를 함께 고를 수 있어요(예: 야키토리+이자카야). 자동 추정이 틀렸으면 직접 고치거나 새 태그를 만들 수 있어요.</p>` +
     (frequent.length ? `<p class="inline-note" style="margin-top:10px"><b>${A.esc(A.t('tags.frequent'))}</b></p>` : '') +
@@ -988,6 +1024,7 @@ function tagsEditSheet(id) {
     `<button class="primary" id="tagsSaveBtn" style="margin-top:14px">저장</button>` +
     (manageEntries.length ? `<div class="inline-note" style="margin-top:16px"><b>태그 이름 바꾸기 · 삭제</b>` +
       `<select id="tagManageSelect" style="width:100%;margin-top:8px;padding:10px;border-radius:12px;border:1px solid #e5e6e1;font:inherit">${manageOptionsHTML}</select>` +
+      `<div id="tagConflictBlock"></div>` +
       `<div style="display:flex;gap:8px;margin-top:8px"><input id="tagRenameInput" placeholder="새 이름" maxlength="20" style="flex:1"><button id="tagRenameBtn">이름 바꾸기</button></div>` +
       `<button class="text-button" id="tagDeleteBtn" style="padding:6px 0;margin-top:4px" hidden>이 태그 삭제(연결된 곳에서만 빠지고, 장소는 안 지워져요)</button></div>` : '') +
     `</div>`);
@@ -1041,9 +1078,22 @@ function tagsEditSheet(id) {
     const opt = manageSelect.selectedOptions[0];
     deleteBtn.hidden = !opt || opt.dataset.source !== 'user';
   };
+  // 2026-09-11 재검토(12차) — 선택된 태그가 다른 기기와 같은 필드를
+  // 다르게 고친 진짜 충돌을 갖고 있으면(_fieldConflicts), 조용히 내
+  // 값으로 유지만 하지 않고 여기서 직접 보여주고 고를 수 있게 한다 —
+  // places/courses/trips와 같은 daFieldConflictBlockHTML 재사용.
+  const refreshTagConflictBlock = () => {
+    const block = $('#tagConflictBlock');
+    if (!manageSelect || !block) return;
+    const opt = manageSelect.selectedOptions[0];
+    const tagId = opt && opt.dataset.id;
+    const tag = tagId ? (A.rawCustomTags || []).find((t) => t.id === tagId) : null;
+    block.innerHTML = tag ? daFieldConflictBlockHTML(tag._fieldConflicts, 'tag-conflict-resolve', `${id}|${tag.id}`) : '';
+  };
   if (manageSelect) {
-    manageSelect.onchange = refreshDeleteVisibility;
+    manageSelect.onchange = () => { refreshDeleteVisibility(); refreshTagConflictBlock(); };
     refreshDeleteVisibility();
+    refreshTagConflictBlock();
     $('#tagRenameBtn').onclick = () => {
       const oldLabel = manageSelect.value;
       const newLabel = $('#tagRenameInput').value;
@@ -2409,6 +2459,7 @@ $('#sheetContent').onclick = (e) => {
   if (b.dataset.conflictResolve) { const [pid, key] = b.dataset.conflictResolve.split('|'); return resolveFieldConflict(pid, key); }
   if (b.dataset.courseConflictResolve) { const [cd, key] = b.dataset.courseConflictResolve.split('|'); const [cCity, cDate] = cd.split('::'); return resolveCourseFieldConflict(cCity, cDate, key); }
   if (b.dataset.tripConflictResolve) { const [tid, key] = b.dataset.tripConflictResolve.split('|'); return resolveTripFieldConflict(tid, key); }
+  if (b.dataset.tagConflictResolve) { const [forId, tid, key] = b.dataset.tagConflictResolve.split('|'); return resolveTagFieldConflict(forId, tid, key); }
   /* 2026-09-10 재검토(3차): 샘플은 로그인 없이 곧바로 buildCourseSheet로
      간다. 실제 데이터는 daGateThenBuildCourseSheet가 로그인부터
      확인한다 — 무료체험/이용권 여부는 실제 생성 시도 때 서버가
@@ -2525,6 +2576,32 @@ function resolveTripFieldConflict(tripId, key) {
   if (!saved) { foodMap = A.loadFoodMap(); alert('저장에 실패했어요. 브라우저 저장 공간을 확인해 주세요.'); return; }
   daSyncPushSafe();
   render();
+}
+/* 2026-09-11 재검토(12차) — 태그 필드 충돌 해결. label을 다른 기기
+   값으로 바꾸면, 이미 이 기기의 장소들에 붙어 있는 태그 문자열도 함께
+   바꿔야 태그-장소 연결이 안 끊긴다(daRenameTag와 같은 원칙 — place.tags
+   는 태그 id가 아니라 label 문자열을 저장하므로 label만 바꾸고 끝나면
+   기존 장소들의 연결이 옛 이름에 그대로 남아 끊긴 것처럼 보인다). */
+function resolveTagFieldConflict(forPlaceId, tagId, key) {
+  const tag = (A.rawCustomTags || []).find((t) => t.id === tagId);
+  if (!tag || !tag._fieldConflicts || !tag._fieldConflicts[key]) return;
+  const oldLabel = tag.label;
+  if (tag._fieldConflicts[key].theirs === undefined) delete tag[key];
+  else tag[key] = tag._fieldConflicts[key].theirs;
+  delete tag._fieldConflicts[key];
+  if (!Object.keys(tag._fieldConflicts).length) delete tag._fieldConflicts;
+  if (key === 'label' && tag.label !== oldLabel) {
+    for (const p of (foodMap.places || [])) {
+      if (!Array.isArray(p.tags)) continue;
+      const i = p.tags.indexOf(oldLabel);
+      if (i >= 0) p.tags[i] = tag.label;
+    }
+  }
+  const saved = A.saveFoodMap(foodMap);
+  if (!saved) { foodMap = A.loadFoodMap(); alert('저장에 실패했어요. 브라우저 저장 공간을 확인해 주세요.'); return; }
+  daSyncPushSafe();
+  refreshFromStorage();
+  if (forPlaceId) tagsEditSheet(forPlaceId);
 }
 function resolveDup(aId, bId, action) {
   const result = A.resolveDup(foodMap.places, aId, bId, action);
