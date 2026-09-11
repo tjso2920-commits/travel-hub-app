@@ -29,6 +29,10 @@ if (usingSample) { spots = SAMPLE_SPOTS; cities = SAMPLE_CITIES; }
 
 let city = cities[0] ? cities[0].name : '';
 let filter = '전체', visitFilter = '전체', selected = new Set(), route = new Set(), selecting = false;
+// 6-1절 — 정렬 방식. 위치 권한 없이도 목록이 그대로 쓰이도록 기본은
+// recent(최근 추가순)다. distance는 좌표 확인된 장소들의 평균 좌표를
+// "지정 위치" 기준으로 쓴다(정렬만을 위한 유료 지오코딩 호출 금지).
+let sortMode = 'recent';
 
 /* 2026-09-10 재검토(7차) — "계정 전환 후 늦게 도착한 응답이 다른 계정
    화면에 섞이지 않게 하라"는 지시. 로그인·로그아웃마다 1씩 올리는
@@ -428,9 +432,25 @@ function photoHTML(p, cls) {
 }
 function render() {
   const q = $('#search').value.trim().toLowerCase();
-  const list = spots.filter((p) => p.city === city && (filter === '전체' || p.category === filter)
+  let list = spots.filter((p) => p.city === city && (filter === '전체' || p.category === filter)
     && (usingSample || visitFilter === '전체' || visitStatusFor(p.id) === visitFilter)
     && [p.name, p.area, p.category, p.memo].some((v) => String(v || '').toLowerCase().includes(q)));
+  // 6-1절 — 정렬은 이미 필터링된 목록 위에서만 적용한다(도시·유형·검색
+  // 조건은 그대로 유지). 거리순 기준점은 지금 도시의 좌표 확인된
+  // 장소들의 평균 좌표("지정 위치") — 위치 권한도 유료 API 호출도 없다.
+  const cityRefPoint = A.centroid(spots.filter((p) => p.city === city));
+  list = A.sortSpots(list, { mode: sortMode, query: q, refPoint: cityRefPoint });
+  const basisNote = $('#sortBasisNote');
+  if (basisNote) {
+    if (sortMode === 'distance') {
+      basisNote.hidden = false;
+      basisNote.textContent = cityRefPoint
+        ? '기준: 이 도시에 저장된 곳들의 평균 위치(지정 위치) · 좌표 없는 곳은 맨 아래'
+        : '아직 좌표가 확인된 장소가 없어 거리순 기준을 정할 수 없어요';
+    } else {
+      basisNote.hidden = true;
+    }
+  }
   $('#count').textContent = list.length;
   $('#clear').hidden = !q;
   $('#empty').hidden = !!list.length;
@@ -1502,7 +1522,9 @@ async function handleRealFile(e) {
   }
   if (!parsed.length) { importMsg = '이 파일에서 저장된 장소를 찾지 못했어요.'; daTrackSafe('import_result', { result: 'failure' }); add(); return; }
   const label = f.name.replace(/\.(csv|json)$/i, '');
-  finishImport([{ label, z: A.merge(parsed, label, foodMap.places) }], []);
+  // 6-1절 — 파일 하나를 고르는 단일 가져오기는 그 자체로 하나의 "가져오기 묶음".
+  const importBatchId = 'ib' + Date.now() + Math.floor(Math.random() * 9999);
+  finishImport([{ label, z: A.merge(parsed, label, foodMap.places, importBatchId) }], []);
 }
 /* Takeout ZIP 직접 가져오기(로드맵 ②) — 압축을 미리 풀 필요가 없다.
    zip-import.js의 daParseZip이 안전장치(크기·개수·시간 제한)를 갖고
@@ -1529,6 +1551,9 @@ async function handleZipFile(f) {
     return;
   }
   const perFile = [];
+  // 6-1절 — ZIP 하나 안의 여러 파일은 "이번에 함께 들어온" 한 묶음이므로
+  // 배치 id를 공유한다("이번에 추가된 N곳" 표시의 근거가 된다).
+  const importBatchId = 'ib' + Date.now() + Math.floor(Math.random() * 9999);
   result.files.forEach((entry) => {
     const shortName = entry.name.split('/').pop();
     let parsed = [];
@@ -1539,7 +1564,7 @@ async function handleZipFile(f) {
       return;
     }
     if (!parsed.length) { perFile.push({ label: shortName, error: '이 파일에서 저장된 장소를 찾지 못했어요' }); return; }
-    perFile.push({ label: shortName, z: A.merge(parsed, shortName.replace(/\.(csv|json)$/i, ''), foodMap.places) });
+    perFile.push({ label: shortName, z: A.merge(parsed, shortName.replace(/\.(csv|json)$/i, ''), foodMap.places, importBatchId) });
   });
   if (!perFile.some((x) => x.z)) {
     importMsg = 'ZIP 안의 파일들에서 저장된 장소를 찾지 못했어요. ' + (result.skipped.length ? '일부 파일은 제외됐습니다 — 아래에서 이유를 확인하세요.' : '');
@@ -1610,6 +1635,10 @@ function nearby() {
 
 $('#search').addEventListener('input', render);
 $('#clear').onclick = () => { $('#search').value = ''; render(); $('#search').focus(); };
+if ($('#sortSelect')) {
+  $('#sortSelect').value = sortMode;
+  $('#sortSelect').addEventListener('change', (e) => { sortMode = e.target.value; render(); });
+}
 $('.filters').onclick = (e) => { const b = e.target.closest('[data-filter]'); if (!b) return; filter = b.dataset.filter; document.querySelectorAll('[data-filter]').forEach((x) => { x.classList.toggle('active', x === b); x.setAttribute('aria-pressed', x === b); }); render(); };
 if ($('#visitFilters')) {
   $('#visitFilters').onclick = (e) => {

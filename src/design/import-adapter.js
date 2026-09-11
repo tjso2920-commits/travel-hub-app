@@ -203,6 +203,11 @@ function daCsv(txt) {
       address: o.address || o['주소'] || '',
       lat: +(o.latitude || o.lat || o['위도']) || null,
       lng: +(o.longitude || o.lng || o['경도']) || null,
+      // 2026-09-11 재검토(9차) 6-1절 — 원본 파일에 실제 저장 날짜 열이
+      // 있으면(일부 내보내기 형식만 해당) 최대한 살려 둔다. 없으면
+      // undefined로 남고, 지어내지 않는다("원본에 저장 날짜가 없으면
+      // 지어내지 않는다").
+      originalSavedAt: o['saved date'] || o['date saved'] || o['저장일'] || o['저장 날짜'] || o.date || undefined,
     };
   }).filter((x) => x.name).map((x) => {
     if (x.lat === null || x.lng === null) {
@@ -231,6 +236,10 @@ function daObj(o) {
     lat: +(p.lat || geo.Latitude || geo.latitude || p.latitude || co[1]) || null,
     lng: +(p.lng || geo.Longitude || geo.longitude || p.longitude || co[0]) || null,
     cat: p.cat || '',
+    // 2026-09-11 재검토(9차) 6-1절 — Google Takeout의 "저장한 장소"
+    // GeoJSON은 feature.properties.date에 실제 저장 시각을 담아 줄 때가
+    // 있다(형식마다 다름 — 없으면 undefined로 남긴다, 지어내지 않음).
+    originalSavedAt: p.date || o.date || undefined,
   };
   if (out.lat === null || out.lng === null) {
     const c = daCoordFromUrl(out.url);
@@ -379,6 +388,71 @@ function daGpsDistance(a, b) {
   const z = Math.sin(da / 2) ** 2 + Math.cos(a1) * Math.cos(a2) * Math.sin(dl / 2) ** 2;
   return 6371000 * 2 * Math.atan2(Math.sqrt(z), Math.sqrt(1 - z));
 }
+/* 2026-09-11 재검토(9차) 6-1절 — 좌표가 확인된 장소들의 평균 좌표.
+   "정렬만을 위해 유료 지오코딩 API 호출 금지" 제약 때문에, 숙소는
+   텍스트 이름만 있고 좌표가 없어(POST /api/trips가 {name}만 보냄)
+   위치 권한 없이도 쓸 수 있는 기본 기준점으로 삼는다. GPS 옵트인
+   버튼은 이번 라운드에서는 구현하지 않은 별도 개선 항목으로 남긴다. */
+function daCentroid(spots) {
+  const withCoords = (spots || []).filter((s) => s && typeof s.lat === 'number' && typeof s.lng === 'number');
+  if (!withCoords.length) return null;
+  const sum = withCoords.reduce((acc, s) => ({ lat: acc.lat + s.lat, lng: acc.lng + s.lng }), { lat: 0, lng: 0 });
+  return { lat: sum.lat / withCoords.length, lng: sum.lng / withCoords.length };
+}
+function daRelevanceScore(s, q) {
+  const query = String(q || '').trim().toLowerCase();
+  if (!query) return 0;
+  const name = String(s.name || '').toLowerCase();
+  const cat = String(s.category || '').toLowerCase();
+  const addr = String(s.area || '').toLowerCase();
+  if (name === query) return 5;
+  if (name.startsWith(query)) return 4;
+  if (name.includes(query)) return 3;
+  if (cat.includes(query)) return 2;
+  if (addr.includes(query)) return 1;
+  return 0;
+}
+/* 6-1절 — 정렬 4종(최근추가순/오래된순/거리순/관련순). 날짜·좌표를
+   모르는 항목은 추측하지 않고 정직하게 맨 뒤로 보낸다(숨기지 않음 —
+   "안 보이던 곳이 사라졌다"는 오해를 막기 위해). 위치 권한 없이도
+   목록 자체는 그대로 쓸 수 있어야 하므로 기본 정렬은 recent다. */
+function daSortSpots(list, opts) {
+  const arr = Array.isArray(list) ? list.slice() : [];
+  const o = opts || {};
+  const mode = o.mode || 'recent';
+  if (mode === 'recent' || mode === 'oldest') {
+    const dir = mode === 'recent' ? -1 : 1;
+    return arr.sort((a, b) => {
+      const ta = a.firstAddedAt ? Date.parse(a.firstAddedAt) : NaN;
+      const tb = b.firstAddedAt ? Date.parse(b.firstAddedAt) : NaN;
+      const aKnown = Number.isFinite(ta), bKnown = Number.isFinite(tb);
+      if (!aKnown && !bKnown) return 0;
+      if (!aKnown) return 1; // 최초 추가 시점을 모르는 기존 약 160곳 — 뒤로.
+      if (!bKnown) return -1;
+      return dir * (ta - tb);
+    });
+  }
+  if (mode === 'distance') {
+    const ref = o.refPoint;
+    return arr.sort((a, b) => {
+      const aHas = ref && typeof a.lat === 'number' && typeof a.lng === 'number';
+      const bHas = ref && typeof b.lat === 'number' && typeof b.lng === 'number';
+      if (!aHas && !bHas) return 0;
+      if (!aHas) return 1; // 좌표 없는 곳은 숨기지 않고 맨 뒤에만 둔다.
+      if (!bHas) return -1;
+      return daGpsDistance(ref, a) - daGpsDistance(ref, b);
+    });
+  }
+  if (mode === 'relevance') {
+    const q = o.query || '';
+    if (!String(q).trim()) return arr; // 검색어 없이 근거 없는 "추천순"을 지어내지 않는다.
+    return arr
+      .map((s, i) => ({ s, score: daRelevanceScore(s, q), i }))
+      .sort((x, y) => (y.score - x.score) || (x.i - y.i))
+      .map((x) => x.s);
+  }
+  return arr;
+}
 /* private/personal.html: function fmIsPlaceUrl — 그대로 옮김. 검색 URL은
    특정 장소 식별자가 아니다(2026-09-09 코드 검토). */
 function daIsPlaceUrl(u) {
@@ -464,7 +538,7 @@ function daPlacesConflict(a, x) {
 const daNameKey = (n) => String(n || '').trim().toLowerCase().replace(/\s+/g, ' ');
 /* private/personal.html: function fmDupKey — 그대로 옮김. */
 function daDupKey(p) { return daNameKey(p.name) + '|' + String(p.address || '').trim().toLowerCase() + '|' + String(p.url || '').trim(); }
-function daMerge(arr, sourceLabel, places) {
+function daMerge(arr, sourceLabel, places, importBatchId) {
   let added = 0, updated = 0, skipped = 0, dupCandidates = 0;
   const byKey = new Map(); const byName = new Map();
   /* 좌표가 진짜 있을 때만 이름+좌표를 검증된 식별자로 쓴다.
@@ -517,6 +591,12 @@ function daMerge(arr, sourceLabel, places) {
          재수입 때도 절대 덮지 않는다(2026-09-09 코드 검토). */
       if (!exact.catConfirmed) { exact.cat = x.cat || daInfer(exact.name + ' ' + exact.note + ' ' + exact.address); exact.catConfirmed = !!x.cat; }
       if (sourceLabel) { exact.sourceLists = Array.isArray(exact.sourceLists) ? exact.sourceLists : []; if (!exact.sourceLists.includes(sourceLabel)) exact.sourceLists.push(sourceLabel); }
+      // 2026-09-11 재검토(9차) 6-1절 — 재가져오기가 이미 아는 장소의
+      // 최초 추가 시각(firstAddedAt)이나 사용자가 이미 채운
+      // originalSavedAt을 절대 덮지 않는다. 이 파일이 처음으로
+      // originalSavedAt을 알려주는 경우(예전엔 몰랐던 원본 저장일)만
+      // 채워 넣는다 — "몰랐던 정보를 채움"이지 "덮어쓰기"가 아니다.
+      if (exact.originalSavedAt === undefined && x.originalSavedAt) exact.originalSavedAt = x.originalSavedAt;
       regKeys(exact);
       updated++; return;
     }
@@ -527,7 +607,15 @@ function daMerge(arr, sourceLabel, places) {
     const pKeyPre = daDupKey(x);
     const importFingerprint = (sourceLabel || '') + '|' + pKeyPre;
     const already = (byName.get(nk) || []).find((o) => Array.isArray(o.importKeys) && o.importKeys.includes(importFingerprint));
-    if (already) { updated++; return; }
+    if (already) {
+      // 2026-09-11 재검토(9차) 6-1절 — importFingerprint는 이름/주소/URL만
+      // 보고 판단하므로(저장일이 새로 추가된 열이라도 지문은 그대로
+      // 같다), "이미 받아들인 내용"으로 판정돼도 원본에 새로 보이는
+      // originalSavedAt까지 무시하면 안 된다. exact 식별자 매칭 분기와
+      // 똑같이, 몰랐던 값만 비파괴적으로 채운다(덮어쓰지 않음).
+      if (already.originalSavedAt === undefined && x.originalSavedAt) already.originalSavedAt = x.originalSavedAt;
+      updated++; return;
+    }
     const p = Object.assign({ id: 'fm' + Date.now() + added + Math.floor(Math.random() * 9999) }, x);
     delete p.title;
     p.originName = x.name; p.originNote = x.note || ''; p.originAddress = x.address || '';
@@ -536,6 +624,14 @@ function daMerge(arr, sourceLabel, places) {
     p.city = daCityGuess(p);
     p.sourceLists = sourceLabel ? [sourceLabel] : [];
     p.importKeys = [importFingerprint];
+    // 2026-09-11 재검토(9차) 6-1절 — "최근 추가순" 정렬의 근거. 앱이
+    // 이 장소를 처음 알게 된 순간(firstAddedAt, 절대 나중에 안 바뀜)과
+    // 이번에 같이 들어온 항목들의 묶음(importBatchId, 재가져오기에서
+    // "이번에 추가된 곳"을 구분하는 근거)을 한 번만 찍는다.
+    // originalSavedAt(원본 파일이 실제로 알려준 저장일)은 이미 x에
+    // 있으면 그대로 따라오고, 없으면 undefined로 남아 지어내지 않는다.
+    p.firstAddedAt = new Date().toISOString();
+    p.importBatchId = importBatchId || null;
     /* 이름만 같아도 사람이 이미 "다른 곳이에요"로 확인해 둔 조합
        (dismissedDupKeys)이면 같은 판단을 또 묻지 않는다. */
     const pKey = daDupKey(p);
@@ -666,6 +762,11 @@ function daBuildSpots(foodMap) {
     // 고친 진짜 충돌(daRemergePlaceConflict가 남겨 둔 것). 화면에서
     // 조용히 사라지지 않게 그대로 넘긴다.
     fieldConflicts: p._fieldConflicts || null,
+    // 6-1절 — 정렬·"이번에 추가된 곳" 표시의 근거. 원본에 저장일이
+    // 없으면 originalSavedAt은 undefined 그대로 넘어간다(지어내지 않음).
+    originalSavedAt: p.originalSavedAt || null,
+    firstAddedAt: p.firstAddedAt || null,
+    importBatchId: p.importBatchId || null,
   }));
   const byCity = new Map();
   spots.forEach((s) => { byCity.set(s.city, (byCity.get(s.city) || 0) + 1); });
@@ -734,4 +835,6 @@ window.DesignAdapter = {
   lookupState: daLookupState,
   migrateStorage: daMigrateStorage,
   destNow: daDestNow,
+  sortSpots: daSortSpots,
+  centroid: daCentroid,
 };
