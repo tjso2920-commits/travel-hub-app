@@ -117,7 +117,19 @@ export async function weatherRoute(lat, lng, tzHint, dateStr) {
       return { ok: false, status: 503, reason: 'weather-service-daily-cap-reached' };
     }
     startedHere = true;
-    promise = lookupWeather({ lat: latN, lng: lngN, tzId: tzHint }).finally(() => {
+    // 2026-09-11 재검토(13차) — ChatGPT 재현: 예전엔 fetchedAt(= nowIso())을
+    // await promise 이후, 즉 "이 함수를 부른 쪽 각자"가 따로 계산했다.
+    // 그러면 이 Promise 하나를 여러 호출자가 함께 기다려도(동시 요청
+    // 병합) 각자 자기 코드가 재개되는 시점에 또 new Date()를 부르므로,
+    // 같은 실제 조회 결과인데도 응답마다 fetchedAt(cachedAt)이 밀리초
+    // 단위로 달라졌다("두 응답이 같은 내용을 공유함" 검증 실패로 재현).
+    // 고침: 실제 외부 호출이 "정말로 끝나는 그 순간"(.then 콜백, 이
+    // Promise 체인 안에서 딱 한 번만 실행됨) fetchedAt을 계산해 result에
+    // 실어 보낸다 — 이 Promise를 함께 기다리는 모든 호출자(시작한 쪽,
+    // 합류한 쪽 모두)가 정확히 같은 값을 읽게 된다.
+    promise = lookupWeather({ lat: latN, lng: lngN, tzId: tzHint }).then((r) => (
+      (r && r.ok) ? { ...r, fetchedAt: nowIso() } : r
+    )).finally(() => {
       inFlightWeatherLookups.delete(key);
     });
     inFlightWeatherLookups.set(key, promise);
@@ -130,10 +142,10 @@ export async function weatherRoute(lat, lng, tzHint, dateStr) {
     return { ok: false, status: 503, reason: 'weather-unavailable', detail: result.reason };
   }
   const payload = { location: result.location, current: result.current, forecastDays: result.forecastDays, source: result.source };
-  // cacheSet에 쓰는 시각과 응답에 실어 보내는 시각이 서로 다른
-  // new Date() 호출이면 밀리초 단위로 어긋날 수 있다 — 하나만 계산해
-  // 양쪽에 그대로 쓴다(캐시 공유 시 cachedAt이 항상 같아야 함).
-  const fetchedAt = nowIso();
+  // result.fetchedAt은 이 조회를 실제로 수행한 .then 콜백에서 딱 한 번
+  // 계산돼 Promise 결과 안에 담겨 있다 — 이 Promise를 기다린 모든
+  // 호출자가 같은 값을 그대로 쓴다(밀리초 경계에서도 절대 안 갈림).
+  const fetchedAt = result.fetchedAt;
   // 이 호출을 실제로 시작한 쪽만 캐시에 쓴다 — 합류한 쪽까지 다시
   // 쓰면 의미 없이 같은 내용을 두 번 쓰는 꼴이라 그냥 생략한다.
   if (startedHere) cacheSet(key, payload, fetchedAt);
