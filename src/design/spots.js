@@ -33,6 +33,9 @@ let filter = '전체', visitFilter = '전체', selected = new Set(), route = new
 // recent(최근 추가순)다. distance는 좌표 확인된 장소들의 평균 좌표를
 // "지정 위치" 기준으로 쓴다(정렬만을 위한 유료 지오코딩 호출 금지).
 let sortMode = 'recent';
+// 6-2절 — 세부 다중 태그 필터(상위분류 filter와 별개, AND 조건으로 겹쳐 씀).
+// 지금 보유한 장소 중 실제 존재하는 태그만 칩으로 보여준다(버튼 과잉 방지).
+let activeTags = new Set();
 
 /* 2026-09-10 재검토(7차) — "계정 전환 후 늦게 도착한 응답이 다른 계정
    화면에 섞이지 않게 하라"는 지시. 로그인·로그아웃마다 1씩 올리는
@@ -432,8 +435,22 @@ function photoHTML(p, cls) {
 }
 function render() {
   const q = $('#search').value.trim().toLowerCase();
+  // 6-2절 — 세부 태그 칩은 상위분류(filter)까지만 반영된 목록을 보고
+  // "지금 실제로 있는 태그"만 보여준다(버튼을 과하게 늘리지 않는다는
+  // 원칙 — 존재하지도 않는 태그를 미리 늘어놓지 않는다).
+  const tagFiltersEl = $('#tagFilters');
+  if (tagFiltersEl) {
+    const catBase = usingSample ? [] : spots.filter((p) => p.city === city && (filter === '전체' || p.category === filter));
+    const availableTags = Array.from(new Set(catBase.flatMap((p) => Array.isArray(p.tags) ? p.tags : []))).sort();
+    for (const t of Array.from(activeTags)) if (!availableTags.includes(t)) activeTags.delete(t);
+    tagFiltersEl.hidden = !availableTags.length;
+    if (availableTags.length) {
+      tagFiltersEl.innerHTML = availableTags.map((t) => `<button data-tagfilter="${A.esc(t)}" class="${activeTags.has(t) ? 'active' : ''}" aria-pressed="${activeTags.has(t)}">${A.esc(t)}</button>`).join('');
+    }
+  }
   let list = spots.filter((p) => p.city === city && (filter === '전체' || p.category === filter)
     && (usingSample || visitFilter === '전체' || visitStatusFor(p.id) === visitFilter)
+    && (activeTags.size === 0 || Array.from(activeTags).every((t) => Array.isArray(p.tags) && p.tags.includes(t)))
     && [p.name, p.area, p.category, p.memo].some((v) => String(v || '').toLowerCase().includes(q)));
   // 6-1절 — 정렬은 이미 필터링된 목록 위에서만 적용한다(도시·유형·검색
   // 조건은 그대로 유지). 거리순 기준점은 지금 도시의 좌표 확인된
@@ -471,7 +488,7 @@ function render() {
   $('.demo').textContent = usingSample ? '샘플 컬렉션' : (foodMap.places && foodMap.places.length ? '내 컬렉션' : '');
   $('.demo').hidden = !usingSample && !(foodMap.places && foodMap.places.length);
 }
-function resetSearch() { $('#search').value = ''; filter = '전체'; document.querySelectorAll('[data-filter]').forEach((x) => { x.classList.toggle('active', x.dataset.filter === '전체'); x.setAttribute('aria-pressed', x.dataset.filter === '전체'); }); render(); }
+function resetSearch() { $('#search').value = ''; filter = '전체'; activeTags.clear(); document.querySelectorAll('[data-filter]').forEach((x) => { x.classList.toggle('active', x.dataset.filter === '전체'); x.setAttribute('aria-pressed', x.dataset.filter === '전체'); }); render(); }
 function toggle(id) { selected.has(id) ? selected.delete(id) : selected.add(id); render(); }
 function open(title, html) { $('#sheetLabel').textContent = title; $('#sheetContent').innerHTML = html; if (!sheet.open) sheet.showModal(); }
 
@@ -536,7 +553,12 @@ function detail(id) {
   }
   const catBlock = usingSample ? '' :
     ` <button class="text-button" data-cat-edit="${id}" style="padding:0;font-size:11px">${p.catConfirmed ? '유형 다시 고르기' : '유형이 맞나요? 수정'}</button>`;
-  open(usingSample ? '샘플 장소' : '내 장소', `<div class="detail">${photoHTML(p, 'detail-photo')}<h2>${A.esc(p.name)}</h2><span class="category">${A.esc(p.category)}${!usingSample && !p.catConfirmed ? '(짐작)' : ''}</span>${catBlock}${!usingSample ? ` <span class="category">${A.esc(p.city)}${p.cityKnown && !p.cityConfirmed ? '(짐작)' : ''}</span>` : ''}<p>${A.esc(p.area) || '위치 정보 없음'}</p>${p.memo ? `<p>“${A.esc(p.memo)}”</p>` : ''}<button class="primary" data-detail-pick="${id}">${selected.has(id) ? '선택에서 빼기' : '오늘 갈 곳으로 선택'}</button>${mapHref ? `<a target="_blank" rel="noopener noreferrer" href="${mapHref}">${mapLabel}</a>` : ''}${visitBlockHTML(id)}${cityBlock}${notes.map((n) => `<small>${n}</small>`).join('')}</div>`);
+  // 6-2절 — 상위분류(category)는 그대로 두고, 그 아래에 세부 다중 태그를
+  // 작은 칩으로 따로 보여준다(불확실하면 자동으로 아무 것도 안 붙는다).
+  const tagsBlock = usingSample ? '' :
+    `<div class="tag-chips">${(p.tags || []).map((t) => `<span class="tag-chip">${A.esc(t)}</span>`).join('')}` +
+    `<button class="text-button" data-tags-edit="${id}" style="padding:0;font-size:11px">${(p.tags && p.tags.length) ? '세부 태그 수정' : '세부 태그 추가'}</button></div>`;
+  open(usingSample ? '샘플 장소' : '내 장소', `<div class="detail">${photoHTML(p, 'detail-photo')}<h2>${A.esc(p.name)}</h2><span class="category">${A.esc(p.category)}${!usingSample && !p.catConfirmed ? '(짐작)' : ''}</span>${catBlock}${!usingSample ? ` <span class="category">${A.esc(p.city)}${p.cityKnown && !p.cityConfirmed ? '(짐작)' : ''}</span>` : ''}${tagsBlock}<p>${A.esc(p.area) || '위치 정보 없음'}</p>${p.memo ? `<p>“${A.esc(p.memo)}”</p>` : ''}<button class="primary" data-detail-pick="${id}">${selected.has(id) ? '선택에서 빼기' : '오늘 갈 곳으로 선택'}</button>${mapHref ? `<a target="_blank" rel="noopener noreferrer" href="${mapHref}">${mapLabel}</a>` : ''}${visitBlockHTML(id)}${cityBlock}${notes.map((n) => `<small>${n}</small>`).join('')}</div>`);
 }
 /* 유형 지정 시트 — 확인된 유형(실제 데이터에 있던 분류)을 이름 기반 추정
    보다 우선하지만, 추정이 틀렸으면 사용자가 여기서 직접 고칠 수 있다.
@@ -555,6 +577,41 @@ function catAssignSheet(id) {
 }
 function finishCatAssign(id, cat) {
   A.setCat(foodMap.places, id, cat);
+  const saved = A.saveFoodMap(foodMap);
+  if (!saved) {
+    foodMap = A.loadFoodMap();
+    alert('저장에 실패했어요. 브라우저 저장 공간을 확인해 주세요.');
+    return;
+  }
+  daSyncPushSafe();
+  refreshFromStorage();
+  updateCity();
+  detail(id);
+}
+/* 6-2절 — 세부 다중 태그 지정 시트. 상위분류(catAssignSheet)는 하나만
+   고르지만, 태그는 여러 개를 동시에 켤 수 있어 즉시 반영 대신 "저장"
+   버튼으로 한 번에 확정한다. 한 번 저장하면 tagsConfirmed=true로 남아
+   재수입·재동기화가 절대 안 덮는다(daSetTags/daMerge와 동일 규칙). */
+function tagsEditSheet(id) {
+  const p = spots.find((s) => s.id === id); if (!p) return;
+  const known = A.knownTags;
+  const current = new Set(p.tags || []);
+  open('세부 태그', `<div class="detail"><h2>세부 태그를 골라 주세요</h2><p>${A.esc(p.name)}</p>` +
+    `<p class="inline-note">여러 개를 함께 고를 수 있어요(예: 야키토리+이자카야). 목록에 없는 특징은 아직 지원하지 않아요.</p>` +
+    `<div class="filters" id="tagEditChips" style="flex-wrap:wrap;overflow:visible">${known.map((t) => `<button data-tag-toggle="${A.esc(t)}" class="${current.has(t) ? 'active' : ''}" aria-pressed="${current.has(t)}">${A.esc(t)}</button>`).join('')}</div>` +
+    `<button class="primary" id="tagsSaveBtn" style="margin-top:14px">저장</button></div>`);
+  $('#tagEditChips').querySelectorAll('[data-tag-toggle]').forEach((b) => {
+    b.onclick = () => {
+      const t = b.dataset.tagToggle;
+      if (current.has(t)) current.delete(t); else current.add(t);
+      b.classList.toggle('active', current.has(t));
+      b.setAttribute('aria-pressed', current.has(t));
+    };
+  });
+  $('#tagsSaveBtn').onclick = () => finishTagsEdit(id, Array.from(current));
+}
+function finishTagsEdit(id, tags) {
+  A.setTags(foodMap.places, id, tags);
   const saved = A.saveFoodMap(foodMap);
   if (!saved) {
     foodMap = A.loadFoodMap();
@@ -1475,7 +1532,7 @@ function updateCity() {
   }
   render();
 }
-function chooseCity(name) { city = name; filter = '전체'; selecting = false; $('#search').value = ''; updateCity(); sheet.close(); }
+function chooseCity(name) { city = name; filter = '전체'; activeTags.clear(); selecting = false; $('#search').value = ''; updateCity(); sheet.close(); }
 function cityPicker() {
   /* 2026-09-09부터: 여행지 선택은 "저장 장소를 걸러 보여주는 필터"일 뿐이다.
      도시를 바꿔도 다른 도시에 담아 둔 장소는 지워지지 않는다 — 전부 그대로
@@ -1640,6 +1697,16 @@ if ($('#sortSelect')) {
   $('#sortSelect').addEventListener('change', (e) => { sortMode = e.target.value; render(); });
 }
 $('.filters').onclick = (e) => { const b = e.target.closest('[data-filter]'); if (!b) return; filter = b.dataset.filter; document.querySelectorAll('[data-filter]').forEach((x) => { x.classList.toggle('active', x === b); x.setAttribute('aria-pressed', x === b); }); render(); };
+if ($('#tagFilters')) {
+  // 6-2절 — 태그 칩은 단일 선택(filter)과 달리 여러 개를 동시에 켤 수
+  // 있다(예: 야키토리+이자카야를 함께 만족하는 곳만 보기).
+  $('#tagFilters').onclick = (e) => {
+    const b = e.target.closest('[data-tagfilter]'); if (!b) return;
+    const tag = b.dataset.tagfilter;
+    if (activeTags.has(tag)) activeTags.delete(tag); else activeTags.add(tag);
+    render();
+  };
+}
 if ($('#visitFilters')) {
   $('#visitFilters').onclick = (e) => {
     const b = e.target.closest('[data-vfilter]'); if (!b) return;
@@ -1662,6 +1729,7 @@ $('#sheetContent').onclick = (e) => {
   if (b.dataset.remove) { route.delete(b.dataset.remove); showRoute(); }
   if (b.dataset.citySingle) return cityAssignSheet([b.dataset.citySingle]);
   if (b.dataset.catEdit) return catAssignSheet(b.dataset.catEdit);
+  if (b.dataset.tagsEdit) return tagsEditSheet(b.dataset.tagsEdit);
   if (b.dataset.lookupPlace) return daLookupCandidateSheet(b.dataset.lookupPlace);
   if (b.dataset.lookupConfirm) {
     const [pid, lat, lng, placeId] = b.dataset.lookupConfirm.split('|');

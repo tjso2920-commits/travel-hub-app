@@ -309,6 +309,43 @@ function daInfer(s) {
   for (let i = 0; i < FM_INFER.length; i++) if (FM_INFER[i][1].test(s)) return FM_INFER[i][0];
   return '기타';
 }
+/* 2026-09-11 재검토(9차) 6-2절 — 세계 공통 상위분류(FM_INFER의 단일
+   category)는 그대로 두고, 그 위에 세부 다중 태그를 얹는다. 한 장소가
+   여러 태그를 동시에 가질 수 있다(예: 야키토리+이자카야). 이름이
+   다른 동의어(주판점/리커샵/주류샵 등)는 여기서 한 태그로 합쳐 둔다 —
+   일본 한정이 아니라 태국·이탈리아·카페·마사지 등에도 같은 방식을 쓴다.
+   시작 어휘일 뿐 필요하면 늘릴 수 있다("불확실하면 미분류" 원칙은
+   daInferTags가 빈 배열을 돌려주는 것으로 지킨다 — 억지로 아무 태그나
+   붙이지 않는다). */
+const FM_TAGS = [
+  ['야키토리', /焼き?鳥|やきとり|야키토리|닭꼬치|yakitori|chicken ?skewer/],
+  ['스시', /寿司|鮨|스시|초밥|\bsushi\b/],
+  ['라멘', /ラーメン|라멘|\bramen\b/],
+  ['우동·소바', /うどん|そば|蕎麦|우동|소바|\budon\b|\bsoba\b/],
+  ['이자카야', /居酒屋|이자카야|\bizakaya\b/],
+  ['주류샵', /酒屋|주류샵|주판점|리커샵|리큐어\s?샵|사케샵|와인샵|liquor ?store|bottle ?shop|off-licen[cs]e|wine ?shop/],
+  ['오코노미야키', /お好み焼き|오코노미야키|okonomiyaki/],
+  ['타코야키', /たこ焼き|타코야키|takoyaki/],
+  ['돈카츠', /とんかつ|돈카츠|tonkatsu|\bkatsu\b/],
+  ['텐푸라', /天ぷら|텐푸라|튀김|tempura/],
+  ['타이음식', /타이음식|타이푸드|팟타이|똠얌|thai food|pad ?thai|tom ?yum/],
+  ['이탈리안', /이탈리안|이태리 ?음식|ristorante|trattoria|osteria|파스타|\bpasta\b|피자|pizzeria/],
+  ['카페', /카페|커피|coffee|caf[eé]/],
+  ['베이커리·디저트', /베이커리|제과|빵집|디저트|bakery|p[aâ]tisserie|dessert/],
+  ['마사지', /마사지|massage/],
+  ['스파·온천', /스파|온천|찜질|\bspa\b|onsen|thermal|therme/],
+  ['바베큐·그릴', /바베큐|그릴|고기집|barbecue|\bbbq\b|\bgrill\b/],
+  ['프렌치', /프렌치|프랑스 ?요리|bistro|brasserie|french restaurant/],
+  ['멕시칸', /멕시칸|타케리아|taco|taquer[ií]a|mexican/],
+  ['인도·커리', /인도음식|커리|\bcurry\b|indian food/],
+  ['중식', /중식|중국요리|chinese restaurant|dim ?sum|딤섬/],
+];
+function daInferTags(s) {
+  s = String(s || '').toLowerCase();
+  const out = [];
+  for (let i = 0; i < FM_TAGS.length; i++) if (FM_TAGS[i][1].test(s)) out.push(FM_TAGS[i][0]);
+  return out;
+}
 const FM_CITY_ALT = {
   '후쿠오카': '福岡|fukuoka|hakata|博多', '도쿄': '東京|tokyo|shibuya|shinjuku', '오사카': '大阪|osaka|namba|umeda',
   '교토': '京都|kyoto', '삿포로': '札幌|sapporo', '오키나와': '沖縄|okinawa|naha|那覇', '나고야': '名古屋|nagoya',
@@ -590,6 +627,11 @@ function daMerge(arr, sourceLabel, places, importBatchId) {
          추정보다 우선하고, 사용자가 직접 고친 분류(catConfirmed)는
          재수입 때도 절대 덮지 않는다(2026-09-09 코드 검토). */
       if (!exact.catConfirmed) { exact.cat = x.cat || daInfer(exact.name + ' ' + exact.note + ' ' + exact.address); exact.catConfirmed = !!x.cat; }
+      // 6-2절 — 세부 다중 태그도 같은 규칙(catConfirmed와 동일하게
+      // tagsConfirmed). 사용자가 직접 고른 적 없으면 재수입 때마다
+      // 최신 이름·메모·주소 기준으로 다시 추정해 둔다(더 정확해질 뿐,
+      // 사람이 확정한 값은 절대 안 건드림).
+      if (!exact.tagsConfirmed) exact.tags = daInferTags(exact.name + ' ' + exact.note + ' ' + exact.address);
       if (sourceLabel) { exact.sourceLists = Array.isArray(exact.sourceLists) ? exact.sourceLists : []; if (!exact.sourceLists.includes(sourceLabel)) exact.sourceLists.push(sourceLabel); }
       // 2026-09-11 재검토(9차) 6-1절 — 재가져오기가 이미 아는 장소의
       // 최초 추가 시각(firstAddedAt)이나 사용자가 이미 채운
@@ -621,6 +663,11 @@ function daMerge(arr, sourceLabel, places, importBatchId) {
     p.originName = x.name; p.originNote = x.note || ''; p.originAddress = x.address || '';
     p.cat = x.cat || daInfer(p.name + ' ' + p.note + ' ' + p.address);
     p.catConfirmed = !!x.cat;
+    // 6-2절 — 상위분류(cat)는 그대로 두고, 세부 다중 태그를 처음부터
+    // 같이 추정해 둔다(불확실하면 daInferTags가 빈 배열을 준다 — 억지로
+    // 아무 태그나 붙이지 않는다).
+    p.tags = daInferTags(p.name + ' ' + p.note + ' ' + p.address);
+    p.tagsConfirmed = false;
     p.city = daCityGuess(p);
     p.sourceLists = sourceLabel ? [sourceLabel] : [];
     p.importKeys = [importFingerprint];
@@ -660,6 +707,28 @@ function daSetCat(places, id, cat) {
   p.cat = cat;
   p.catConfirmed = true;
   return true;
+}
+/* 6-2절 — 세부 태그 사용자 수정. catConfirmed와 같은 규칙: 한 번 사람이
+   고르면 tagsConfirmed=true로 남아 재수입·재동기화 때도 절대 안 덮인다. */
+function daSetTags(places, id, tags) {
+  const p = (places || []).find((x) => x.id === id);
+  if (!p) return false;
+  p.tags = Array.from(new Set((tags || []).filter(Boolean)));
+  p.tagsConfirmed = true;
+  return true;
+}
+/* 원래 없던 tags 필드를 처음 켜는 날(또는 예전 가져오기로 tags가 아예
+   없는 ~160곳)을 위한 1회성 채움 — cat/catConfirmed 마이그레이션과
+   같은 자리에서 같은 방식으로 돈다(사용자가 확정한 적 없으면 계속
+   다시 추정해도 무해하지만, 최소한 "아예 없음"은 없앤다). */
+function _migrateTags(places) {
+  if (!Array.isArray(places)) return;
+  for (const p of places) {
+    if (!p || !p.id) continue;
+    if (!p.tagsConfirmed && !Array.isArray(p.tags)) {
+      p.tags = daInferTags(String(p.name || '') + ' ' + String(p.note || '') + ' ' + String(p.address || ''));
+    }
+  }
 }
 function daAssignCity(places, placeIds, city) {
   const set = new Set(placeIds);
@@ -767,6 +836,9 @@ function daBuildSpots(foodMap) {
     originalSavedAt: p.originalSavedAt || null,
     firstAddedAt: p.firstAddedAt || null,
     importBatchId: p.importBatchId || null,
+    // 6-2절 — 상위분류(category)는 그대로, 세부 다중 태그만 추가로 넘긴다.
+    tags: Array.isArray(p.tags) ? p.tags : [],
+    tagsConfirmed: !!p.tagsConfirmed,
   }));
   const byCity = new Map();
   spots.forEach((s) => { byCity.set(s.city, (byCity.get(s.city) || 0) + 1); });
@@ -811,7 +883,8 @@ window.DesignAdapter = {
   loadFoodMap: () => {
     const fm = daLoad('foodmap_v1', { places: [], dest: '', destCountry: '' });
     _stampPlaceVersions(fm.places); // 버전 필드가 없는(한 번도 저장 안 된) 장소만 0으로 초기화.
-    _resetPlacesSnapshot(fm.places); // 세션 시작 시점 내용을 재병합 기준선으로 삼는다.
+    _migrateTags(fm.places); // 6-2절 — tags 필드가 아예 없는 예전 장소(약 160곳 포함)를 1회 채움.
+    _resetPlacesSnapshot(fm.places); // 세션 시작 시점 내용을 재병합 기준선으로 삼는다(tags 채운 뒤라야 맞음).
     return fm;
   },
   saveFoodMap: (fm) => { _stampPlaceVersions(fm.places); return daSave('foodmap_v1', fm); },
@@ -827,7 +900,10 @@ window.DesignAdapter = {
   assignCity: daAssignCity,
   resolveDup: daResolveDup,
   setCat: daSetCat,
+  setTags: daSetTags,
+  inferTags: daInferTags,
   knownCats: FM_INFER.map((x) => x[0]).concat('기타'),
+  knownTags: FM_TAGS.map((x) => x[0]),
   knownCities: Object.keys(FM_CITY_ALT),
   esc: daEsc,
   hasCoords: daHasCoords,
