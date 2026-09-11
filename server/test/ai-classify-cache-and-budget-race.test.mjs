@@ -195,6 +195,55 @@ function accountWithHeadroom(email) {
 }
 
 // =====================================================================
+// 7) (13차 신규) 부분적으로 겹치는 동시 요청의 결과 유실 방지 — ChatGPT가
+//    지시한 정확한 재현: Promise.all([classifyBatchRoute(acc,[shared]),
+//    classifyBatchRoute(acc,[shared,other])]). 두 요청이 같은 항목
+//    (shared)을 공유하지만 완전히 같은 배치는 아니다(부분 겹침). 예전
+//    (12차) 코드는 "지금 진행 중"이라고 기록만 해 두고, 자기 몫을
+//    처리한 "뒤에" 다시 aiClassifyInFlight 맵을 조회했는데, 그 사이
+//    원래 진행 중이던 요청(shared를 단독으로 보낸 첫 번째)이 이미 끝나
+//    finally가 맵 항목을 지워 버리면 두 번째 요청은 shared의 결과를
+//    통째로 잃었다(응답 자체는 ok:true라서 조용히 성공한 것처럼
+//    보였다). 실제 Promise.all + 진짜 모의 어댑터로 재현한다(인위적
+//    지연 없이도 마이크로태스크 순서만으로 재현됨 — 첫 요청의 결과가
+//    두 번째 요청이 자기 몫을 처리하는 동안 이미 확정·정리된다).
+// =====================================================================
+{
+  const acc = accountWithHeadroom('ai-partial-overlap@example.com');
+  const itemShared = { localId: 'shared-item', name: '겹치는가게', address: '겹치는주소' };
+  const itemOther = { localId: 'other-item', name: '단독가게', address: '단독주소' };
+
+  const period0 = currentPeriod(acc);
+  const costBefore = periodCostMicros(acc, period0.periodId);
+  const [r1, r2] = await Promise.all([
+    classifyBatchRoute(acc, [itemShared]),
+    classifyBatchRoute(acc, [itemShared, itemOther]),
+  ]);
+  const costAfter = periodCostMicros(acc, period0.periodId);
+  const unitMicros = config.aiClassify.placeholderPerItemMicros;
+
+  t('7) 준비 확인 — 두 요청 모두 ok:true로 응답함(실패로 위장 안 됨)', r1.ok === true && r2.ok === true);
+  t('7) 첫 번째 요청(shared 단독)은 자기 항목 결과를 정상적으로 받음', r1.results.some((x) => x.localId === 'shared-item'));
+  // 재현하려던 정확한 결함: 두 번째 요청(shared+other)의 응답에서
+  // shared 결과가 사라지지 않아야 한다.
+  const r2Ids = new Set(r2.results.map((x) => x.localId));
+  t('7) 두 번째 요청(shared+other)의 응답에 shared 결과가 유실되지 않고 그대로 있음', r2Ids.has('shared-item'));
+  t('7) 두 번째 요청의 응답에 other 결과도 정상적으로 있음', r2Ids.has('other-item'));
+  t('7) 두 번째 요청이 어떤 항목도 "말없이 누락"으로 처리하지 않음(unresolvedCount=0)', r2.unresolvedCount === 0);
+  t('7) 첫 번째 요청도 마찬가지로 누락 없음', r1.unresolvedCount === 0);
+  // 같은 해시(shared)는 실제로는 딱 한 번만 처리·과금돼야 한다(동일
+  // 작업 병합) — shared 1건 + other 1건 = 총 2단위만 늘어야 한다.
+  t('7) 실제 비용은 shared 1건 + other 1건, 총 2단위만 늘어남(중복 과금 없음)', costAfter - costBefore === unitMicros * 2);
+
+  // "재시도가 영구 잠금으로 이어지지 않는지" — 위 동시 요청이 완전히
+  // 끝난 뒤, shared 항목을 다시(이번엔 단독으로) 요청하면 남은
+  // in-flight 잠금 없이 정상적으로 캐시 히트로 처리돼야 한다.
+  const r3 = await classifyBatchRoute(acc, [itemShared]);
+  t('7) 동시 요청이 끝난 뒤 같은 항목을 다시 요청하면 정상적으로 캐시로 처리됨(잔여 잠금 없음)', r3.ok === true && r3.cachedCount === 1 && r3.processedCount === 0);
+  t('7) 재요청 결과도 자기 localId로 정확히 옴', r3.results[0] && r3.results[0].localId === 'shared-item');
+}
+
+// =====================================================================
 // 4) 헤드룸-차감 charge 경합 방지 — "헤드룸을 읽는 시점"과 "실제로
 //    charge하는 시점" 사이에 동시 요청 두 개가 끼어들면, 고친 코드가
 //    실제로 두 번째를 atomic 트랜잭션에서 막는지 확인한다. 두 "동시"

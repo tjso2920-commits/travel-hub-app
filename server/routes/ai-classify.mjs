@@ -166,11 +166,26 @@ export async function classifyBatchRoute(accountId, items) {
   // 이미 다른(동시에 들어온) 요청이 같은 (계정, 해시, 버전)을 진행
   // 중이면, 이 요청은 새로 작업을 시작하지 않고 그 공유 Promise를
   // 그대로 기다린다 — 비용도 다시 청구하지 않는다.
+  // 2026-09-11 재검토(13차) — ChatGPT 재현: Promise.all([요청1(단독
+  // 항목), 요청2(그 항목+다른 항목)])처럼 부분적으로 겹치는 두 동시
+  // 요청을 보내면, 이전(12차) 구현은 여기서 "지금 진행 중"이라고만
+  // 기록해 두고, 자기 몫(newHashes)을 처리하려고 await한 뒤에야
+  // "그때 가서" 다시 aiClassifyInFlight 맵을 조회했다(아래 옛 코드
+  // 참고). 그런데 그 사이 원래 진행 중이던 Promise가 이미 끝나
+  // finally 블록이 맵에서 항목을 지워 버렸으면, 재조회가 undefined를
+  // 얻어 그 결과를 통째로 잃었다(재현: Promise.all([classifyBatchRoute
+  // (acc,[shared]), classifyBatchRoute(acc,[shared,other])]) — 두 번째
+  // 요청의 shared 결과가 사라짐). 고침: "지금 진행 중"이라고 판단하는
+  // 바로 이 순간 Promise 객체 자체를 붙잡아 둔다 — 맵 항목이 나중에
+  // 지워져도 우리가 쥔 참조는 그대로 유효하므로, 나중에 다시 맵을
+  // 조회하지 않고 이 참조를 그대로 await한다.
   const inFlightHashes = [];
   const newHashes = [];
+  const capturedInFlightPromises = new Map(); // hash -> 지금 이 순간 붙잡아 둔 Promise(나중에 맵에서 지워져도 안전).
   for (const hash of hashOrder) {
     const key = `${accountId}::${hash}::${version}`;
-    if (aiClassifyInFlight.has(key)) inFlightHashes.push(hash);
+    const existing = aiClassifyInFlight.get(key);
+    if (existing) { inFlightHashes.push(hash); capturedInFlightPromises.set(hash, existing); }
     else newHashes.push(hash);
   }
 
@@ -240,13 +255,13 @@ export async function classifyBatchRoute(accountId, items) {
     return { ok: false, status: 200, reason: classifyOutcome.reason, cachedResults: cachedResults.length ? cachedResults : undefined };
   }
 
-  // 이미 다른 요청이 처리 중이던 해시는 그 공유 Promise가 끝나기를
-  // 기다린 뒤 같은 결과를 나눠 받는다(비용은 그 다른 요청이 이미 냈다).
+  // 이미 다른 요청이 처리 중이던 해시는 그 공유 Promise(위에서 발견한
+  // 순간 붙잡아 둔 참조)가 끝나기를 기다린 뒤 같은 결과를 나눠 받는다
+  // (비용은 그 다른 요청이 이미 냈다). 맵을 다시 조회하지 않는다 —
+  // 그게 바로 13차에서 고친 유실 원인이었다.
   const inFlightResultsByHash = new Map();
   for (const hash of inFlightHashes) {
-    const key = `${accountId}::${hash}::${version}`;
-    const p = aiClassifyInFlight.get(key);
-    if (!p) continue; // 그 사이 이미 끝나서 맵에서 지워졌다 — 캐시에서 다시 읽어도 되지만, 다음 호출로 미룬다(단순함 유지).
+    const p = capturedInFlightPromises.get(hash);
     const outcome = await p;
     if (outcome.ok) {
       const res = outcome.byHash.get(hash);
@@ -254,19 +269,26 @@ export async function classifyBatchRoute(accountId, items) {
     }
   }
 
+  // 2026-09-11 재검토(13차) — "유실된 결과를 성공으로 위장하지 말 것"
+  // 지시 반영. 검증 실패·부분 결과 등으로 특정 해시만 결과가 없는
+  // 경우를 그냥 건너뛰지 않고 unresolvedHashes에 모아 응답에 명시
+  // 항목 수로 그대로 드러낸다 — 클라이언트가 "일부 항목은 이번에
+  // 처리되지 않았다"를 실제로 구분할 수 있게 한다(조용한 누락 금지).
   const newResults = [];
   let processedCount = 0;
+  const unresolvedHashes = [];
   for (const hash of affordableNewHashes) {
     const res = classifyOutcome.byHash.get(hash);
-    if (!res) continue; // 검증 실패 등으로 이 해시만 결과가 없을 수 있다 — 조용히 건너뛴다(unresolved와 동급).
+    if (!res) { unresolvedHashes.push(hash); continue; }
     for (const item of itemsByHash.get(hash)) { newResults.push({ ...res, localId: item.localId }); processedCount++; }
   }
   for (const hash of inFlightHashes) {
     const res = inFlightResultsByHash.get(hash);
-    if (!res) continue;
+    if (!res) { unresolvedHashes.push(hash); continue; }
     for (const item of itemsByHash.get(hash)) { newResults.push({ ...res, localId: item.localId }); processedCount++; }
   }
   const skippedForBudget = skippedHashes.reduce((sum, hash) => sum + itemsByHash.get(hash).length, 0);
+  const unresolvedCount = unresolvedHashes.reduce((sum, hash) => sum + itemsByHash.get(hash).length, 0);
 
   return {
     ok: true, status: 200,
@@ -274,6 +296,7 @@ export async function classifyBatchRoute(accountId, items) {
     processedCount,
     cachedCount: cachedResults.length,
     skippedForBudget,
+    unresolvedCount,
     truncatedForBatchSize: truncated,
   };
 }
