@@ -55,6 +55,15 @@ nav button{font-weight:500;font-size:13px;letter-spacing:-.025em}
 .street-video-original-link{display:inline-block;color:var(--blue);font-size:14px;text-decoration:underline;margin-top:6px}
 .street-video-meta{color:#7c8585}
 .street-video-disclaimer{color:#9aa8a6;font-size:12px}
+/* 최소 제휴 준비(2026-09-11 재검토 9차) — 승인된 실제 제휴가 있는
+   도시에서만 나타난다(기본은 hidden). */
+.affiliate-section{background:white;border-radius:18px;padding:14px 18px;margin:0 0 18px;box-shadow:0 3px 14px #354f5010;border:1px solid #eef1ec}
+.affiliate-heading{display:block;color:#9aa8a6;font-size:12px;margin-bottom:8px}
+.affiliate-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid #f0f0ea;text-decoration:none;color:inherit}
+.affiliate-row:first-of-type{border-top:0}
+.affiliate-type{font-size:12px;background:#edf1e8;color:#7e967a;border-radius:12px;padding:3px 9px;flex-shrink:0}
+.affiliate-label{flex:1;font-size:14px;min-width:0}
+.affiliate-tag{color:var(--blue);font-size:11px;flex-shrink:0}
 
 /* ── 기능 통합 추가분 ──────────────────────────────────────────────────
    승인 디자인에는 "사진 없음" 상태가 없었다(샘플은 전부 사진이 있었으므로).

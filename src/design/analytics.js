@@ -21,6 +21,7 @@ const EVENT_SCHEMA = {
   payment_started: { props: ['amount_krw', 'period_days'] },
   payment_result: { props: ['result'] },
   waitlist_signup: { props: ['channel'] },
+  affiliate_click: { props: ['offer_type'] },
 };
 
 function validate(name, props) {

@@ -38,6 +38,7 @@ import { suggestNextTripPlaces } from './routes/next-trip-suggestions.mjs';
 import { usageSummaryForAccount } from './entitlement-usage.mjs';
 import { getVerifiedStatus } from './status.mjs';
 import { weatherRoute } from './routes/weather.mjs';
+import { activeOffersForCity } from './affiliates.mjs';
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -278,6 +279,14 @@ async function handle(req, res) {
     if (req.method === 'GET' && pathname === '/api/weather') {
       const result = await weatherRoute(url.searchParams.get('lat'), url.searchParams.get('lng'), url.searchParams.get('tz'), url.searchParams.get('date'));
       return sendJson(res, result.status, result);
+    }
+
+    // 최소 제휴 준비(2026-09-11 재검토 9차, docs/BUSINESS_DECISIONS.md
+    // 7절) — 로그인 불필요, 이용권/비용 원장과 무관. 승인된 실제 제휴가
+    // 없으면 빈 배열을 돌려줘 화면에서 자연히 숨겨진다.
+    if (req.method === 'GET' && pathname === '/api/affiliates') {
+      const city = url.searchParams.get('city') || '';
+      return sendJson(res, 200, { ok: true, offers: activeOffersForCity(city) });
     }
 
     if (req.method === 'POST' && pathname === '/api/waitlist') {

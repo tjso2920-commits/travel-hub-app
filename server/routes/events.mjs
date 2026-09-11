@@ -26,6 +26,7 @@ const EVENT_SCHEMA = {
   payment_started: { props: ['amount_krw', 'period_days'] },
   payment_result: { props: ['result'] }, // 'success'|'failure'|'cancelled'
   waitlist_signup: { props: ['channel'] }, // 소개 페이지 사전 신청 완료(로드맵 ⑪)
+  affiliate_click: { props: ['offer_type'] }, // 2026-09-11 재검토(9차) — 클릭 사실만 기록(예약/매출 아님), 도시명 등 위치 정보는 안 실음
 };
 
 const ALLOWED_CHANNELS = new Set(['threads', 'instagram', 'direct', 'referral', 'unknown']);
@@ -33,6 +34,7 @@ const ALLOWED_SOURCE_KINDS = new Set(['zip', 'csv', 'json']);
 const ALLOWED_RESULTS = new Set(['success', 'failure']);
 const ALLOWED_PAYMENT_RESULTS = new Set(['success', 'failure', 'cancelled']);
 const ALLOWED_TRIGGERS = new Set(['second_course', 'new_day', 'manual', 'time_budget_exceeded']);
+const ALLOWED_OFFER_TYPES = new Set(['esim', 'transit', 'ticket', 'lodging']);
 
 function validateProps(name, props) {
   const schema = EVENT_SCHEMA[name];
@@ -58,6 +60,7 @@ function validateProps(name, props) {
   }
   if (name === 'payment_result' && !ALLOWED_PAYMENT_RESULTS.has(p.result)) return { ok: false, reason: 'invalid-result' };
   if (name === 'waitlist_signup' && !ALLOWED_CHANNELS.has(p.channel)) return { ok: false, reason: 'invalid-channel' };
+  if (name === 'affiliate_click' && !ALLOWED_OFFER_TYPES.has(p.offer_type)) return { ok: false, reason: 'invalid-offer-type' };
 
   // 값 하나하나가 너무 긴 자유 텍스트가 아닌지도 본다(숫자·불리언·허용된
   // 열거값 외에는 전부 여기서 걸린다 — 위 개별 검사를 통과한 값들은
