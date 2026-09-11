@@ -14,6 +14,17 @@
  * 도착해 finalize되면, 예전 코드는 이미 스윕으로 정리된 old를 또
  * 되돌리려 해 fresh의 정당한 사용량까지 0으로 만들었다.
  *
+ * 2026-09-11 재검토(10차) 갱신 — 재현 2의 뒷부분(old의 늦은 "성공")
+ * 시나리오도 ChatGPT가 다시 재현해 지적했다: 스윕된 예약의 늦은
+ * 성공이 진짜 새로운 장소(actual-old-late)로 밝혀지면, 예전 코드는
+ * "이미 회수된 예약이니 그냥 무시"로 처리해 그 신규 확인을 완전히
+ * 공짜로 흘려보냈다(entitlement_place_confirmed만 늘고 사용량은
+ * 그대로). 지금은 예약이 사라졌어도 그 결과가 진짜 신규 장소면 지금
+ * 이 자리에서 한도를 다시 확인하고 정식으로 차감한다 — "이미 처리된
+ * 결과의 중복 재전송"과 "예약만 사라졌을 뿐 실제로는 아직 한 번도
+ * 청구 안 된 진짜 새 확인"을 구분해야 하기 때문이다(server/
+ * entitlement-usage.mjs의 commitNewLookupUsageCharge 참고).
+ *
  * 실행: node server/test/place-lookup-reservation-idempotency.test.mjs
  */
 process.env.DB_PATH = ':memory:';
@@ -85,11 +96,19 @@ function backdateAllReservations(accountId, secondsAgo) {
   t('2) 스윕된 예약의 늦은 실패 결과도 finalize 자체는 안전하게 처리됨', finOld && finOld.ok === true);
   t('2) old의 늦은 실패가 fresh의 정당한 사용량을 잘못 건드리지 않음(여전히 1 — 재현 확인)', usageSummaryForAccount(acc).placeLookups.used === 1);
 
-  // old의 외부 호출이 뒤늦게 "성공"으로 돌아온 경우도 같은 원리로
-  // 안전해야 한다(이미 회수된 예약이 공짜로 재확정되면 안 됨).
+  // old의 외부 호출이 뒤늦게 "성공"으로 돌아왔고, 그 결과가 실제로
+  // 아직 아무도 확인한 적 없는 진짜 새 장소(actual-old-late)라면 —
+  // 2026-09-11 재검토(10차) ChatGPT 재현 지적 반영: 예전엔 이 경우를
+  // "이미 회수된 예약이니 무조건 무시"로 처리해 실제로 발생한 유료
+  // 외부 호출·진짜 신규 확인 결과를 공짜로 흘려보냈다(entitlement_
+  // place_confirmed만 늘고 사용량은 그대로 — 정확히 ChatGPT가 재현한
+  // 그 결함이다). 예약이 이미 사라졌다는 사실은 "이 조회를 무시해도
+  // 된다"는 뜻이 아니라 "reserve 시점에 잡아 둔 +1을 더는 믿을 수
+  // 없으니 지금 다시 한도를 확인하고 정식으로 차감하라"는 뜻이어야
+  // 한다 — 그래야 진짜 새 장소가 계속 공짜로 새는 걸 막는다.
   const finOldSuccess = finalizePlaceLookupResult(acc, 'slot-old', oldReservation, { ok: true, placeId: 'actual-old-late' });
-  t('2) 스윕된 예약의 늦은 성공 결과도 새로 과금하지 않고 안전하게 무시됨', finOldSuccess && finOldSuccess.ok === true);
-  t('2) 사용량은 여전히 1(스윕된 예약이 뒤늦게 공짜로 재확정되지 않음)', usageSummaryForAccount(acc).placeLookups.used === 1);
+  t('2) 스윕된 예약이라도 실제로 새로 확인된 장소는 정상적으로 확정됨', finOldSuccess && finOldSuccess.ok === true);
+  t('2) 사용량이 정확히 2로 늘어남(fresh 1건 + 뒤늦게 확정된 진짜 신규 1건 — 공짜 확정 없음)', usageSummaryForAccount(acc).placeLookups.used === 2);
 }
 
 // =====================================================================

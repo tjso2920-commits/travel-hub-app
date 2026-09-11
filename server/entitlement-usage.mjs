@@ -328,12 +328,51 @@ export function finalizePlaceLookupResult(accountId, localPlaceId, reservation, 
   return finalizeAsNewAttempt(accountId, localPlaceId, period, fp, realPlaceId, reservation);
 }
 
+/* 2026-09-11 재검토(10차) — ChatGPT가 실제로 재현한 결함: 예전엔 이
+   함수가 "reservation.provisional이 true면 사용량은 이미 reserve
+   시점에 +1돼 있다"는 사실을 그냥 믿고, 실제로 그 예약 행이 *지금도*
+   DB에 남아 있는지(=그 +1이 아직 유효한지)는 확인하지 않았다. 그런데
+   sweepStaleReservations가 만료된 예약을 회수하면서 usage -1을 이미
+   실행해 버렸다면, 그 이후에 뒤늦게 도착한 "성공" finalize는
+   entitlement_place_confirmed에는 새로 기록되면서도 usage는 전혀
+   다시 늘리지 않아 — 결과적으로 그 조회가 완전히 공짜로 확정됐다
+   (재현: 오래된 예약을 스윕으로 회수한 뒤, 그 예약을 들고 있던 원래
+   호출이 뒤늦게 "성공"으로 finalize되면 entitlement_place_confirmed만
+   늘고 place_lookups_used는 그대로였다).
+
+   고친 원칙: "이 조회의 사용량이 이미 계산에 반영돼 있다"는 사실은
+   추측(provisional 플래그)이 아니라 **그 예약 행을 실제로 소비할 수
+   있었는지**로만 판단한다. 소비에 성공했으면(행이 아직 있었으면)
+   reserve 시점의 +1이 그대로 유효하니 다시 안 늘리고, 소비에
+   실패했으면(이미 스윕됐거나 다른 finalize가 먼저 처리했으면) 그
+   +1은 더 이상 존재하지 않는 것으로 보고 지금 이 자리에서 한도를 다시
+   확인한 뒤에만 새로 늘린다. */
+function commitNewLookupUsageCharge(db, accountId, localPlaceId, period, reservation) {
+  if (reservation.provisional) {
+    const stillPending = consumeReservationRow(db, accountId, period, localPlaceId, reservation.reservationId);
+    if (stillPending) return { ok: true }; // reserve 시점의 +1이 아직 유효했다 — 그대로 확정, 추가 증분 없음.
+    // 예약이 이미 사라졌다(스윕 또는 다른 finalize가 먼저 소비) — reserve
+    // 시점의 +1은 더 이상 유효하지 않다. 아래에서 처음부터 다시 확인한다.
+  }
+  const row = usageRow(db, accountId, period.periodId);
+  const used = row ? row.place_lookups_used : 0;
+  if (used >= period.placeLookupLimit) {
+    return { ok: false, reason: 'entitlement-place-lookup-limit-reached', period, used, limit: period.placeLookupLimit };
+  }
+  db.prepare(`
+    INSERT INTO entitlement_usage (account_id, period_id, place_lookups_used, course_successes_used, updated_at)
+    VALUES (?, ?, 1, 0, ?)
+    ON CONFLICT(account_id, period_id) DO UPDATE SET place_lookups_used = place_lookups_used + 1, updated_at = excluded.updated_at
+  `).run(accountId, period.periodId, nowIso());
+  return { ok: true };
+}
+
 /* "신규일 수 있다"고 보고 예약됐던 시도(또는 빠른 경로였지만 실제
-   결과가 달라져 신규로 재판정된 시도)의 최종 판정. reservation.provisional
-   이 true면 사용량이 이미 +1된 상태(reserve 시점에 잠정 확정)이므로
-   재사용으로 밝혀지면 되돌리기만 하면 되고, false면(reserve가 한도
-   초과라 아직 안 늘렸거나, 빠른 경로였던 경우) 지금 이 시점에 다시
-   한도를 확인해야 한다. */
+   결과가 달라져 신규로 재판정된 시도)의 최종 판정. 사용량을 실제로
+   늘려야 하는지는 이제 항상 commitNewLookupUsageCharge가 그 순간의
+   예약 행 존재 여부를 직접 확인해서 결정한다(reservation.provisional
+   플래그는 "확인해 볼 가치가 있는지"의 힌트일 뿐, 그 자체로 "이미
+   처리됨"의 증거로 쓰지 않는다). */
 function finalizeAsNewAttempt(accountId, localPlaceId, period, fp, realPlaceId, reservation) {
   const db = openDb();
   db.exec('BEGIN IMMEDIATE');
@@ -354,45 +393,27 @@ function finalizeAsNewAttempt(accountId, localPlaceId, period, fp, realPlaceId, 
         db.exec('COMMIT');
         return { ok: true };
       }
-      // 처음 보는 실제 장소 — 진짜 신규다.
-      if (!reservation.provisional) {
-        // reserve 시점엔 아직 사용량을 안 늘렸다(한도 초과 상태로
-        // 시도했거나 빠른 경로였다가 재판정됨) — 지금 다시 한도를
-        // 확인해서 여유가 있을 때만 새로 늘린다. 없으면 외부 호출은
-        // 이미 끝났어도 고객에게는 실패(한도 초과)로 응답해야 한다.
-        const row = usageRow(db, accountId, period.periodId);
-        const used = row ? row.place_lookups_used : 0;
-        if (used >= period.placeLookupLimit) {
-          db.exec('ROLLBACK');
-          return { ok: false, reason: 'entitlement-place-lookup-limit-reached', period, used, limit: period.placeLookupLimit };
-        }
-        db.prepare(`
-          INSERT INTO entitlement_usage (account_id, period_id, place_lookups_used, course_successes_used, updated_at)
-          VALUES (?, ?, 1, 0, ?)
-          ON CONFLICT(account_id, period_id) DO UPDATE SET place_lookups_used = place_lookups_used + 1, updated_at = excluded.updated_at
-        `).run(accountId, period.periodId, nowIso());
+      // 처음 보는 실제 장소 — 진짜 신규다. 사용량이 실제로 이미
+      // 반영돼 있는지(예약 행이 아직 살아있는지)를 지금 이 자리에서
+      // 확인한 뒤에만 확정한다(스윕된 예약의 뒤늦은 성공을 공짜로
+      // 확정해 주지 않기 위해).
+      const charge = commitNewLookupUsageCharge(db, accountId, localPlaceId, period, reservation);
+      if (!charge.ok) {
+        db.exec('ROLLBACK');
+        return charge;
       }
       db.prepare('INSERT INTO entitlement_place_confirmed (account_id, real_place_id, first_period_id, confirmed_at) VALUES (?, ?, ?, ?)').run(accountId, realPlaceId, period.periodId, nowIso());
-    } else if (!reservation.provisional) {
+    } else {
       // realPlaceId가 없는 공급자 결과(강한 식별자를 못 줌)는 안전한
       // 쪽으로: 검증 못 할 재사용을 무료로 허용하는 것보다, 한도가
-      // 있으면 신규로 확정한다.
-      const row = usageRow(db, accountId, period.periodId);
-      const used = row ? row.place_lookups_used : 0;
-      if (used >= period.placeLookupLimit) {
+      // 있으면 신규로 확정한다. 여기도 같은 원칙 — 예약 행이 아직
+      // 살아있을 때만 "이미 반영됨"으로 본다.
+      const charge = commitNewLookupUsageCharge(db, accountId, localPlaceId, period, reservation);
+      if (!charge.ok) {
         db.exec('ROLLBACK');
-        return { ok: false, reason: 'entitlement-place-lookup-limit-reached', period, used, limit: period.placeLookupLimit };
+        return charge;
       }
-      db.prepare(`
-        INSERT INTO entitlement_usage (account_id, period_id, place_lookups_used, course_successes_used, updated_at)
-        VALUES (?, ?, 1, 0, ?)
-        ON CONFLICT(account_id, period_id) DO UPDATE SET place_lookups_used = place_lookups_used + 1, updated_at = excluded.updated_at
-      `).run(accountId, period.periodId, nowIso());
     }
-    // 신규로 확정됐다(과금 여부와 무관하게 이 판정은 끝났다) — 예약을
-    // "소비됨"으로 지운다. 사용량은 이미 위에서 정확히 처리했으므로
-    // 여기서는 절대 다시 건드리지 않는다(그냥 진행 중 표시만 지움).
-    consumeReservationRow(db, accountId, period, localPlaceId, reservation.reservationId);
     if (fp !== undefined) upsertLocalLinkTx(db, accountId, localPlaceId, realPlaceId, fp);
     db.exec('COMMIT');
     return { ok: true };
