@@ -10,13 +10,14 @@
  * 넓히면 된다 — 지금은 "새 유료 계약이나 실과금은 하지 마"라는 지시를
  * 지키기 위해 일부러 미구현 상태로 둔다.
  *
- * 입력 최소화 원칙(10차 6절): 이 어댑터가 받는 items는 오직
- * {localId, name, note, address}뿐이다 — 전체 CSV, 연락처, 정밀 GPS,
- * 계정 식별 정보는 절대 포함하지 않는다(호출부인 routes/places.mjs가
- * 이 필드만 추려서 넘긴다). 입력 텍스트는 어디까지나 "분류 대상
- * 데이터"로만 취급되고, 그 안에 명령문처럼 보이는 문구가 있어도
- * 실행하지 않는다 — 모의 어댑터는애초에 자유 텍스트를 해석하지 않고
- * 결정론적 해시로만 판단하므로 이 성질을 구조적으로 만족한다.
+ * 입력 최소화 원칙(10차 6절, 11차 4절 강화): 이 어댑터가 받는 items는
+ * 오직 {localId, name, address, confirmedTypes}뿐이다 — 개인 메모(note)
+ * 는 11차부터 기본 입력에서 완전히 빠졌고, 전화번호·정밀 GPS·계정
+ * 식별 정보도 절대 포함하지 않는다(호출부인 routes/ai-classify.mjs의
+ * sanitizeItem이 이 필드만 추려서 넘긴다). 입력 텍스트는 어디까지나
+ * "분류 대상 데이터"로만 취급되고, 그 안에 명령문처럼 보이는 문구가
+ * 있어도 실행하지 않는다 — 모의 어댑터는 애초에 자유 텍스트를 해석하지
+ * 않고 결정론적 해시로만 판단하므로 이 성질을 구조적으로 만족한다.
  *
  * 출력 스키마(모든 항목에 대해 검증):
  *   { localId, category: <TOP_CATEGORIES 중 하나> | null,
@@ -52,7 +53,7 @@ function hashString(s) {
    돌려줘 "근거 부족은 미분류로 정직하게 남긴다" 경로도 테스트할 수
    있게 한다. */
 function mockClassifyOne(item) {
-  const text = `${item.name || ''} ${item.note || ''} ${item.address || ''}`;
+  const text = `${item.name || ''} ${(item.confirmedTypes || []).join(' ')} ${item.address || ''}`;
   const h = hashString(text);
   if (!text.trim() || h % 5 === 0) {
     return { localId: item.localId, category: null, tags: [], evidence: 'insufficient-signal', confidence: 'low', unresolved: true };

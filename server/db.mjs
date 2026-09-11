@@ -200,6 +200,22 @@ function migrate(d) {
       created_at TEXT NOT NULL
     );
 
+    /* ai_classify_cache: 2026-09-11 재검토(11차) 4절 — "입력 해시+분류
+       버전+계정별 결과 저장으로 재가져오기/재접속/다른기기에서도 중복
+       호출 방지". 계정별로 나눈 이유는 같은 이름의 장소도 계정마다
+       주소·메모가 달라 분류가 달라질 수 있어서다(lookup_cache/
+       weather_cache처럼 계정 무관 전역 캐시로 묶으면 안 된다). 분류
+       버전이 바뀌면(classificationVersion) input_hash가 같아도 새로
+       분류해야 하므로 버전도 키의 일부다. */
+    CREATE TABLE IF NOT EXISTS ai_classify_cache (
+      account_id TEXT NOT NULL,
+      input_hash TEXT NOT NULL,
+      classification_version INTEGER NOT NULL,
+      result TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (account_id, input_hash, classification_version)
+    );
+
     /* login_attempts: 코드 검증 실패 횟수를 세어 일정 횟수 넘으면 잠깐
        잠근다(무한 추측 방지 — rate_counters의 "요청 쿨다운"과는 다른
        문제라 별도 표로 둔다). */

@@ -315,11 +315,12 @@ async function handle(req, res) {
       const result = await lookupPlacesBatchRoute(accountId, body.items);
       return sendJson(res, result.status, result);
     }
-    // 2026-09-11 재검토(10차) 5·6절 — AI 보조 분류(기본 비활성). 규칙
-    // (클라이언트)으로 해결 안 된 항목만, 최소 필드(name/note/address)만
-    // 담아 보낸다. 비활성/예산부족/일일한도 등은 200으로 사유를 그대로
-    // 돌려주고(서버 오류 아님), 클라이언트는 그 사유를 보고 규칙 결과·
-    // 수동 편집으로 계속 쓴다.
+    // 2026-09-11 재검토(10차 5·6절, 11차 4절) — AI 보조 분류(기본
+    // 비활성). 규칙(클라이언트)으로 해결 안 된, 아직 미분류인 항목만
+    // 최소 필드(name/address/confirmedTypes)만 담아 보낸다 — 개인
+    // 메모(note)는 11차부터 기본 입력에서 아예 뺐다. 비활성/예산부족/
+    // 일일한도 등은 200으로 사유를 그대로 돌려주고(서버 오류 아님),
+    // 클라이언트는 그 사유를 보고 규칙 결과·수동 편집으로 계속 쓴다.
     if (req.method === 'POST' && pathname === '/api/places/classify-batch') {
       const accountId = requireAccount(req, res); if (!accountId) return;
       const body = JSON.parse((await readBody(req)) || '{}');

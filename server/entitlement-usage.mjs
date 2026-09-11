@@ -481,13 +481,23 @@ export function periodCostStatus(accountId, period) {
    기간에 **아직 안 쓴** 핵심 제공량(남은 위치확인·코스 생성)이 실제로
    원가로 얼마나 되는지 먼저 계산해 그만큼을 "예약된 몫"으로 떼어 둔다
    — AI는 그 예약분을 절대 건드리지 못하고, 남는 여유(headroom)만 쓸
-   수 있다. 코스 생성 원가는 세그먼트 수·경유지 수에 따라 실제로는
-   변하지만(routes-compute vs highvolume), 여기서는 "최소 원가로도
-   반드시 확보돼야 한다"는 보수적 하한선을 위해 더 싼 쪽(routes-compute)
-   단가로 예약한다 — 실제 코스 생성이 더 비싼 등급으로 청구되면 그
-   차액은 이미 그 코스 생성 자체의 chargeCostBatch가 같은 상한 안에서
-   확인하므로(이 함수는 "AI가 미리 갉아먹지 못하게" 막는 역할만 한다),
-   과소 예약이 core 제공량을 막는 결과로 이어지지 않는다. */
+   수 있다.
+   2026-09-11 재검토(11차) — ChatGPT가 재현한 결함: 코스 생성 원가는
+   경유지 수에 따라 세그먼트 수·SKU 등급(routes-compute vs highvolume)
+   이 달라지는데, 예전엔 "남은 코스 횟수 × 가장 싼 단가 1세그먼트분"
+   으로만 예약했다 — 실제 코스가 그보다 비싸게 청구되면(경유지가
+   많아 highvolume 등급이 되거나 세그먼트가 2개 이상 필요하면) 예약이
+   과소평가된 채로 AI가 먼저 그 차액만큼의 여유를 갉아먹을 수 있었다.
+   "나중에 진짜 코스 생성이 상한에서 막히는 것"은 제공량 보장이
+   아니므로(지시 원문), 더 비싼 등급(highvolume) 단가로, 그리고
+   config.aiClassify.reservedRouteSegmentsPerCourse(기본 1)개의
+   세그먼트분을 예약한다 — 이 서비스가 실제로 지원하는 한 번의
+   API 호출(routesMaxIntermediatesPerCall=25경유지, 약 27곳)까지
+   들어가는 "전형적인 하루 코스"까지는 안전하게 커버하지만, 그보다
+   훨씬 큰(다중 세그먼트가 필요한) 코스까지는 여전히 커버하지 못한다
+   — 이 한계는 그대로 인정하고 BUSINESS_DECISIONS.md에 숫자와 함께
+   남긴다(무제한 경유지까지 예약하면 헤드룸이 사실상 항상 0이 돼
+   AI 기능 자체가 무의미해진다). */
 export function aiClassifyBudgetHeadroomMicros(accountId, period) {
   const db = openDb();
   const row = usageRow(db, accountId, period.periodId);
@@ -495,8 +505,9 @@ export function aiClassifyBudgetHeadroomMicros(accountId, period) {
   const usedCourses = row ? row.course_successes_used : 0;
   const remainingLookups = Math.max(0, period.placeLookupLimit - usedLookups);
   const remainingCourses = Math.max(0, period.courseLimit - usedCourses);
+  const perCourseReserveMicros = config.costEstimate.routesComputeHighVolumeMicros * config.aiClassify.reservedRouteSegmentsPerCourse;
   const reservedForCoreMicros = remainingLookups * config.costEstimate.placesTextSearchMicros
-    + remainingCourses * config.costEstimate.routesComputeMicros;
+    + remainingCourses * perCourseReserveMicros;
   const spentMicros = periodCostMicros(accountId, period.periodId);
   const capMicros = period.costCapMicros;
   const headroomMicros = Math.max(0, capMicros - spentMicros - reservedForCoreMicros);

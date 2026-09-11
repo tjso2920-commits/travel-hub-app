@@ -616,6 +616,55 @@ function daSyncPushSafe() {
   const token = A.sessionToken(foodMap);
   if (token) daSyncPush(token).catch(() => {});
 }
+
+/* 2026-09-11 재검토(11차) 4절 — AI 보조 분류 클라이언트 백그라운드
+   큐. "가져오기 직후나 변경 후에만, 새로/아직 미분류인 항목만" 돌고,
+   화면은 그동안 그대로 쓸 수 있어야 한다(await 안 하고 호출부에서
+   그냥 fire-and-forget으로 부른다). 서버가 비활성/예산부족/오류를
+   돌려줘도 조용히 규칙 기반 결과·수동 편집 상태를 그대로 둔다 — 이
+   함수가 실패해도 화면 동작에는 전혀 영향이 없다. */
+let _aiClassifyInFlight = false;
+async function daRunAiClassifyQueueOnce() {
+  if (_aiClassifyInFlight) return;
+  const token = A.sessionToken(foodMap);
+  if (!token) return; // 계정별 서버 캐시·비용 통제 전제 — 로그인 안 했으면 시도 안 함.
+  const candidates = (foodMap.places || []).filter((p) => A.needsAiClassify(p));
+  if (!candidates.length) return;
+  const batch = candidates.slice(0, 20); // 서버 배치 상한을 넘겨 보내도 서버가 알아서 자르지만, 굳이 큰 요청을 만들지 않는다.
+  const epochAtStart = sessionEpoch;
+  const snapshot = batch.map((p) => ({ p, localId: p.id, fingerprint: A.aiClassifyInputFingerprint(p) }));
+  const items = snapshot.map((s) => ({ localId: s.localId, name: s.p.name || '', address: s.p.address || '', confirmedTypes: s.p.confirmedTypes || [] }));
+  _aiClassifyInFlight = true;
+  try {
+    const r = await A.api('/api/places/classify-batch', { method: 'POST', token, body: { items } });
+    // 요청이 도는 사이 로그아웃/계정 전환이 있었으면 이 응답은 다른
+    // 계정 상태에 적용될 위험이 있으므로 통째로 버린다.
+    if (sessionEpoch !== epochAtStart) return;
+    if (!r.ok || !r.json || r.json.ok === false) return; // 비활성/한도/오류 — 규칙 기반·수동 편집을 그대로 둔다(조용히 실패).
+    const results = Array.isArray(r.json.results) ? r.json.results : [];
+    let changed = false;
+    for (const res of results) {
+      const snap = snapshot.find((s) => s.localId === res.localId);
+      if (!snap) continue;
+      // 요청을 보낸 뒤 사용자가 이 장소를 고치거나 지웠으면(또는 그
+      // 사이 이미 직접 확정했으면) 이 결과를 적용하지 않는다 —
+      // "편집/삭제/계정전환 중이던 응답은 반영 금지" 요구사항.
+      const stillExists = (foodMap.places || []).includes(snap.p);
+      const stillSame = stillExists && A.aiClassifyInputFingerprint(snap.p) === snap.fingerprint;
+      if (!stillSame) continue;
+      if (A.applyAiClassifyResult(snap.p, res)) changed = true;
+    }
+    if (changed) {
+      A.saveFoodMap(foodMap);
+      if (!usingSample) render();
+    }
+  } catch (e) {
+    // 네트워크 오류 등 — 조용히 실패. 규칙 기반 결과·수동 편집은 계속 쓸 수 있다.
+  } finally {
+    _aiClassifyInFlight = false;
+  }
+}
+function daRunAiClassifyQueueSafe() { daRunAiClassifyQueueOnce().catch(() => {}); }
 async function daSyncPullAndMerge(token) {
   const epochAtStart = sessionEpoch;
   const [placesRes, coursesRes] = await Promise.all([
@@ -641,6 +690,9 @@ async function daSyncPullAndMerge(token) {
   // 병합 결과를 다시 서버에 올려 양쪽을 같은 상태로 맞춘다(예: 이
   // 기기의 손님 데이터가 이제 서버에도 반영돼야 다른 기기에서도 보인다).
   await daSyncPush(token);
+  // 다른 기기에서 새로 들어온(아직 이 기기에서 분류를 시도한 적
+  // 없는) 미분류 장소도 로그인 직후에 한 번 훑는다.
+  daRunAiClassifyQueueSafe();
 }
 
 /* 로그아웃 — "로그아웃/계정 전환 때 다른 계정의 로컬 데이터가 섞이지
@@ -1159,6 +1211,7 @@ function finishCityAssign(ids, cityName) {
   }
   selected.clear(); selecting = false;
   daSyncPushSafe();
+  daRunAiClassifyQueueSafe();
   refreshFromStorage();
   city = cityName;
   updateCity();

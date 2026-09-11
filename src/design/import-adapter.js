@@ -656,6 +656,39 @@ function daApplyConfirmedTypes(p, types) {
     p.tags = Array.from(suggested);
   }
 }
+
+/* 2026-09-11 재검토(11차) 4절 — AI 보조 분류 클라이언트 연결. 규칙
+   (daInfer/daApplyConfirmedTypes)으로도 못 정한("기타"로 남고 사용자가
+   직접 고르지도 않은) 곳만 골라 서버 /api/places/classify-batch에
+   보낸다 — 이미 규칙으로 해결된 곳은 애초에 이 목록에 안 들어간다.
+   입력은 이름·주소·이미 확보한 confirmedTypes뿐이다(개인 메모는
+   서버로 아예 안 보낸다 — sanitizeItem이 note를 안 받으므로 여기서도
+   굳이 담지 않는다). */
+function daNeedsAiClassify(p) {
+  return !!p && !p.catConfirmed && (!p.cat || p.cat === '기타');
+}
+/* 요청 시점의 입력 지문 — 응답이 돌아왔을 때 그 사이 사용자가 이름을
+   고치거나 유형을 직접 확정했는지(더 이상 이 지문과 안 맞는지) 확인하는
+   용도. 서버의 input_hash와 같은 재료(name/address/confirmedTypes)를
+   쓰지만, 여긴 그냥 지금 값과 비교만 하면 되므로 해시가 아니라 JSON
+   문자열 그대로 쓴다(클라 쪽에서 sha256을 새로 끌어올 필요가 없다). */
+function daAiClassifyInputFingerprint(p) {
+  return JSON.stringify({ name: p && p.name || '', address: p && p.address || '', confirmedTypes: ((p && p.confirmedTypes) || []).slice().sort() });
+}
+/* AI(모의든 실제든) 결과를 place 하나에 반영한다. 그 사이 사용자가
+   직접 확정했으면(catConfirmed=true) 절대 덮지 않는다 — "사용자
+   확정값이 최우선"이라는 daApplyConfirmedTypes와 같은 원칙. 태그는
+   여기서 자동으로 새로 만들거나 붙이지 않는다(AI가 제안한 이름이
+   개인 선호 태그와 우연히 겹쳐 다른 곳에 잘못 번지는 위험을 아예
+   구조적으로 차단 — 상위분류만 자동 적용하고, 태그는 사람이 태그
+   편집 화면에서 직접 다룬다). 근거 부족(unresolved)이면 아무것도
+   바꾸지 않고 "여전히 미분류"로 정직하게 남긴다. */
+function daApplyAiClassifyResult(p, result) {
+  if (!p || !result || p.catConfirmed) return false;
+  if (result.unresolved || !result.category) return false;
+  p.cat = result.category;
+  return true;
+}
 /* 태그 CRUD — 사용자가 새 태그를 만들거나 이름을 바꾸거나 지울 수
    있어야 한다는 지시(10차 4절) 반영. place.tags는 계속 label 문자열을
    저장하므로, 이름 수정은 레지스트리의 label만 바꾸는 게 아니라 이미
@@ -1358,6 +1391,9 @@ window.DesignAdapter = {
     _deletedTagIds = fm.deletedTagIds;
   },
   applyConfirmedTypes: daApplyConfirmedTypes,
+  needsAiClassify: daNeedsAiClassify,
+  aiClassifyInputFingerprint: daAiClassifyInputFingerprint,
+  applyAiClassifyResult: daApplyAiClassifyResult,
   t: daT,
   setLocale: daSetLocale,
   get locale() { return daLocale(); },
