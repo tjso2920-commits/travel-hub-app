@@ -23,7 +23,7 @@ import { openDb } from './db.mjs';
 import { requestLoginCode, verifyLoginCode, accountForToken, logout } from './auth.mjs';
 import { getCourse, saveCourse } from './routes/course.mjs';
 import { trialStatus, consumeTrial } from './routes/trial.mjs';
-import { checkEntitlement } from './routes/entitlement.mjs';
+import { checkEntitlement, checkTestAccess, setTestAccessByEmail } from './routes/entitlement.mjs';
 import { handleWebhook } from './routes/webhook.mjs';
 import { handleTossWebhook } from './routes/webhook-toss.mjs';
 import { lookupPlaceRoute, lookupPlacesBatchRoute } from './routes/places.mjs';
@@ -270,6 +270,21 @@ async function handle(req, res) {
     if (req.method === 'GET' && pathname === '/api/account/usage') {
       const accountId = requireAccount(req, res); if (!accountId) return;
       return sendJson(res, 200, usageSummaryForAccount(accountId));
+    }
+    // 2026-09-11 재검토(10차) 7절 — "?testmode=1만으로 개발자 권한이
+    // 생기는 구조는 운영용 접근 제한이 아니다." 클라이언트가 URL
+    // 파라미터로 자기 신고하는 대신, 로그인된 계정이 서버에 실제로
+    // 승인됐는지 물어본다. 관리자가 /api/admin/test-access로 미리
+    // 켜 둔 계정만 true를 받는다.
+    if (req.method === 'GET' && pathname === '/api/account/test-access') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      return sendJson(res, 200, checkTestAccess(accountId));
+    }
+    if (req.method === 'POST' && pathname === '/api/admin/test-access') {
+      if (!requireAdmin(req, res)) return;
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const result = setTestAccessByEmail(body.email, !!body.enabled);
+      return sendJson(res, result.status, result);
     }
 
     // 장소 조회 — 인증 필수 + 계정별/서비스 전체 한도(2026-09-10).

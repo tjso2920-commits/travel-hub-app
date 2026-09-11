@@ -437,6 +437,21 @@ function migrate(d) {
   `);
 
   migrateLegacyCoursesIntoTrips(d);
+  addAccountTestAccessColumn(d);
+}
+
+/* 2026-09-11 재검토(10차) 7절 — "?testmode=1만으로 개발자 권한이 생기는
+   구조는 운영용 접근 제한이 아니다. 스테이징 또는 서버가 허용한 테스트
+   계정에 제한해." accounts 테이블에 test_access 컬럼을 추가해, 서버가
+   실제로 이 계정을 테스트 대상으로 승인했는지(관리자만 켤 수 있음,
+   /api/admin/test-access)를 기억한다. CREATE TABLE IF NOT EXISTS는 이미
+   존재하는 배포 DB에는 새 컬럼을 넣지 못하므로, PRAGMA로 컬럼 존재를
+   확인한 뒤 없을 때만 ALTER TABLE로 추가한다(중복 실행해도 안전). */
+function addAccountTestAccessColumn(d) {
+  const cols = d.prepare("PRAGMA table_info(accounts)").all();
+  if (!cols.some((c) => c.name === 'test_access')) {
+    d.exec('ALTER TABLE accounts ADD COLUMN test_access INTEGER NOT NULL DEFAULT 0');
+  }
 }
 
 /* 2026-09-10 재검토(5차) — "기존 city+date 코스 데이터와 단일 일정

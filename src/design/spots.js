@@ -26,12 +26,39 @@ let spots = built.spots;
 let cities = built.cities;
 let usingSample = spots.length === 0; // 담아 둔 게 하나도 없으면 처음엔 샘플로 보여준다(이탈 방지)
 if (usingSample) { spots = SAMPLE_SPOTS; cities = SAMPLE_CITIES; }
+// 2026-09-11 재검토(10차) 7절 — 페이지를 새로고침해도(로그인 상태
+// 유지) 이 계정이 서버 승인 테스트 계정인지 다시 확인한다. 백그라운드
+// 호출이라 화면 렌더링을 막지 않는다 — 응답이 오기 전까지는
+// A.testModeAllowed()가 false(보수적 기본값)를 준다.
+if (A.sessionToken(foodMap)) A.refreshTestAccess(A.sessionToken(foodMap));
+
+// 2026-09-11 재검토(10차) 7절 — 이번 세션에서 실제로 사용자가 허용한
+// GPS 좌표(코스 출발지의 "현재 위치에서 출발" 버튼이 채운다). 세션
+// 메모리에만 두고 저장소에 남기지 않는다 — 앱을 다시 열면 다시
+// 물어본다(위치 권한을 앱 진입부터 강요하지 않는다는 원칙과 일관).
+let _myGpsLocation = null;
+/* 거리순 정렬·코스 출발점·(향후) 내 주변 날씨가 전부 같은 기준을
+   쓰도록 하나로 모은 공통 위치 공급 함수. 우선순위: ①서버가 승인한
+   테스트 계정의 테스트 위치(개발자/검증용) ②이번 세션에 실제로 허용
+   받은 GPS ③평균 위치(자동 계산, 사용자가 지정한 값이 아님을 항상
+   "평균 위치"라는 이름으로만 부른다). 좌표를 하나도 못 구하면 null —
+   호출부가 "기준을 못 정함"으로 정직하게 표시한다. */
+function daLocationBasis() {
+  const testLoc = A.testModeAllowed() ? A.getTestLocation() : null;
+  if (testLoc) return { lat: testLoc.lat, lng: testLoc.lng, source: 'test', label: `테스트 위치(${testLoc.label})` };
+  if (_myGpsLocation) return { lat: _myGpsLocation.lat, lng: _myGpsLocation.lng, source: 'gps', label: '내 위치(GPS)' };
+  const avg = A.centroid(spots.filter((p) => p.city === city));
+  if (avg) return { lat: avg.lat, lng: avg.lng, source: 'average', label: '평균 위치' };
+  return null;
+}
 
 let city = cities[0] ? cities[0].name : '';
 let filter = '전체', visitFilter = '전체', selected = new Set(), route = new Set(), selecting = false;
 // 6-1절 — 정렬 방식. 위치 권한 없이도 목록이 그대로 쓰이도록 기본은
 // recent(최근 추가순)다. distance는 좌표 확인된 장소들의 평균 좌표를
-// "지정 위치" 기준으로 쓴다(정렬만을 위한 유료 지오코딩 호출 금지).
+// "평균 위치" 기준으로 쓴다(정렬만을 위한 유료 지오코딩 호출 금지) —
+// 2026-09-11 재검토(10차) 7절: 사용자가 지정한 게 아니므로 "지정 위치"
+// 라고 부르지 않는다.
 let sortMode = 'recent';
 // 6-2절 — 세부 다중 태그 필터(상위분류 filter와 별개, AND 조건으로 겹쳐 씀).
 // 지금 보유한 장소 중 실제 존재하는 태그만 칩으로 보여준다(버튼 과잉 방지).
@@ -543,22 +570,26 @@ function render() {
     && (activeTags.size === 0 || Array.from(activeTags).every((t) => Array.isArray(p.tags) && p.tags.includes(t)))
     && [p.name, p.area, p.category, p.memo].some((v) => String(v || '').toLowerCase().includes(q)));
   // 6-1절 — 정렬은 이미 필터링된 목록 위에서만 적용한다(도시·유형·검색
-  // 조건은 그대로 유지). 거리순 기준점은 기본적으로 지금 도시의 좌표
-  // 확인된 장소들의 평균 좌표("지정 위치") — 위치 권한도 유료 API
-  // 호출도 없다. 6-3절 — 테스트 위치가 켜져 있으면(개발자 전용) 그
-  // 기준점을 대신 쓴다. 실제 GPS가 아니라는 걸 문구에서 항상 밝힌다.
-  const testLocForSort = A.getTestLocation();
-  const cityRefPoint = testLocForSort ? { lat: testLocForSort.lat, lng: testLocForSort.lng } : A.centroid(spots.filter((p) => p.city === city));
+  // 조건은 그대로 유지). 2026-09-11 재검토(10차) 7절 — 거리순·코스
+  // 출발점·내 주변 날씨가 전부 같은 기준을 쓰도록 daLocationBasis()로
+  // 통합했다(우선순위: 승인된 테스트 위치 > 이번 세션에 실제로 허용받은
+  // GPS > 평균 위치). 위치 권한도 유료 API 호출도 강제하지 않는다 —
+  // 평균 위치는 정확히 "평균 위치"라고만 부르고 "지정 위치"라고
+  // 부르지 않는다(사용자가 지정한 값이 아니므로).
+  const basis = daLocationBasis();
+  const cityRefPoint = basis ? { lat: basis.lat, lng: basis.lng } : null;
   list = A.sortSpots(list, { mode: sortMode, query: q, refPoint: cityRefPoint });
   const basisNote = $('#sortBasisNote');
   if (basisNote) {
     if (sortMode === 'distance') {
       basisNote.hidden = false;
-      basisNote.textContent = testLocForSort
-        ? `기준: 테스트 위치(${testLocForSort.label}) · 실제 GPS 아님 · 좌표 없는 곳은 맨 아래`
-        : (cityRefPoint
-          ? '기준: 이 도시에 저장된 곳들의 평균 위치(지정 위치) · 좌표 없는 곳은 맨 아래'
-          : '아직 좌표가 확인된 장소가 없어 거리순 기준을 정할 수 없어요');
+      basisNote.textContent = !basis
+        ? '아직 좌표가 확인된 장소가 없어 거리순 기준을 정할 수 없어요'
+        : basis.source === 'test'
+          ? `기준: ${basis.label} · 실제 GPS 아님 · 좌표 없는 곳은 맨 아래`
+          : basis.source === 'gps'
+            ? '기준: 내 위치(GPS) · 좌표 없는 곳은 맨 아래'
+            : '기준: 이 도시에 저장된 곳들의 평균 위치 · 좌표 없는 곳은 맨 아래';
     } else {
       basisNote.hidden = true;
     }
@@ -1317,6 +1348,11 @@ function showLoginCodeSheet(email, onSuccess) {
        코스)를 계정과 동기화한다(비회원 데이터 보존 + 다른 기기 데이터
        병합). */
     await daSyncPullAndMerge(r.json.token);
+    // 2026-09-11 재검토(10차) 7절 — 이 계정이 서버 승인 테스트 계정인지
+    // 로그인 때마다 다시 물어본다(예전처럼 URL 파라미터로 브라우저에
+    // 영구히 남지 않는다 — 관리자가 나중에 권한을 빼면 다음 로그인부터
+    // 바로 반영된다).
+    A.refreshTestAccess(r.json.token);
     refreshFromStorage();
     updateCity();
     onSuccess();
@@ -1477,11 +1513,25 @@ function buildCourseSheet(opts) {
   });
   const gpsBtn = $('[data-start-gps]');
   if (gpsBtn) gpsBtn.onclick = () => {
+    // 2026-09-11 재검토(10차) 7절 — "한국에서 하카타 테스트 위치를
+    // 선택했으면 코스 출발 좌표도 하카타여야 한다." 예전엔 이 버튼이
+    // 테스트 위치와 무관하게 항상 실제 브라우저 GPS를 불렀다 — 서버
+    // 승인 테스트 계정이 테스트 위치를 켜 둔 경우, 이 버튼도 daLocationBasis
+    // 와 같은 기준(테스트 위치 우선)을 따라야 다른 화면들과 일관된다.
+    const testLoc = A.testModeAllowed() ? A.getTestLocation() : null;
+    if (testLoc) {
+      disableStartButtons();
+      runCourseGeneration({ lat: testLoc.lat, lng: testLoc.lng }, null, dateVal(), opts);
+      return;
+    }
     if (!navigator.geolocation) { alert('이 브라우저는 위치 기능을 지원하지 않아요. 목록에서 출발지를 골라 주세요.'); return; }
     disableStartButtons();
     gpsBtn.textContent = '위치 확인 중…';
     navigator.geolocation.getCurrentPosition(
-      (pos) => runCourseGeneration({ lat: pos.coords.latitude, lng: pos.coords.longitude }, null, dateVal(), opts),
+      (pos) => {
+        _myGpsLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude }; // 거리순 등 다른 화면도 같은 값을 쓸 수 있게 세션에 남긴다.
+        runCourseGeneration(_myGpsLocation, null, dateVal(), opts);
+      },
       () => { alert('현재 위치를 가져오지 못했어요. 목록에서 출발지를 골라 주세요.'); buildCourseSheet(opts); },
       { enableHighAccuracy: true, timeout: 10000 },
     );
@@ -1650,6 +1700,11 @@ async function profile() {
   const token = A.sessionToken(foodMap);
   let usageHTML = '';
   if (token) {
+    // 2026-09-11 재검토(10차) 7절 — 이 화면을 열 때마다 서버의 최신
+    // 테스트 계정 승인 상태를 다시 확인한다(관리자가 방금 권한을
+    // 뺏었어도 즉시 반영되게).
+    await A.refreshTestAccess(token);
+    renderTestLocationBanner(); // 승인이 방금 거둬졌을 수도 있으니 상단 배너도 즉시 최신 상태로 맞춘다.
     const r = await A.api('/api/account/usage', { token });
     if (r.ok && r.json) {
       const u = r.json;
@@ -1660,14 +1715,18 @@ async function profile() {
         `남은 코스 생성: ${u.courseGenerations.remaining}회(전체 ${u.courseGenerations.limit}회 중)</div>`;
     }
   }
-  // 6-3절 — 테스트 위치(개발자/승인된 테스트 계정 전용). 지금은 별도
-  // 계정 화이트리스트가 없어 ?testmode=1 URL로 한 번 풀어 두는 최소
-  // 구현이다(A.testModeAllowed 주석 참고). 실제 GPS를 흉내 내지 않고,
-  // 앱 로직(거리순 정렬 등)이 참고하는 기준점만 사람이 명시적으로
-  // 바꿔치기한다 — 이걸로 실제 현지 GPS·로밍을 검증했다고 주장 못 함.
+  // 2026-09-11 재검토(10차) 7절 — 테스트 위치(서버가 승인한 테스트
+  // 계정 전용). 예전엔 ?testmode=1 URL 하나로 이 브라우저에 영구히
+  // 풀렸다(운영용 접근 제한이 아니라는 지적) — 이제는 A.testModeAllowed()
+  // 가 로그인마다 서버에 실제로 물어본 결과만 반영한다(위
+  // daRefreshTestAccess 참고, 관리자만 /api/admin/test-access로 켤 수
+  // 있음). 실제 GPS를 흉내 내지 않고, 앱 로직(거리순 정렬·코스
+  // 출발점 등 daLocationBasis 사용처 전부)이 참고하는 기준점만 사람이
+  // 명시적으로 바꿔치기한다 — 이걸로 실제 현지 GPS·로밍을 검증했다고
+  // 주장 못 함.
   const testLoc = A.testModeAllowed() ? A.getTestLocation() : null;
   const testLocationHTML = A.testModeAllowed() ?
-    `<div class="inline-note"><b>테스트 위치(개발자 전용)</b><br>실제 GPS를 흉내 내지 않습니다 — 거리순 정렬 등 앱 로직이 참고하는 기준점만 바뀝니다.<br>지금: ${testLoc ? A.esc(testLoc.label) : '사용 안 함(실제 저장 데이터 기준)'}</div>` +
+    `<div class="inline-note"><b>테스트 위치(서버 승인 테스트 계정 전용)</b><br>실제 GPS를 흉내 내지 않습니다 — 거리순 정렬·코스 출발점 등 앱 로직이 참고하는 기준점만 바뀝니다.<br>지금: ${testLoc ? A.esc(testLoc.label) : '사용 안 함(실제 저장 데이터 기준)'}</div>` +
     `<div class="city-options">${A.testLocationPresets.map((tp) => `<button class="city-option" data-test-loc-preset="${A.esc(tp.id)}"><span><b>${A.esc(tp.label)}</b></span><span class="city-check">${testLoc && testLoc.label === tp.label ? '✓' : '›'}</span></button>`).join('')}</div>` +
     `<label class="xsmall" style="display:block;margin:10px 0 6px">직접 좌표 입력<input class="xinput" id="testLocLat" placeholder="위도(예: 33.5904)" style="margin:6px 0;width:100%;box-sizing:border-box;padding:10px 14px;border-radius:16px;border:1px solid #e5e6e1;font:inherit"><input class="xinput" id="testLocLng" placeholder="경도(예: 130.4207)" style="margin:6px 0;width:100%;box-sizing:border-box;padding:10px 14px;border-radius:16px;border:1px solid #e5e6e1;font:inherit"></label>` +
     `<button class="text-button" id="testLocCustomBtn" style="padding:6px 0">이 좌표로 적용</button>` +
@@ -1703,7 +1762,12 @@ async function profile() {
    위치처럼 보이지 않도록 항상 "실제 위치 아님"을 같이 밝힌다. */
 function renderTestLocationBanner() {
   const el = $('#testLocationBanner'); if (!el) return;
-  const loc = A.getTestLocation();
+  // 2026-09-11 재검토(10차) 7절 — testModeAllowed()도 함께 확인한다.
+  // 서버가 이 계정의 테스트 접근을 나중에 거둬 가도(관리자가
+  // /api/admin/test-access로 끔) localStorage에 남은 test_location_v1
+  // 값만 보고 "테스트 위치 사용 중"이라고 계속 표시하면 실제로는
+  // 이제 평균 위치/GPS로 되돌아간 상태를 거짓으로 안내하는 셈이다.
+  const loc = A.testModeAllowed() ? A.getTestLocation() : null;
   el.hidden = !loc;
   if (loc) $('#testLocationBannerText').textContent = `🧪 테스트 위치 사용 중: ${loc.label} · 실제 위치 아님(수동 지정)`;
 }

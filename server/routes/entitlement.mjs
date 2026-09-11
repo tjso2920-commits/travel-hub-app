@@ -20,6 +20,26 @@ function priceWithIncludedUsage() {
   };
 }
 
+/* 2026-09-11 재검토(10차) 7절 — "?testmode=1만으로 개발자 권한이 생기는
+   구조는 운영용 접근 제한이 아니다. 스테이징 또는 서버가 허용한 테스트
+   계정에 제한해." 이 계정이 실제로 관리자에게 승인된 테스트 계정인지
+   서버가 판단한다 — 클라이언트가 URL 파라미터로 자기 신고하는 값은
+   신뢰하지 않는다(다른 모든 코드 검토 지시와 같은 원칙). */
+export function checkTestAccess(accountId) {
+  const db = openDb();
+  const row = db.prepare('SELECT test_access FROM accounts WHERE id = ?').get(accountId);
+  return { ok: true, testAccess: !!(row && row.test_access) };
+}
+/* 관리자 전용 — email로 계정을 찾아 test_access를 켜거나 끈다. 계정이
+   없으면 정직하게 실패한다(조용히 무시하지 않음). */
+export function setTestAccessByEmail(email, enabled) {
+  const db = openDb();
+  const account = db.prepare('SELECT id FROM accounts WHERE email = ?').get(String(email || '').trim());
+  if (!account) return { ok: false, status: 404, reason: 'account-not-found' };
+  db.prepare('UPDATE accounts SET test_access = ? WHERE id = ?').run(enabled ? 1 : 0, account.id);
+  return { ok: true, status: 200, accountId: account.id, testAccess: !!enabled };
+}
+
 export function checkEntitlement(accountId) {
   const db = openDb();
   const row = db.prepare('SELECT plan, plan_expires_at FROM accounts WHERE id = ?').get(accountId);

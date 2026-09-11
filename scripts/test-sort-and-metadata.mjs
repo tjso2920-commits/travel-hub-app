@@ -153,7 +153,7 @@ t('7) select를 오래된순으로 바꾸면 실제로 순서가 바뀜', firstC
 await p.selectOption('#sortSelect', 'distance');
 await p.waitForTimeout(100);
 const basisVisible = await p.locator('#sortBasisNote').isVisible();
-t('7) 거리순을 고르면 기준(지정 위치) 안내 문구가 실제로 뜸', basisVisible);
+t('7) 거리순을 고르면 기준(평균 위치) 안내 문구가 실제로 뜸', basisVisible);
 await p.selectOption('#sortSelect', 'recent');
 
 t('최종 콘솔/런타임 오류 0', errs.length === 0);

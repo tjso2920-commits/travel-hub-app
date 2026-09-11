@@ -42,13 +42,25 @@ function daSave(k, v) {
    붙이면 이 브라우저에 계속 풀리는 방식을 쓴다. 실제로 특정 계정만
    허용하려면 서버 쪽에 계정 화이트리스트(예: accounts.test_access
    플래그)와 그걸 확인하는 API가 새로 필요하다 — 지금은 없다. */
-function daTestModeAllowed() {
+/* 2026-09-11 재검토(10차) 7절 — ChatGPT 지적: "?testmode=1만으로 개발자
+   권한이 생기는 구조는 운영용 접근 제한이 아니다. 스테이징 또는
+   서버가 허용한 테스트 계정에 제한해." 예전엔 URL 파라미터 한 번이면
+   이 브라우저에 영구히 풀렸다(localStorage 플래그) — 관리자가 나중에
+   권한을 뺏어도 클라이언트가 그 사실을 모르면 계속 열려 있었다.
+   이제는 클라이언트가 스스로 권한을 주장하지 않는다: 서버가 실제로
+   이 "계정"을 승인했는지(관리자만 켤 수 있음, /api/admin/test-access)
+   로그인된 세션으로 매번 물어보고, 그 응답만 신뢰한다. ?testmode=1은
+   더 이상 그 자체로 아무것도 풀지 않는다 — 로그인된 계정이 실제로
+   서버 승인을 받았어야만 의미가 있다. */
+let _testAccessGranted = false;
+function daTestModeAllowed() { return _testAccessGranted; }
+async function daRefreshTestAccess(token) {
+  if (!token) { _testAccessGranted = false; return false; }
   try {
-    if (new URLSearchParams(location.search).get('testmode') === '1') {
-      localStorage.setItem(PFX + 'test_mode_unlocked_v1', '1');
-    }
-    return localStorage.getItem(PFX + 'test_mode_unlocked_v1') === '1';
-  } catch (e) { return false; }
+    const r = await daApi('/api/account/test-access', { token });
+    _testAccessGranted = !!(r.ok && r.json && r.json.testAccess);
+  } catch (e) { _testAccessGranted = false; }
+  return _testAccessGranted;
 }
 const TEST_LOCATION_PRESETS = [
   { id: 'hakata', label: '하카타역(테스트)', lat: 33.5904, lng: 130.4207 },
@@ -1237,6 +1249,7 @@ window.DesignAdapter = {
   sortSpots: daSortSpots,
   centroid: daCentroid,
   testModeAllowed: daTestModeAllowed,
+  refreshTestAccess: daRefreshTestAccess,
   testLocationPresets: TEST_LOCATION_PRESETS,
   getTestLocation: daGetTestLocation,
   setTestLocation: daSetTestLocation,
