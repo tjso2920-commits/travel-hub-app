@@ -1,7 +1,10 @@
 # 운영 서버 설정 순서 (OPERATIONS_SETUP)
 
 작성: 2026-09-10(6차 재검토) · 갱신: 2026-09-11(10차 — 테스트 위치
-허용 절차 변경, AI 보조 분류 항목 추가) · 브랜치 `design-integration`
+허용 절차 변경, AI 보조 분류 항목 추가) · 갱신: 2026-09-11(12차 —
+AI 분류 예산 예약 관련 환경변수 정리, 피드백 진단정보에 browserType
+추가는 코드가 자동으로 채우므로 운영자가 할 일 없음) · 브랜치
+`design-integration`
 
 이 문서는 **실제 서비스를 켜기 전에** 사람이 직접 해야 하는 일을
 순서대로 정리한다. 개발 담당(이 세션)은 outbound 네트워크가 막혀 있어
@@ -142,11 +145,18 @@ curl -X POST https://your-domain/api/admin/test-access \
 3-3-6·3-3-7절 참고).
 
 **11차 신규(마찬가지로 운영자가 지금 손댈 값 아님, 참고용)**:
-`AI_CLASSIFY_RESERVED_ROUTE_SEGMENTS_PER_COURSE`(기본 1)와
 `AI_CLASSIFY_GLOBAL_DAILY_BATCH_LIMIT`(기본 2,000)이 새로 추가됐다 —
-둘 다 실제 AI 공급자가 없는 지금은 아무 효과가 없는 예산·한도
-계산용 값이다. 공급자를 선정한 뒤 실제 사용량을 보고서야 조정할
-값이므로 지금 바꾸지 않는다.
+실제 AI 공급자가 없는 지금은 아무 효과가 없는 한도 계산용 값이다.
+공급자를 선정한 뒤 실제 사용량을 보고서야 조정할 값이므로 지금
+바꾸지 않는다.
+
+**12차 변경**: 11차에 있던 `AI_CLASSIFY_RESERVED_ROUTE_SEGMENTS_PER_COURSE`
+값은 제거됐다 — "남은 코스 횟수마다 몇 세그먼트를 예약할지"를 조정용
+상수로 두는 대신, 이제 `MAX_PLACES_PER_GENERATION`(코스 하나에 담을
+수 있는 최대 장소 수, 기본 60)에서 실제 세그먼트·SKU 수를 그대로
+계산해 자동으로 예약한다(`server/route-segments.mjs`). 즉
+`MAX_PLACES_PER_GENERATION`을 바꾸면 AI 분류 예산 예약도 자동으로
+그에 맞게 다시 계산된다 — 별도로 손댈 AI 전용 값이 하나 줄었다.
 
 ### 1-7. 선택 — 값 조정용(기본값 그대로 써도 된다)
 
