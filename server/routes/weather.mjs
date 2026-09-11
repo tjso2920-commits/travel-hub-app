@@ -90,23 +90,32 @@ export async function weatherRoute(lat, lng, tzHint, dateStr) {
     return withSelectedDay(cached.data, { cachedAt: cached.createdAt, stale: false });
   }
 
-  // 서비스 전체 하루 호출 상한 — 지역 캐시로 대부분의 요청은 여기까지
-  // 오지도 않지만, 새 지역이 몰릴 때를 대비한 안전판이다.
-  const day = dayWindow();
-  const globalCheck = checkAndIncrement('weather:global', day, config.weatherGlobalDailyCap, 1);
-  if (!globalCheck.allowed) {
-    // 한도에 걸려도 오래된 캐시가 있으면 그거라도 시각과 함께 보여준다
-    // (완전히 못 보여주는 것보다 낫다 — 단, 오래된 값임을 분명히 표시).
-    if (cached) return withSelectedDay(cached.data, { cachedAt: cached.createdAt, stale: true });
-    return { ok: false, status: 503, reason: 'weather-service-daily-cap-reached' };
-  }
-
   // 같은 지역에 이미 진행 중인 외부 호출이 있으면 새로 만들지 않고
   // 그 결과를 같이 기다린다(동시 요청 병합) — place-lookup.mjs의
   // inFlightLookups와 같은 원칙.
+  //
+  // 2026-09-11 재검토(9차) 4-A절 — ChatGPT가 재현한 결함: 예전엔 이
+  // 병합 확인보다 "서비스 전체 하루 호출 상한" 확인·소비를 먼저 했다
+  // — 그러면 진행 중인 호출에 그냥 합류할 뿐인 요청도 상한을
+  // 소비해서, 실제 외부 호출은 1번만 나갔는데도 동시 요청 2건 중
+  // 1건이 "하루 상한 도달"로 실패했다(WEATHER_GLOBAL_DAILY_CAP=1로
+  // 재현). 상한은 "실제로 새 외부 호출을 만드는 쪽"만 소비해야 한다
+  // — 그래서 지금은 병합 여부를 먼저 확인하고, 새로 시작하는 경우에만
+  // 상한을 확인·소비한다.
   let promise = inFlightWeatherLookups.get(key);
   let startedHere = false;
   if (!promise) {
+    // 서비스 전체 하루 호출 상한 — 지역 캐시로 대부분의 요청은
+    // 여기까지 오지도 않지만, 새 지역이 몰릴 때를 대비한 안전판이다.
+    const day = dayWindow();
+    const globalCheck = checkAndIncrement('weather:global', day, config.weatherGlobalDailyCap, 1);
+    if (!globalCheck.allowed) {
+      // 한도에 걸려도 오래된 캐시가 있으면 그거라도 시각과 함께
+      // 보여준다(완전히 못 보여주는 것보다 낫다 — 단, 오래된 값임을
+      // 분명히 표시).
+      if (cached) return withSelectedDay(cached.data, { cachedAt: cached.createdAt, stale: true });
+      return { ok: false, status: 503, reason: 'weather-service-daily-cap-reached' };
+    }
     startedHere = true;
     promise = lookupWeather({ lat: latN, lng: lngN, tzId: tzHint }).finally(() => {
       inFlightWeatherLookups.delete(key);

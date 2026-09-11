@@ -61,18 +61,41 @@ function resolveDestCoords(cityName, spots) {
   return null;
 }
 
-/* 규칙 기반 착장 참고 한 줄 — 체감온도 구간 하나 + 일교차·강수·바람
-   조건이 해당하면 덧붙인다. LLM 호출 없음(순수 규칙). */
-function outfitNote({ feelsLikeC, maxC, minC, hourly }) {
-  const notes = [];
+/* 2026-09-11 재검토(9차) 4-B절 — ChatGPT가 재현한 결함: 예전
+   outfitNote는 "지금 이 순간"의 체감온도(cur.feelsLikeC)와 "사용자가
+   고른 여행 날짜"의 최고/최저/시간대별 예보(day.*)를 한 함수에 같이
+   넣었다. 여행 날짜가 오늘이 아니면 그 둘은 서로 다른 날 이야기라 —
+   예를 들어 내일 예보(선선함)인데 오늘 지금 체감온도(더움)로 "반팔이면
+   충분해요"라고 나올 수 있었다. 이제 "지금 옷차림 참고"(오늘·현재
+   데이터만)와 "선택한 날짜의 착장 참고"(그 날짜 예보만, 체감온도 없이
+   최고/최저 평균으로 근사)를 완전히 분리한다. */
+function outfitNoteFromFeelsLike(feelsLikeC) {
   if (typeof feelsLikeC !== 'number') return '';
-  if (feelsLikeC >= 28) notes.push('덥고 습해요 — 통풍 잘 되는 얇은 옷차림이 좋아요');
-  else if (feelsLikeC >= 23) notes.push('따뜻해요 — 반팔 등 가벼운 옷차림이면 충분해요');
-  else if (feelsLikeC >= 17) notes.push('선선해요 — 얇은 겉옷 하나 챙기면 좋아요');
-  else if (feelsLikeC >= 11) notes.push('쌀쌀해요 — 니트나 자켓 같은 겉옷을 챙기세요');
-  else if (feelsLikeC >= 5) notes.push('추워요 — 두꺼운 겉옷과 목도리를 챙기세요');
-  else notes.push('많이 추워요 — 방한 외투와 장갑을 챙기세요');
-
+  if (feelsLikeC >= 28) return '덥고 습해요 — 통풍 잘 되는 얇은 옷차림이 좋아요';
+  if (feelsLikeC >= 23) return '따뜻해요 — 반팔 등 가벼운 옷차림이면 충분해요';
+  if (feelsLikeC >= 17) return '선선해요 — 얇은 겉옷 하나 챙기면 좋아요';
+  if (feelsLikeC >= 11) return '쌀쌀해요 — 니트나 자켓 같은 겉옷을 챙기세요';
+  if (feelsLikeC >= 5) return '추워요 — 두꺼운 겉옷과 목도리를 챙기세요';
+  return '많이 추워요 — 방한 외투와 장갑을 챙기세요';
+}
+/* 미래 날짜는 "지금 체감온도"가 없다 — 최고·최저의 평균을 대략적인
+   기준으로 쓰되, 실제 체감온도가 아니라 예보 기온 기준 참고임을
+   문구 자체로 밝힌다(현재 온도만으로 "습하다"를 단정하는 표현도
+   피한다 — "덥고 습해요"가 아니라 "더워요"로 구분). */
+function outfitNoteFromForecastRange(maxC, minC) {
+  if (typeof maxC !== 'number' || typeof minC !== 'number') return '';
+  const approx = (maxC + minC) / 2;
+  if (approx >= 28) return '더울 것으로 보여요 — 통풍 잘 되는 얇은 옷차림이 좋아요';
+  if (approx >= 23) return '따뜻할 것으로 보여요 — 반팔 등 가벼운 옷차림이면 충분해요';
+  if (approx >= 17) return '선선할 것으로 보여요 — 얇은 겉옷 하나 챙기면 좋아요';
+  if (approx >= 11) return '쌀쌀할 것으로 보여요 — 니트나 자켓 같은 겉옷을 챙기세요';
+  if (approx >= 5) return '추울 것으로 보여요 — 두꺼운 겉옷과 목도리를 챙기세요';
+  return '많이 추울 것으로 보여요 — 방한 외투와 장갑을 챙기세요';
+}
+/* 체감온도와 무관한 보조 조건(일교차·강수·바람) — 현재든 미래 날짜든
+   그 날의 max/min/hourly만 있으면 똑같이 적용한다. */
+function outfitExtraNotes(maxC, minC, hourly) {
+  const notes = [];
   if (typeof maxC === 'number' && typeof minC === 'number' && (maxC - minC) >= 10) {
     notes.push('낮밤 기온차가 커요, 겹쳐 입기 좋은 옷 추천');
   }
@@ -80,22 +103,37 @@ function outfitNote({ feelsLikeC, maxC, minC, hourly }) {
   const winds = (hourly || []).map((h) => h.windKph || 0);
   if (pops.length && Math.max(...pops) >= 50) notes.push('비 소식이 있어요, 우산 챙기세요');
   if (winds.length && Math.max(...winds) >= 25) notes.push('바람이 강해요, 방풍 겉옷이 도움돼요');
-  return notes.join(' · ');
+  return notes;
 }
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+// 2026-09-11 재검토(9차) 4-B절 — "null 기온/epoch를 0도나 1970년
+// 값으로 표시하지 않도록 방어하라"는 지시. 값이 없거나 유효하지 않은
+// 시각·기온을 그대로 Math.round/new Date에 넣으면 "0°"·"1970년
+// 1월 1일"처럼 실제로 없는 값을 있는 것처럼 보여줄 수 있다 —
+// 대신 정직하게 빈 자리표시자를 쓴다.
+function isValidIso(iso) {
+  if (!iso) return false;
+  const d = new Date(iso);
+  return !Number.isNaN(d.getTime());
+}
+function fmtTemp(v) {
+  return (typeof v === 'number' && Number.isFinite(v)) ? Math.round(v) + '°' : '확인 안 됨';
+}
 function fmtClock(iso, tz, opts) {
+  if (!isValidIso(iso)) return '시각 확인 안 됨';
   try { return new Intl.DateTimeFormat('ko-KR', Object.assign({ hour: 'numeric', hour12: true, timeZone: tz || undefined }, opts)).format(new Date(iso)); }
-  catch (e) { return new Date(iso).toLocaleTimeString('ko-KR'); }
+  catch (e) { return '시각 확인 안 됨'; }
 }
 // 2026-09-10 재검토(8차) 3절 — "오래된 캐시 데이터는 자신의 날짜와
 // 시간을 함께 보여줘야 한다"(시간만 보여주면 "오늘 그 시각"인 것처럼
 // 오해할 수 있다 — 실제로는 어제·그제 값일 수 있다).
 function fmtDateAndClock(iso, tz) {
+  if (!isValidIso(iso)) return '시각 확인 안 됨';
   try { return new Intl.DateTimeFormat('ko-KR', { month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: tz || undefined }).format(new Date(iso)); }
-  catch (e) { return new Date(iso).toLocaleString('ko-KR'); }
+  catch (e) { return '시각 확인 안 됨'; }
 }
 // "YYYY-MM-DD"를 Date()로 파싱하면 시간대에 따라 하루 밀릴 수 있어(음수
 // UTC 오프셋 등) 문자열을 직접 쪼갠다 — 이미 순수 달력 날짜라 시간대
@@ -125,27 +163,42 @@ function cardHTML(cityName, w) {
   // 이미 골라 준 "그 여행 날짜에 해당하는 예보"이고, 공급자가 실제로
   // 보장하는 기간(오늘 포함 3일) 밖이면 selectedDay가 null로 온다.
   const day = w.selectedDay || {};
+  const today = (w.forecastDays || [])[0] || {};
   const isTodaySelected = !w.selectedDateISO || (w.forecastDays && w.forecastDays[0] && w.forecastDays[0].dateISO === w.selectedDateISO);
   // 2026-09-10 재검토(7차) 4절 — "실시간"이라는 단어를 쓰지 않고 "현재
   // 날씨 · 몇 시 기준"으로만 표기한다(현재값과 예보를 분명히 구분).
   const nowLabel = fmtClock(cur.observedAtIso, tz, { minute: '2-digit' });
-  const note = outfitNote({ feelsLikeC: cur.feelsLikeC, maxC: day.maxC, minC: day.minC, hourly: day.hourly });
-  const hourlyHTML = (day.hourly || []).map((h) => `<div class="weather-hour"><span>${fmtClock(h.hourIso, tz)}</span><b>☔${h.popPercent}%</b><i>💨${Math.round(h.windKph)}</i></div>`).join('');
+  // 2026-09-11 재검토(9차) 4-B절 — "지금 옷차림 참고"는 오늘·현재
+  // 데이터만 쓰고, 선택한 날짜가 오늘이 아니면 그 날짜의 예보만으로
+  // 따로 만든다(체감온도가 아니라 최고/최저 평균 근사 — 미래엔 진짜
+  // 체감온도가 없다). 아직 예보가 없는 날짜(범위 밖)는 착장 판단
+  // 자체를 하지 않는다(지어내지 않음).
+  let note = '';
+  if (isTodaySelected) {
+    const base = outfitNoteFromFeelsLike(cur.feelsLikeC);
+    note = [base, ...outfitExtraNotes(today.maxC, today.minC, today.hourly)].filter(Boolean).join(' · ');
+  } else if (w.selectedDateInCoverage) {
+    const base = outfitNoteFromForecastRange(day.maxC, day.minC);
+    const dayNote = [base, ...outfitExtraNotes(day.maxC, day.minC, day.hourly)].filter(Boolean).join(' · ');
+    note = dayNote ? `${fmtDateLabel(w.selectedDateISO)} 착장 참고 — ${dayNote}` : '';
+  }
+  const hourlyHTML = (day.hourly || []).map((h) => `<div class="weather-hour"><span>${fmtClock(h.hourIso, tz)}</span><b>☔${Number.isFinite(h.popPercent) ? h.popPercent : 0}%</b><i>💨${Number.isFinite(h.windKph) ? Math.round(h.windKph) : 0}</i></div>`).join('');
   const staleNote = w.stale
     ? `<p class="weather-note weather-stale">방금은 새로 못 받아와서 이전 값을 보여드려요(${fmtDateAndClock(w.cachedAt, tz)} 기준).</p>`
     : '';
   const forecastLabel = isTodaySelected ? '오늘 예보' : `${fmtDateLabel(w.selectedDateISO)} 예보`;
   const forecastHTML = w.selectedDateInCoverage
-    ? `<p class="weather-range">${forecastLabel} · 최고 ${Math.round(day.maxC)}° · 최저 ${Math.round(day.minC)}° · 저녁 ${Math.round(day.eveningC)}°</p>
+    ? `<p class="weather-range">${forecastLabel} · 최고 ${fmtTemp(day.maxC)} · 최저 ${fmtTemp(day.minC)} · 저녁 ${fmtTemp(day.eveningC)}</p>
     ${hourlyHTML ? `<div class="weather-hourly">${hourlyHTML}</div>` : ''}`
     // 공급자가 실제로 예보를 제공하는 기간(오늘 포함 3일) 밖의 여행
     // 날짜다 — 오늘 값을 그 날짜인 것처럼 보여주지 않고 정직하게
-    // "아직 예보가 없다"고만 알린다(지어내지 않음).
-    : `<p class="weather-note">${fmtDateLabel(w.selectedDateISO)}은 아직 예보 범위 밖이에요(공급자가 최대 3일 앞까지만 제공해요). 날짜가 가까워지면 다시 확인해 주세요.</p>`;
+    // "아직 예보가 없다"고만 알린다(지어내지 않음). "오늘 포함 3일"과
+    // "3일 앞까지"를 혼용하지 않고 정확한 표현 하나로 통일한다(9차).
+    : `<p class="weather-note">${fmtDateLabel(w.selectedDateISO)}은 아직 예보 범위 밖이에요(공급자가 오늘 포함 3일치만 제공해요). 날짜가 가까워지면 다시 확인해 주세요.</p>`;
   const sourceLabel = w.source === 'weatherapi' ? 'WeatherAPI.com 제공' : '테스트 데이터(예시) · 실제 공급자 연결 전';
   return `<div class="weather-card" id="weatherCard" data-state="ready">
     <div class="weather-top"><b>${esc(cityName)} 지금(오늘) 현재 날씨 · ${nowLabel} 기준</b></div>
-    <div class="weather-main"><span class="weather-temp">${Math.round(cur.tempC)}°</span><span class="weather-feels">체감 ${Math.round(cur.feelsLikeC)}°</span></div>
+    <div class="weather-main"><span class="weather-temp">${fmtTemp(cur.tempC)}</span><span class="weather-feels">체감 ${fmtTemp(cur.feelsLikeC)}</span></div>
     ${forecastHTML}
     ${note ? `<p class="weather-note">${esc(note)}</p>` : ''}
     ${staleNote}
@@ -183,4 +236,4 @@ async function loadWeatherCard(A, cityName, spots, dateStr) {
   el.outerHTML = cardHTML(cityName, r.json);
 }
 
-window.WeatherCard = { skeletonHTML, loadWeatherCard, resolveDestCoords, outfitNote, CITY_COORDS };
+window.WeatherCard = { skeletonHTML, loadWeatherCard, resolveDestCoords, outfitNoteFromFeelsLike, outfitNoteFromForecastRange, CITY_COORDS };
