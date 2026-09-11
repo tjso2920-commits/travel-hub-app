@@ -270,7 +270,8 @@ function migrate(d) {
       lodging TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      version INTEGER NOT NULL DEFAULT 1
+      version INTEGER NOT NULL DEFAULT 1,
+      field_conflicts TEXT
     );
     /* trip_courses: 예전 account_courses(계정+도시+날짜)를 대신해
        "여행(trip_id)+날짜"로 코스를 저장한다 — 같은 도시라도 서로 다른
@@ -438,6 +439,22 @@ function migrate(d) {
 
   migrateLegacyCoursesIntoTrips(d);
   addAccountTestAccessColumn(d);
+  addTripsFieldConflictsColumn(d);
+}
+
+/* 2026-09-11 재검토(11차) — ChatGPT가 실제 재현한 결함: trips는
+   city/name/start_date/end_date/lodging처럼 정해진 컬럼만 다루므로,
+   daRemergeGenericConflict가 남긴 임시 _fieldConflicts(같은 필드를
+   두 기기가 다르게 고친 진짜 충돌)를 저장할 곳이 없었다 — 재제출이
+   성공하는 순간 그 정보가 통째로 사라져, 사용자가 서버 쪽 값을 보고
+   직접 고를 기회 자체가 없었다(장소는 JSON 블롭 저장이라 이미 이
+   문제가 없었다 — account_places.data). trips만 고정 컬럼 저장이라
+   똑같이 컬럼을 하나 추가한다. */
+function addTripsFieldConflictsColumn(d) {
+  const cols = d.prepare("PRAGMA table_info(trips)").all();
+  if (!cols.some((c) => c.name === 'field_conflicts')) {
+    d.exec('ALTER TABLE trips ADD COLUMN field_conflicts TEXT');
+  }
 }
 
 /* 2026-09-11 재검토(10차) 7절 — "?testmode=1만으로 개발자 권한이 생기는

@@ -194,19 +194,60 @@ function daToast(msg) {
    스냅샷)를 추적하지만 courses/trips는 아직 그런 추적이 없다 — base가
    없을 때의 동작(모든 필드를 "내가 건드렸을 수 있다"로 보고, 서로
    다르면 병합 + 충돌 기록)은 그대로 재사용된다. */
+/* 2026-09-11 재검토(11차) — ChatGPT가 실제로 재현한 필드 삭제 부활
+   버그: base={note:old}, mine={}(note를 지움), theirs={note:old,
+   version:2}를 넣으면 note=old가 되살아났다. 원인은 Object.keys(mine)
+   만 훑었기 때문 — mine에서 지운 필드는 애초에 이 반복문에 안
+   들어오고, merged는 {...theirs}로 시작하므로 그 필드가 조용히
+   theirs 값 그대로 남았다. 이제는 mine과 base의 키를 합쳐서 훑어
+   "mine에는 없는데 base에는 있던 키"(=mine이 명시적으로 지운 필드)도
+   놓치지 않는다 — theirs가 그 사이 안 건드렸으면(또는 theirs도
+   지웠으면) 삭제를 그대로 반영하고, theirs가 그 필드를 고쳤으면
+   (지움 vs 수정의 진짜 충돌) 삭제를 우선 반영하되 theirs 값을
+   _fieldConflicts에 남겨 되살릴 수 있게 한다. */
 function daRemergeGenericConflict(mine, base, theirs, identityKeys) {
   if (!mine) return { ...theirs };
   const merged = { ...theirs };
   const fieldConflicts = {};
   const skipKeys = new Set([...identityKeys, 'version', 'updatedAt', '_fieldConflicts']);
-  for (const key of Object.keys(mine)) {
+  const has = (o, k) => o != null && Object.prototype.hasOwnProperty.call(o, k);
+  const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  // base가 있으면 mine과 base 양쪽 키를 모두 훑는다(삭제 판정에 필요).
+  // base가 없으면 예전과 동일하게 mine의 키만 훑는다 — 기준 스냅샷이
+  // 없을 때는 "원래 없던 필드"와 "지운 필드"를 구분할 방법이 없다.
+  const keys = base ? new Set([...Object.keys(mine), ...Object.keys(base)]) : new Set(Object.keys(mine));
+  for (const key of keys) {
     if (skipKeys.has(key)) continue;
-    const mineChanged = base ? (JSON.stringify(mine[key]) !== JSON.stringify(base[key])) : true;
+    const minePresent = has(mine, key);
+    const mineVal = mine[key];
+    if (!base) {
+      if (!minePresent) continue;
+      if (has(theirs, key) && eq(mineVal, theirs[key])) continue; // 우연히 같은 값 — 충돌 아님.
+      merged[key] = mineVal; // 내가 고쳤을 수 있는 값은 조용히 사라지지 않는다.
+      if (has(theirs, key)) fieldConflicts[key] = { mine: mineVal, theirs: theirs[key] };
+      continue;
+    }
+    const basePresent = has(base, key);
+    const baseVal = base[key];
+    // mine이 지웠으면(base엔 있었는데 mine엔 없음) 명백한 변경으로 본다.
+    const mineChanged = minePresent ? (!basePresent || !eq(mineVal, baseVal)) : basePresent;
     if (!mineChanged) continue; // 안 건드림 — 서버 값(merged엔 이미 theirs) 그대로.
-    if (JSON.stringify(mine[key]) === JSON.stringify(theirs[key])) continue; // 우연히 같은 값 — 충돌 아님.
-    merged[key] = mine[key]; // 내가 고쳤을 수 있는 값은 조용히 사라지지 않는다.
-    const theirsChanged = base ? (JSON.stringify(theirs[key]) !== JSON.stringify(base[key])) : true;
-    if (theirsChanged) fieldConflicts[key] = { mine: mine[key], theirs: theirs[key] };
+    const theirsPresent = has(theirs, key);
+    const theirsVal = theirs[key];
+    const theirsChanged = theirsPresent ? (!basePresent || !eq(theirsVal, baseVal)) : basePresent;
+    if (!minePresent) {
+      // mine이 지운 필드 — theirs가 그 사이 안 건드렸거나 마찬가지로
+      // 지웠으면 조용히 지운다. theirs가 그 사이 값을 실제로 고쳤으면
+      // "지움 vs 수정"의 진짜 충돌이므로 삭제를 우선 반영하되(mine
+      // 우선 원칙 유지) theirs 값을 _fieldConflicts에 남겨 되살릴 수
+      // 있게 한다.
+      delete merged[key];
+      if (theirsChanged && theirsPresent) fieldConflicts[key] = { mine: undefined, theirs: theirsVal };
+      continue;
+    }
+    if (theirsPresent && eq(mineVal, theirsVal)) continue; // 우연히 같은 값 — 충돌 아님.
+    merged[key] = mineVal; // 내가 고쳤을 수 있는 값은 조용히 사라지지 않는다.
+    if (theirsChanged) fieldConflicts[key] = { mine: mineVal, theirs: theirsPresent ? theirsVal : undefined };
   }
   for (const key of identityKeys) merged[key] = mine[key];
   merged.version = theirs.version; // 다음 시도의 기준 버전 — 서버가 방금 알려준 값.
@@ -216,6 +257,22 @@ function daRemergeGenericConflict(mine, base, theirs, identityKeys) {
 }
 function daRemergePlaceConflict(mine, base, theirs) {
   return daRemergeGenericConflict(mine, base, theirs, ['id']);
+}
+/* 2026-09-11 재검토(11차) — "장소에만 해결 버튼이 있는 상태로 완료
+   처리하지 마"라는 지시에 따라 places 전용이던 필드 충돌 안내를
+   courses/trips에도 재사용할 수 있게 공통 렌더러로 뽑는다. mine이
+   삭제한 필드(theirs만 값이 있고 mine은 undefined)도 "(삭제됨)"으로
+   정직하게 보여준다(문자열 "undefined"를 그대로 보여주지 않는다). */
+const DA_FIELD_CONFLICT_LABELS = { note: '메모', cat: '유형', city: '도시', name: '이름', address: '주소', startDate: '시작일', endDate: '종료일', lodging: '숙소', memo: '메모' };
+function daFieldConflictBlockHTML(conflicts, resolveAttrName, idForAttr) {
+  if (!conflicts || !Object.keys(conflicts).length) return '';
+  const fmt = (v) => (v === undefined ? '(삭제됨)' : A.esc(String(typeof v === 'object' && v !== null ? JSON.stringify(v) : v)));
+  return Object.entries(conflicts).map(([key, v]) => {
+    const label = DA_FIELD_CONFLICT_LABELS[key] || key;
+    return `<div class="inline-note">${A.esc(label)}이(가) 다른 기기와 다르게 저장돼 있어요 — 지금은 내 값을 유지 중이에요.<br>` +
+      `내 값: “${fmt(v.mine)}” · 다른 기기 값: “${fmt(v.theirs)}”<br>` +
+      `<button class="text-button" data-${resolveAttrName}="${A.esc(idForAttr)}|${A.esc(key)}">다른 기기 값으로 바꾸기</button></div>`;
+  }).join('');
 }
 
 async function daSyncPush(token) {
@@ -398,6 +455,15 @@ async function daSyncPush(token) {
     // 부분만 서버의 병합 결과로 맞춘다.
     const tripCourses = (foodMap.courses || []).filter((c) => c.tripId);
     foodMap.courses = [...mergedLegacy, ...tripCourses];
+    // 2026-09-11 재검토(11차) — foodMap.course는 foodMap.courses 안의
+    // 한 항목을 "가리키는 포인터"일 뿐인데, 위에서 배열을 통째로 새
+    // 객체로 갈아 끼웠으므로 옛 포인터는 이제 배열 밖의 낡은 객체를
+    // 본다(예: 방금 병합해 남긴 _fieldConflicts를 화면이 못 본다).
+    // 같은 날짜를 계속 보고 있었다면 새 객체로 다시 맞춘다.
+    if (foodMap.course && !foodMap.course.tripId) {
+      const rePointed = foodMap.courses.find((c) => !c.tripId && c.city === foodMap.course.city && c.date === foodMap.course.date);
+      if (rePointed) foodMap.course = rePointed;
+    }
     // 서버가 지금 실제로 확정한 값을 다음 기준선으로 남긴다(병합
     // 결과가 아니라) — places와 동일한 이유(9차 재검토 버그 재발 방지).
     A.resyncCoursesBaseline(mergedLegacy, courseBaselineOverrides);
@@ -448,7 +514,18 @@ async function daSyncPush(token) {
       if (!cities.some((c) => c.name === city)) city = cities[0].name;
     }
   }
-  return { placesOk, coursesOk, tripsOk, visitsOk, allOk: placesOk && coursesOk && tripsOk && visitsOk };
+  // 2026-09-11 재검토(11차) — "HTTP 200과 동기화 완료는 다르다"는
+  // 지적을 places 응답 실패뿐 아니라 "저장은 됐지만 어느 값을 쓸지
+  // 아직 안 고른 미해결 필드 충돌"까지 반영한다. allOk는 이제
+  // "네트워크·서버 응답이 전부 성공했다"만 뜻하고, 별도의
+  // hasUnresolvedConflicts로 "그래도 사용자가 아직 정리할 게
+  // 남았다"를 구분해 알린다(로그아웃 확인 등에서 사용).
+  const hasUnresolvedConflicts =
+    (foodMap.places || []).some((p) => p && p._fieldConflicts && Object.keys(p._fieldConflicts).length) ||
+    (foodMap.courses || []).some((c) => c && c._fieldConflicts && Object.keys(c._fieldConflicts).length) ||
+    (foodMap.trips || []).some((tr) => tr && tr._fieldConflicts && Object.keys(tr._fieldConflicts).length);
+  const allOk = placesOk && coursesOk && tripsOk && visitsOk;
+  return { placesOk, coursesOk, tripsOk, visitsOk, allOk, hasUnresolvedConflicts, fullySynced: allOk && !hasUnresolvedConflicts };
 }
 function daSyncPushSafe() {
   const token = A.sessionToken(foodMap);
@@ -496,9 +573,17 @@ async function daLogout() {
     // 사실대로 알린 뒤 사용자가 정말 그래도 로그아웃할지 직접 고르게
     // 한다 — 아직 서버에 못 올라간 이 기기의 최근 변경을 실수로 잃지
     // 않기 위해서다.
-    const result = await daSyncPush(token).catch(() => ({ allOk: false, stale: false }));
+    const result = await daSyncPush(token).catch(() => ({ allOk: false, stale: false, hasUnresolvedConflicts: false }));
     if (!result.allOk && !result.stale) {
       const proceed = confirm('일부 변경사항이 아직 서버에 저장되지 못했어요(네트워크 상태를 확인해 주세요). 그래도 로그아웃하면 이 기기에 저장되지 않은 최근 변경사항을 잃을 수 있어요. 그래도 로그아웃할까요?');
+      if (!proceed) return;
+    } else if (result.allOk && result.hasUnresolvedConflicts) {
+      // 2026-09-11 재검토(11차) — "HTTP 200과 동기화 완료는 다르다."
+      // 저장 자체는 됐지만(allOk=true) 다른 기기와 값이 다른 필드를
+      // 아직 사람이 고르지 않은 상태다 — 데이터는 안 잃지만(다음에
+      // 로그인해도 같은 안내가 다시 뜬다), 조용히 넘어가지 않고
+      // 알린다.
+      const proceed = confirm('다른 기기와 값이 다른 항목이 아직 있어요(저장은 됐지만 어느 값을 쓸지 아직 안 골랐어요). 그래도 로그아웃할까요? (다시 로그인하면 같은 안내가 남아 있어요)');
       if (!proceed) return;
     }
   }
@@ -662,13 +747,7 @@ function detail(id) {
       // 진짜 충돌. 지금은 내 값을 지키고 있다고 밝히고, 원하면 다른
       // 기기 값으로 한 번에 바꿀 수 있게 한다(반복 확인창이 아니라
       // 상세 화면의 조용한 안내 + 버튼 하나).
-      const fieldLabel = { note: '메모', cat: '유형', city: '도시', name: '이름', address: '주소' };
-      cityBlock += Object.entries(p.fieldConflicts).map(([key, v]) => {
-        const label = fieldLabel[key] || key;
-        return `<div class="inline-note">${A.esc(label)}이(가) 다른 기기와 다르게 저장돼 있어요 — 지금은 내 값을 유지 중이에요.<br>` +
-          `내 값: “${A.esc(String(v.mine))}” · 다른 기기 값: “${A.esc(String(v.theirs))}”<br>` +
-          `<button class="text-button" data-conflict-resolve="${id}|${A.esc(key)}">다른 기기 값으로 바꾸기</button></div>`;
-      }).join('');
+      cityBlock += daFieldConflictBlockHTML(p.fieldConflicts, 'conflict-resolve', id);
     }
     if (p.dupCandidateIds && p.dupCandidateIds.length) {
       const others = p.dupCandidateIds.map((did) => spots.find((s) => s.id === did)).filter(Boolean);
@@ -946,9 +1025,15 @@ function tripBlockHTML(cityName) {
   const trips = tripsForCity(cityName);
   if (!trips.length) return '';
   const cur = currentTripForCity(cityName);
+  // 2026-09-11 재검토(11차) — "코스·여행에도 실제 충돌 해결 화면을
+  // 연결해. 장소에만 해결 버튼이 있는 상태로 완료 처리하지 마"라는
+  // 지시. 여행 정보(이름·날짜·숙소)가 다른 기기와 달라진 채 남아
+  // 있으면 이 도시의 어느 화면(오늘 동선·저장된 코스)에서도 보이는
+  // 이 블록에 안내와 해결 버튼을 함께 보여준다.
+  const conflictHTML = daFieldConflictBlockHTML(cur && cur._fieldConflicts, 'trip-conflict-resolve', cur ? cur.tripId : '');
   return `<div class="inline-note">여행: <b>${A.esc(tripLabel(cur))}</b>` +
     (trips.length > 1 ? ' <button class="text-button" data-trip-switch style="padding:0 8px">바꾸기</button>' : ' ') +
-    '<button class="text-button" data-trip-new style="padding:0">새 여행 만들기</button></div>';
+    '<button class="text-button" data-trip-new style="padding:0">새 여행 만들기</button></div>' + conflictHTML;
 }
 /* 이 도시에 여행이 아예 없으면(완전히 새로운 도시) 코스 생성 전에
    조용히 하나 만든다 — "여행 만들기"를 먼저 누르게 강제하면 기존
@@ -1680,7 +1765,12 @@ function showSavedCourse() {
   const totalKm = (c.totalMeters / 1000).toFixed(1);
   const hours = Math.floor(c.walkTotal / 60), mins = c.walkTotal % 60;
   const surveyTrip = currentTripForCity(city);
-  open('오늘의 코스', `${window.WeatherCard.skeletonHTML(city)}${window.StreetVideo.buttonHTML(city)}<div class="detail">${dayTabsHTML(c)}${tripBlockHTML(city)}<h2>${c.stops.length}곳 · 도보 이동 ${hours ? hours + '시간 ' : ''}${mins}분</h2>` +
+  // 2026-09-11 재검토(11차) — 코스 필드 충돌 안내. trip에 딸린 코스는
+  // 날짜별 upsert만 하고 아직 필드 병합을 안 하므로(daRemergeGenericConflict
+  // 미적용) 여기서는 레거시(tripId 없음) 코스만 해당된다 — 없으면
+  // c._fieldConflicts 자체가 애초에 안 생긴다.
+  const courseConflictHTML = daFieldConflictBlockHTML(c._fieldConflicts, 'course-conflict-resolve', `${c.city}::${c.date}`);
+  open('오늘의 코스', `${window.WeatherCard.skeletonHTML(city)}${window.StreetVideo.buttonHTML(city)}<div class="detail">${dayTabsHTML(c)}${tripBlockHTML(city)}${courseConflictHTML}<h2>${c.stops.length}곳 · 도보 이동 ${hours ? hours + '시간 ' : ''}${mins}분</h2>` +
     `<p>${c.routedReal ? '실제 도보 경로 기준으로 계산했습니다.' : '실제 경로 연결에 실패해 직선거리 기준으로 추정했습니다(실제와 다를 수 있어요).'} 총 이동 거리 약 ${totalKm}km · 마지막 장소 도착 예정 ${window.CourseGen.clockLabel(c.endAt - (c.stops[c.stops.length - 1] ? c.stops[c.stops.length - 1].dwell : 0))}</p>` +
     stopViews +
     (noCoordsList.length ? `<div class="inline-note">좌표가 없어 이번 코스 계산에서 빠진 곳 ${noCoordsList.length}곳: ${noCoordsList.map((p) => A.esc(p.name)).join(', ')}. 위치를 확인하면 다음 코스에 포함할 수 있어요.</div>` : '') +
@@ -2078,6 +2168,8 @@ $('#sheetContent').onclick = (e) => {
   if (b.dataset.dupMerge) { const [x, y] = b.dataset.dupMerge.split('|'); return resolveDup(x, y, 'merge'); }
   if (b.dataset.dupDismiss) { const [x, y] = b.dataset.dupDismiss.split('|'); return resolveDup(x, y, 'dismiss'); }
   if (b.dataset.conflictResolve) { const [pid, key] = b.dataset.conflictResolve.split('|'); return resolveFieldConflict(pid, key); }
+  if (b.dataset.courseConflictResolve) { const [cd, key] = b.dataset.courseConflictResolve.split('|'); const [cCity, cDate] = cd.split('::'); return resolveCourseFieldConflict(cCity, cDate, key); }
+  if (b.dataset.tripConflictResolve) { const [tid, key] = b.dataset.tripConflictResolve.split('|'); return resolveTripFieldConflict(tid, key); }
   /* 2026-09-10 재검토(3차): 샘플은 로그인 없이 곧바로 buildCourseSheet로
      간다. 실제 데이터는 daGateThenBuildCourseSheet가 로그인부터
      확인한다 — 무료체험/이용권 여부는 실제 생성 시도 때 서버가
@@ -2147,7 +2239,13 @@ $('#sheetContent').onclick = (e) => {
 function resolveFieldConflict(placeId, key) {
   const p = (foodMap.places || []).find((x) => x.id === placeId);
   if (!p || !p._fieldConflicts || !p._fieldConflicts[key]) return;
-  p[key] = p._fieldConflicts[key].theirs;
+  // 2026-09-11 재검토(11차) — theirs 값이 undefined면 "다른 기기가 이
+  // 필드를 지웠다"는 뜻이다. p[key]=undefined로 그냥 대입하면 키는
+  // 남아 있는데 값만 undefined인 어중간한 상태가 되고, JSON.stringify
+  // (localStorage 저장·서버 전송)에서만 조용히 사라져 다음 비교
+  // 때 혼란을 줄 수 있다 — 명시적으로 delete한다.
+  if (p._fieldConflicts[key].theirs === undefined) delete p[key];
+  else p[key] = p._fieldConflicts[key].theirs;
   delete p._fieldConflicts[key];
   if (!Object.keys(p._fieldConflicts).length) delete p._fieldConflicts;
   const saved = A.saveFoodMap(foodMap);
@@ -2155,6 +2253,39 @@ function resolveFieldConflict(placeId, key) {
   daSyncPushSafe();
   refreshFromStorage();
   detail(placeId);
+}
+/* 2026-09-11 재검토(11차) — 코스(날짜 단위) 필드 충돌 해결. 레거시
+   코스(tripId 없음)는 city+date로 찾는다 — trip 코스는 아직 필드
+   충돌을 만들 방법이 없다(날짜별 upsert만 하고 필드 병합을 안 함).
+   foodMap.course는 foodMap.courses 안의 같은 객체를 가리키는
+   포인터이므로 별도로 안 고쳐도 되지만, 동기화가 배열을 통째로
+   새 객체로 갈아 끼우는 경우를 대비해 포인터도 다시 맞춘다. */
+function resolveCourseFieldConflict(cityName, date, key) {
+  const c = (foodMap.courses || []).find((x) => !x.tripId && x.city === cityName && x.date === date);
+  if (!c || !c._fieldConflicts || !c._fieldConflicts[key]) return;
+  if (c._fieldConflicts[key].theirs === undefined) delete c[key];
+  else c[key] = c._fieldConflicts[key].theirs;
+  delete c._fieldConflicts[key];
+  if (!Object.keys(c._fieldConflicts).length) delete c._fieldConflicts;
+  if (foodMap.course && !foodMap.course.tripId && foodMap.course.city === cityName && foodMap.course.date === date) foodMap.course = c;
+  const saved = A.saveFoodMap(foodMap);
+  if (!saved) { foodMap = A.loadFoodMap(); alert('저장에 실패했어요. 브라우저 저장 공간을 확인해 주세요.'); return; }
+  daSyncPushSafe();
+  showSavedCourse();
+}
+/* 여행(trip) 필드 충돌 해결 — 이름·날짜·숙소처럼 여행 정보 자체가
+   두 기기에서 다르게 저장된 경우. */
+function resolveTripFieldConflict(tripId, key) {
+  const trip = (foodMap.trips || []).find((x) => x.tripId === tripId);
+  if (!trip || !trip._fieldConflicts || !trip._fieldConflicts[key]) return;
+  if (trip._fieldConflicts[key].theirs === undefined) delete trip[key];
+  else trip[key] = trip._fieldConflicts[key].theirs;
+  delete trip._fieldConflicts[key];
+  if (!Object.keys(trip._fieldConflicts).length) delete trip._fieldConflicts;
+  const saved = A.saveFoodMap(foodMap);
+  if (!saved) { foodMap = A.loadFoodMap(); alert('저장에 실패했어요. 브라우저 저장 공간을 확인해 주세요.'); return; }
+  daSyncPushSafe();
+  render();
 }
 function resolveDup(aId, bId, action) {
   const result = A.resolveDup(foodMap.places, aId, bId, action);

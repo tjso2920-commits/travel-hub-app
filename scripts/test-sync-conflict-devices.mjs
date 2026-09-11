@@ -19,6 +19,15 @@ import { chromium } from 'playwright';
 process.env.DB_PATH = ':memory:';
 process.env.FORCE_TEST_MODE = 'true';
 process.env.LOGIN_CODE_COOLDOWN_SECONDS = '0';
+// 2026-09-11 재검토(11차) — 이 파일 하나에서 여러 시나리오가 각자
+// 새 Chromium 페이지(=새 기기)로 로그인을 여러 번 반복하다 보니, 실제
+// 서비스라면 정상인 로그인 코드 요청 IP당 시간당 상한(server/auth.mjs
+// — Math.max(20, loginMaxVerifyAttempts*4))에 이 테스트 프로세스
+// 자체가 걸린다(모든 요청이 같은 127.0.0.1에서 나가므로). 실제
+// 사용자가 겪는 제한이 아니라 테스트 환경의 인위적 제약이므로, 이
+// 값만 넉넉히 올려 둔다(운영 기본값 5는 그대로 — 여기서 바꾸는 건
+// 이 테스트 프로세스의 환경변수일 뿐이다).
+process.env.LOGIN_MAX_VERIFY_ATTEMPTS = '200';
 const { createServer } = await import('../server/index.mjs');
 const { sentEmailsForTest } = await import('../server/adapters/email.mjs');
 
@@ -515,6 +524,251 @@ async function loginViaUi(page, email) {
   await pA.waitForTimeout(300);
   const cPlace = await pA.evaluate(() => foodMap.places.find((p) => p.id === 'p1'));
   t('9) 로그아웃 후 새 계정에서는 이전 계정의 값이 안 새어 들어오고 새 계정 값 그대로 저장됨(계정 간 기준선 격리)', cPlace.note === 'C계정 최초값');
+
+  await pA.close(); await pB.close();
+}
+
+// =====================================================================
+// 10) 2026-09-11 재검토(11차) — ChatGPT가 실제로 재현한 필드 삭제 부활
+//    버그: base={id:p,note:old}, mine={id:p}(note를 지움), theirs=
+//    {id:p,note:old,version:2}를 daRemergeGenericConflict에 넣으면
+//    예전엔 note=old가 되살아났다(Object.keys(mine)만 훑어서 mine이
+//    지운 필드는 애초에 안 보임 → merged={...theirs}로 시작해 조용히
+//    남음). 서버 왕복 없이 순수 함수 자체를 직접 호출해 확인한다.
+// =====================================================================
+{
+  const pA = await newPage('A10');
+  await loginViaUi(pA, 'sync-devices-10@example.com');
+  const r1 = await pA.evaluate(() => {
+    const base = { id: 'p', note: 'old', version: 1 };
+    const mine = { id: 'p' }; // note를 지움.
+    const theirs = { id: 'p', note: 'old', version: 2 }; // theirs는 note를 안 건드림.
+    return daRemergeGenericConflict(mine, base, theirs, ['id']);
+  });
+  t('10) mine이 지운 필드(note)는 theirs가 안 건드렸으면 조용히 지워짐(되살아나지 않음)', !('note' in r1));
+  t('10) 삭제만 있었으면 fieldConflicts도 안 남음(진짜 충돌이 아니므로)', !r1._fieldConflicts || !r1._fieldConflicts.note);
+
+  // mine은 지웠는데 theirs는 그 사이 값을 실제로 고친 경우 — "지움 vs
+  // 수정"의 진짜 충돌. 삭제를 우선 반영하되(mine 우선 원칙 유지)
+  // theirs 값은 되살릴 수 있게 남겨야 한다.
+  const r2 = await pA.evaluate(() => {
+    const base = { id: 'p', note: 'old', version: 1 };
+    const mine = { id: 'p' };
+    const theirs = { id: 'p', note: 'NEW-FROM-OTHER-DEVICE', version: 2 };
+    return daRemergeGenericConflict(mine, base, theirs, ['id']);
+  });
+  t('10) mine 삭제 vs theirs 수정 — 삭제가 우선 반영됨(mine 우선)', !('note' in r2));
+  t('10) 이 경우엔 진짜 충돌이므로 theirs 값이 fieldConflicts에 남아 되살릴 수 있음', r2._fieldConflicts && r2._fieldConflicts.note && r2._fieldConflicts.note.theirs === 'NEW-FROM-OTHER-DEVICE' && r2._fieldConflicts.note.mine === undefined);
+
+  // 필드를 새로 추가한 경우(원래 base/theirs 둘 다 없던 필드)는 삭제
+  // 판정 로직에 안 걸리고 그냥 정상 반영돼야 한다(회귀 확인).
+  const r3 = await pA.evaluate(() => {
+    const base = { id: 'p', version: 1 };
+    const mine = { id: 'p', memo: '새로 적은 메모' };
+    const theirs = { id: 'p', version: 2 };
+    return daRemergeGenericConflict(mine, base, theirs, ['id']);
+  });
+  t('10) 새로 추가한 필드는 정상적으로 반영됨(삭제 판정과 안 헷갈림)', r3.memo === '새로 적은 메모');
+
+  await pA.close();
+}
+
+// =====================================================================
+// 11) 2026-09-11 재검토(11차) — ChatGPT가 지적한 핵심 결함: 여행
+//    (trips)의 같은-필드 충돌은 daRemergeGenericConflict가
+//    _fieldConflicts를 만들어도, server/routes/trips.mjs의 syncTrips/
+//    serializeTrip이 정해진 컬럼만 다뤄 재제출이 성공하는 순간 그
+//    정보가 통째로 사라졌다(서버 쪽 값을 사용자가 볼 기회 자체가
+//    없었다). 이제 field_conflicts 컬럼에 저장·응답에 실어 보내는지,
+//    로그아웃·재접속·다른 기기에서도 살아남는지, 실제 화면의 "다른
+//    기기 값으로 바꾸기" 버튼이 동작하는지까지 확인한다.
+// =====================================================================
+{
+  const email = 'sync-devices-11@example.com';
+  const city = '여행필드충돌도시';
+  const pA = await newPage('A11');
+  await loginViaUi(pA, email);
+  const tripId = await pA.evaluate(async (cityName) => {
+    const token = A.sessionToken(foodMap);
+    const r = await A.api('/api/trips', { method: 'POST', token, body: { city: cityName, name: '원래 여행 이름' } });
+    foodMap.trips = foodMap.trips || [];
+    foodMap.trips.push(r.json.trip);
+    A.saveFoodMap(foodMap);
+    return r.json.trip.tripId;
+  }, city);
+  await pA.evaluate(() => daSyncPushSafe());
+  await pA.waitForTimeout(300); // 서버 버전 1 — A의 기준선도 이 시점에 잡힘.
+
+  const pB = await newPage('B11');
+  await loginViaUi(pB, email);
+  await pB.evaluate(() => daSyncPushSafe()); // 빈 trips로 push해도 서버 목록을 그대로 받아 온다 — B의 기준선도 v1로 잡힘.
+  await pB.waitForTimeout(300);
+
+  // A가 이름을 SERVER로 바꿔 먼저 저장한다(서버 버전 2).
+  await pA.evaluate(() => { foodMap.trips.find((t) => t.name === '원래 여행 이름').name = 'SERVER'; A.saveFoodMap(foodMap); });
+  await pA.evaluate(() => daSyncPushSafe());
+  await pA.waitForTimeout(300);
+
+  // B는 이 사실을 모른 채(기준 여전히 v1) 같은 이름 필드를 LOCAL로
+  // 고쳐 저장한다 — 진짜 같은-필드 충돌.
+  await pB.evaluate(() => { foodMap.trips.find((t) => t.name === '원래 여행 이름').name = 'LOCAL'; A.saveFoodMap(foodMap); });
+  await pB.evaluate(() => daSyncPushSafe());
+  await pB.waitForTimeout(600); // 재병합 + 자동 재시도(daScheduleConflictRetry)까지 기다린다.
+
+  const bAfterRetry = await pB.evaluate((id) => foodMap.trips.find((t) => t.tripId === id), tripId);
+  t('11) 내가 고친 이름(LOCAL)이 재시도 후에도 조용히 사라지지 않음', bAfterRetry.name === 'LOCAL');
+  t('11) 재시도가 성공(서버에 저장)한 뒤에도 같은-필드 충돌 기록이 로컬에서 사라지지 않음(예전엔 여기서 사라졌다)', bAfterRetry._fieldConflicts && bAfterRetry._fieldConflicts.name && bAfterRetry._fieldConflicts.name.mine === 'LOCAL' && bAfterRetry._fieldConflicts.name.theirs === 'SERVER');
+
+  // 서버 자체에도 필드 충돌이 저장돼 있어야 한다(re-fetch로 확인 —
+  // 재현 지시의 핵심: "저장 트랜잭션 필드만 취급해 사라진다"를 직접
+  // 검증).
+  const tokenB = await pB.evaluate(() => foodMap.session.token);
+  const serverView1 = await fetch(`${apiBase}/api/trips`, { headers: { Authorization: `Bearer ${tokenB}` } }).then((r) => r.json());
+  const onServer1 = serverView1.trips.find((t) => t.tripId === tripId);
+  t('11) 서버에도 필드 충돌 기록이 실제로 저장돼 있음(field_conflicts 컬럼)', onServer1._fieldConflicts && onServer1._fieldConflicts.name && onServer1._fieldConflicts.name.theirs === 'SERVER');
+
+  // B가 "앱을 재시작"해도(새로고침) 충돌 기록이 그대로 남아 있어야
+  // 한다.
+  await pB.reload();
+  await pB.waitForTimeout(300);
+  const bAfterReload = await pB.evaluate((id) => foodMap.trips.find((t) => t.tripId === id), tripId);
+  t('11) 재시작(새로고침) 후에도 여행 필드 충돌이 남아 있음', bAfterReload._fieldConflicts && bAfterReload._fieldConflicts.name);
+
+  // 완전히 다른(세 번째) 기기로 같은 계정 로그인 — 처음 동기화하는
+  // 기기도 서버에 남아 있는 필드 충돌을 볼 수 있어야 한다.
+  const pC = await newPage('C11');
+  await loginViaUi(pC, email);
+  await pC.evaluate(() => daSyncPushSafe());
+  await pC.waitForTimeout(300);
+  const cTrip = await pC.evaluate((id) => foodMap.trips.find((t) => t.tripId === id), tripId);
+  t('11) 처음 동기화하는 세 번째 기기에서도 서버에 남아 있던 필드 충돌을 그대로 받아 옴', cTrip && cTrip._fieldConflicts && cTrip._fieldConflicts.name && cTrip._fieldConflicts.name.theirs === 'SERVER');
+
+  // 실제 화면(여행 블록)에 충돌 안내와 해결 버튼이 실제로 뜨는지, 눌렀을
+  // 때 실제로 적용되는지 확인한다("장소에만 해결 버튼이 있는 상태로
+  // 완료 처리하지 마"라는 지시의 핵심). 이 화면들은 저장된 장소가
+  // 하나도 없으면 샘플(usingSample) 모드로 남아 tripBlockHTML 자체가
+  // 아무것도 안 그리므로(여행 정보와 무관한 별개 조건), 최소 장소
+  // 하나를 채워 실데이터 모드로 전환한다.
+  await pB.evaluate((cityName) => {
+    foodMap.places = [{ id: 'anyplace', name: '아무 장소', cat: '기타', catConfirmed: true, city: cityName, cityKnown: true, cityConfirmed: true, sourceLists: [] }];
+    A.saveFoodMap(foodMap);
+  }, city);
+  await pB.evaluate((cityName) => { refreshFromStorage(); city = cityName; updateCity(); showRoute(); }, city);
+  await pB.waitForTimeout(150);
+  const tripBlockText = await pB.evaluate(() => document.getElementById('sheetContent').innerText);
+  t('11) 오늘 동선 화면에 여행 필드 충돌 안내가 실제로 표시됨', /다른 기기와 다르게 저장/.test(tripBlockText) && tripBlockText.includes('SERVER'));
+  const resolveBtn = await pB.evaluate(() => !!document.querySelector('[data-trip-conflict-resolve]'));
+  t('11) "다른 기기 값으로 바꾸기" 버튼이 실제로 존재함(장소 전용이 아님)', resolveBtn);
+  await pB.evaluate(() => { document.querySelector('[data-trip-conflict-resolve]').click(); });
+  await pB.waitForTimeout(200);
+  const bAfterResolve = await pB.evaluate((id) => foodMap.trips.find((t) => t.tripId === id), tripId);
+  t('11) 버튼을 누르면 실제로 다른 기기 값이 적용되고 충돌 표시가 사라짐', bAfterResolve.name === 'SERVER' && !bAfterResolve._fieldConflicts);
+
+  await pB.waitForTimeout(300); // 해결 결과가 서버에도 반영될 시간을 준다.
+  const serverView2 = await fetch(`${apiBase}/api/trips`, { headers: { Authorization: `Bearer ${tokenB}` } }).then((r) => r.json());
+  const onServer2 = serverView2.trips.find((t) => t.tripId === tripId);
+  t('11) 해결 결과가 서버에도 반영돼 field_conflicts가 정리됨', !onServer2._fieldConflicts);
+
+  await pA.close(); await pB.close(); await pC.close();
+}
+
+// =====================================================================
+// 12) 2026-09-11 재검토(11차) — 코스(레거시, tripId 없음)도 같은
+//    원칙으로 실제 화면에 해결 버튼이 있어야 한다(시나리오 7은 자동
+//    수렴만 확인했다 — 사용자가 직접 누르는 해결 버튼 자체는 그때
+//    검증되지 않았다).
+// =====================================================================
+{
+  const email = 'sync-devices-12@example.com';
+  const city = '코스해결버튼도시';
+  const date = '2026-11-01';
+  const pA = await newPage('A12');
+  await loginViaUi(pA, email);
+  await pA.evaluate((args) => {
+    foodMap.courses = [{ city: args.city, date: args.date, note: 'base', stops: [], excludedIds: [], excludedReasons: {}, totalMeters: 0, walkTotal: 0, endAt: 0 }];
+    A.saveFoodMap(foodMap);
+  }, { city, date });
+  await pA.evaluate(() => daSyncPushSafe());
+  await pA.waitForTimeout(300);
+
+  const pB = await newPage('B12');
+  await loginViaUi(pB, email);
+  await pB.waitForTimeout(300);
+
+  await pA.evaluate((args) => { foodMap.courses.find((c) => c.city === args.city && c.date === args.date).note = 'SERVER-NOTE'; A.saveFoodMap(foodMap); }, { city, date });
+  await pA.evaluate(() => daSyncPushSafe());
+  await pA.waitForTimeout(300);
+
+  await pB.evaluate((args) => { foodMap.courses.find((c) => c.city === args.city && c.date === args.date).note = 'LOCAL-NOTE'; A.saveFoodMap(foodMap); }, { city, date });
+  await pB.evaluate(() => daSyncPushSafe());
+  await pB.waitForTimeout(600);
+
+  await pB.evaluate((args) => {
+    city = args.city; updateCity();
+    foodMap.course = foodMap.courses.find((c) => c.city === args.city && c.date === args.date);
+    showSavedCourse();
+  }, { city, date });
+  await pB.waitForTimeout(150);
+  const courseBlockText = await pB.evaluate(() => document.getElementById('sheetContent').innerText);
+  t('12) 저장된 코스 화면에 코스 필드 충돌 안내가 실제로 표시됨', /다른 기기와 다르게 저장/.test(courseBlockText) && courseBlockText.includes('SERVER-NOTE'));
+  const courseResolveBtn = await pB.evaluate(() => !!document.querySelector('[data-course-conflict-resolve]'));
+  t('12) 코스 화면에도 "다른 기기 값으로 바꾸기" 버튼이 실제로 존재함', courseResolveBtn);
+  await pB.evaluate(() => { document.querySelector('[data-course-conflict-resolve]').click(); });
+  await pB.waitForTimeout(200);
+  const bCourseAfter = await pB.evaluate((args) => foodMap.courses.find((c) => c.city === args.city && c.date === args.date), { city, date });
+  t('12) 버튼을 누르면 실제로 다른 기기 값이 적용되고 충돌 표시가 사라짐', bCourseAfter.note === 'SERVER-NOTE' && !bCourseAfter._fieldConflicts);
+
+  await pA.close(); await pB.close();
+}
+
+// =====================================================================
+// 13) 2026-09-11 재검토(11차) — "HTTP 200과 동기화 완료는 다르다."
+//    미해결 필드 충돌이 남아 있는 상태로 로그아웃하면, 네트워크 실패
+//    메시지가 아니라 "값이 다른 항목이 남아 있다"는 별도 안내가 떠야
+//    한다(allOk=true여도 hasUnresolvedConflicts=true인 경우를 조용히
+//    통과시키지 않는다).
+// =====================================================================
+{
+  const email = 'sync-devices-13@example.com';
+  const city = '로그아웃구분도시';
+  const pA = await newPage('A13');
+  await loginViaUi(pA, email);
+  const tripId = await pA.evaluate(async (cityName) => {
+    const token = A.sessionToken(foodMap);
+    const r = await A.api('/api/trips', { method: 'POST', token, body: { city: cityName, name: '원래 이름' } });
+    foodMap.trips = foodMap.trips || [];
+    foodMap.trips.push(r.json.trip);
+    A.saveFoodMap(foodMap);
+    return r.json.trip.tripId;
+  }, city);
+  await pA.evaluate(() => daSyncPushSafe());
+  await pA.waitForTimeout(300);
+
+  const pB = await newPage('B13');
+  await loginViaUi(pB, email);
+  await pB.evaluate(() => daSyncPushSafe());
+  await pB.waitForTimeout(300);
+
+  await pA.evaluate(() => { foodMap.trips.find((t) => t.name === '원래 이름').name = 'A-VALUE'; A.saveFoodMap(foodMap); });
+  await pA.evaluate(() => daSyncPushSafe());
+  await pA.waitForTimeout(300);
+
+  await pB.evaluate(() => { foodMap.trips.find((t) => t.name === '원래 이름').name = 'B-VALUE'; A.saveFoodMap(foodMap); });
+  await pB.evaluate(() => daSyncPushSafe());
+  await pB.waitForTimeout(600); // 같은-필드 충돌이 B에 남는다.
+
+  const bTrip = await pB.evaluate((id) => foodMap.trips.find((t) => t.tripId === id), tripId);
+  t('13) 준비 확인 — B에 미해결 필드 충돌이 남아 있음', bTrip._fieldConflicts && bTrip._fieldConflicts.name);
+
+  // newPage()가 이미 이 페이지의 모든 dialog를 자동 dismiss하는
+  // 리스너를 등록해 뒀다(순서상 먼저 실행됨) — 여기서 또 dismiss를
+  // 부르면 "이미 처리된 dialog" 오류가 난다. 메시지만 읽는다.
+  let dialogMsg = '';
+  pB.once('dialog', (d) => { dialogMsg = d.message(); });
+  await pB.evaluate(() => daLogout());
+  await pB.waitForTimeout(200);
+  t('13) 미해결 충돌이 있으면 네트워크 실패 문구가 아니라 "값이 다른 항목" 전용 안내가 뜸', /값이 다른 항목/.test(dialogMsg));
+  t('13) 네트워크 실패 문구는 뜨지 않음(둘을 구분함)', !/네트워크 상태를 확인/.test(dialogMsg));
 
   await pA.close(); await pB.close();
 }

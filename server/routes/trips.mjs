@@ -22,7 +22,7 @@ function ownedTrip(db, accountId, tripId) {
 }
 
 function serializeTrip(row) {
-  return {
+  const trip = {
     tripId: row.trip_id,
     city: row.city,
     name: row.name,
@@ -33,6 +33,17 @@ function serializeTrip(row) {
     updatedAt: row.updated_at,
     version: row.version,
   };
+  // 2026-09-11 재검토(11차) — ChatGPT가 재현한 결함 수정. 예전엔 이
+  // 함수가 고정된 필드만 돌려줘 daRemergeGenericConflict가 남긴
+  // 임시 _fieldConflicts(같은 필드를 두 기기가 다르게 고친 진짜
+  // 충돌)가 재제출 성공과 동시에 조용히 사라졌다 — 서버 쪽 값을
+  // 사용자가 볼 기회 자체가 없었다. 이제 field_conflicts 컬럼에
+  // 그대로 저장해 뒀다가 응답에도 그대로 실어 보낸다(로그아웃·재접속·
+  // 다른 기기에서도 살아남는다).
+  if (row.field_conflicts) {
+    try { const fc = JSON.parse(row.field_conflicts); if (fc && Object.keys(fc).length) trip._fieldConflicts = fc; } catch (e) { /* 손상된 값은 무시 — 충돌 안내가 안 뜨는 것 이상으로 나빠지지 않는다. */ }
+  }
+  return trip;
 }
 
 export function listTrips(accountId) {
@@ -129,10 +140,17 @@ export function syncTrips(accountId, incomingTrips) {
       if (existing && existing.account_id !== accountId) continue; // 다른 계정 소유 — 절대 건드리지 않음(계정 격리)
 
       const lodgingJson = incoming.lodging !== undefined ? (incoming.lodging ? JSON.stringify(incoming.lodging) : null) : null;
+      // 2026-09-11 재검토(11차) — 클라이언트가 daRemergeGenericConflict로
+      // 3-way 재병합한 결과에는 아직 사용자가 안 고른 진짜 필드 충돌이
+      // `_fieldConflicts`로 실려 온다. 그대로 저장해 뒀다가(field_conflicts
+      // 컬럼) 응답에도 실어 보내야 사용자가 다음에 이 화면을 다시
+      // 열었을 때(또는 다른 기기에서) 그 정보를 보고 직접 고를 수
+      // 있다 — 저장하지 않으면 재제출이 성공하는 순간 조용히 사라진다.
+      const fieldConflictsJson = (incoming._fieldConflicts && Object.keys(incoming._fieldConflicts).length) ? JSON.stringify(incoming._fieldConflicts) : null;
       let conflicted = false;
       if (!existing) {
-        db.prepare('INSERT INTO trips (trip_id, account_id, city, name, start_date, end_date, lodging, created_at, updated_at, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)')
-          .run(incoming.tripId, accountId, String(incoming.city), incoming.name || null, incoming.startDate || null, incoming.endDate || null, lodgingJson, now, now);
+        db.prepare('INSERT INTO trips (trip_id, account_id, city, name, start_date, end_date, lodging, created_at, updated_at, version, field_conflicts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)')
+          .run(incoming.tripId, accountId, String(incoming.city), incoming.name || null, incoming.startDate || null, incoming.endDate || null, lodgingJson, now, now, fieldConflictsJson);
       } else {
         // 2026-09-10 재검토(8차) — ChatGPT가 account_places에서 재현한
         // 것과 같은 결함이 여기도 있었다: "기준 버전보다 크거나 같으면
@@ -141,12 +159,30 @@ export function syncTrips(accountId, incomingTrips) {
         // (`===`) — 클라이언트가 실제로 지금 서버 값을 보고 수정한
         // 경우만 정의상 존재할 수 있는 값이다.
         const baseVersion = Number(incoming.version) || 0;
-        if (baseVersion !== existing.version) {
+        // 2026-09-11 재검토(11차) — account_places/account_courses는
+        // 이미 "내용이 실제로 안 바뀐 재전송은 기준 버전을 안 올린다"는
+        // 원칙(placeContentEqual)이 있는데 trips만 없었다. 그 결과,
+        // 아무것도 안 바꾼 기기가 그냥 다시 동기화만 해도(예: 로그인
+        // 직후 서버 목록을 받아 오려고 빈 배열 대신 자기 로컬 사본을
+        // 그대로 재제출) 버전이 부당하게 올라가, 그 사이 실제로 값을
+        // 고친 다른 기기(baseVersion이 이제 뒤처짐)가 진짜 변경이
+        // 전혀 없었는데도 가짜 충돌을 만나게 됐다(실제로 재현됨 —
+        // scripts/test-sync-conflict-devices.mjs 11번 시나리오).
+        const existingFieldConflictsJson = existing.field_conflicts || null;
+        const contentUnchanged = String(incoming.city) === existing.city
+          && (incoming.name || null) === existing.name
+          && (incoming.startDate || null) === existing.start_date
+          && (incoming.endDate || null) === existing.end_date
+          && lodgingJson === existing.lodging
+          && fieldConflictsJson === existingFieldConflictsJson;
+        if (contentUnchanged) {
+          // 실질적으로 아무것도 안 바뀐 재전송 — 버전을 올리지 않는다.
+        } else if (baseVersion !== existing.version) {
           conflicted = true;
           conflicts.push({ tripId: incoming.tripId, reason: 'stale-base-version', serverVersion: existing.version, serverTrip: serializeTrip(existing) });
         } else {
-          db.prepare('UPDATE trips SET city = ?, name = ?, start_date = ?, end_date = ?, lodging = ?, updated_at = ?, version = version + 1 WHERE trip_id = ?')
-            .run(String(incoming.city), incoming.name || null, incoming.startDate || null, incoming.endDate || null, lodgingJson, now, incoming.tripId);
+          db.prepare('UPDATE trips SET city = ?, name = ?, start_date = ?, end_date = ?, lodging = ?, updated_at = ?, version = version + 1, field_conflicts = ? WHERE trip_id = ?')
+            .run(String(incoming.city), incoming.name || null, incoming.startDate || null, incoming.endDate || null, lodgingJson, now, fieldConflictsJson, incoming.tripId);
         }
       }
       if (!conflicted && Array.isArray(incoming.courses)) {
