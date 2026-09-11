@@ -81,6 +81,11 @@ await p.click('[data-lookup-confirm^="nf1|"]');
 await p.waitForTimeout(200);
 const afterConfirm = await p.evaluate(() => foodMap.places.find((x) => x.id === 'nf1'));
 t('"맞아요"를 눌러야만 실제로 좌표가 저장됨(자동 반영 아님)', typeof afterConfirm.lat === 'number' && typeof afterConfirm.lng === 'number');
+// 2026-09-11 재검토(10차) 5절 — 자동분류 우선순위: 이 확인으로 얻은
+// "신뢰 가능한 장소 유형"(테스트 어댑터가 준 ['restaurant','food'])이
+// 아직 사용자가 확정하지 않은 이름 기반 짐작(카페·디저트)보다 우선
+// 반영돼야 한다.
+t('10차 5절) 확인된 유형(공급자 types)이 확정 안 된 이름 기반 짐작보다 우선 반영됨', afterConfirm.cat === '맛집·식당' && Array.isArray(afterConfirm.confirmedTypes) && afterConfirm.confirmedTypes.includes('restaurant'));
 const afterConfirmTitle = await p.textContent('#sheetLabel');
 t('확인 후 다시 장소 상세로 돌아가 반영된 걸 바로 볼 수 있음', afterConfirmTitle === '내 장소');
 const detailHtmlAfter = await p.textContent('#sheetContent');

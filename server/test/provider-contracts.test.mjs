@@ -174,7 +174,12 @@ async function ensureAccount(id) {
   t('Places(New) — 엔드포인트가 문서 기준 경로(v1/places:searchText)', mock.calls[0].url.endsWith('/v1/places:searchText'));
   t('Places(New) — Legacy(findplacefromtext)를 더 이상 쓰지 않음', !mock.calls[0].url.includes('findplacefromtext'));
   t('Places(New) — X-Goog-Api-Key 헤더로 키를 보냄', mock.calls[0].init.headers['X-Goog-Api-Key'] === 'fake-places-key');
-  t('Places(New) — X-Goog-FieldMask 헤더로 필요한 필드만 요청함(과금 등급 최소화)', mock.calls[0].init.headers['X-Goog-FieldMask'] === 'places.id,places.displayName,places.location,places.formattedAddress');
+  // 2026-09-11 재검토(10차) 5절 — "이미 확보한 신뢰 가능한 장소 유형"을
+  // 분류 우선순위에 쓰기 위해 types/primaryType을 필드마스크에 추가했다
+  // (분류만을 위한 새 유료 조회를 만들지 않고, 이미 실행되는 이 호출에
+  // 얹었다). 이 필드 추가가 과금 등급을 바꾸는지는 이 세션이 재확인
+  // 못했다 — place-lookup.mjs 상단 주석 참고, 운영 전 재확인 필요.
+  t('Places(New) — X-Goog-FieldMask 헤더로 필요한 필드만 요청함(과금 등급 최소화 + 10차 types/primaryType 추가)', mock.calls[0].init.headers['X-Goog-FieldMask'] === 'places.id,places.displayName,places.location,places.formattedAddress,places.types,places.primaryType');
   const sentBody = JSON.parse(mock.calls[0].init.body);
   t('Places(New) — 본문에 textQuery로 질의를 보냄', sentBody.textQuery === '스타벅스');
   t('실제 후보를 찾으면 좌표·이름·placeId를 반환', r.ok === true && r.lat === 37.5 && r.lng === 127.0 && r.placeId === 'place_1');

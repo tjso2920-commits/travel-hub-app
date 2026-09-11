@@ -65,6 +65,15 @@ export function skuCostMicros(sku) {
     'places-text-search': config.costEstimate.placesTextSearchMicros,
     'routes-compute': config.costEstimate.routesComputeMicros,
     'routes-compute-highvolume': config.costEstimate.routesComputeHighVolumeMicros,
+    // 2026-09-11 재검토(10차) 6절 — AI 보조 분류도 같은 원장(cost_ledger)
+    // 에 'ai-classify' 서비스로 기록한다. sku/service로 분리 집계
+    // (BUSINESS_DECISIONS.md 보고, usageSummary 쿼리)는 그대로 가능하고,
+    // periodCostMicros/chargeCostBatch의 한도 확인은 이 값도 계정의
+    // 같은 이용권 기간 누적(periodCapMicros)에 자동으로 합산한다 —
+    // 별도 합산 로직을 새로 만들 필요가 없다(장소조회·경로와 동일한
+    // periodId/periodCapMicros로 호출하기만 하면 됨). 단가 자체가
+    // 미검증 자리표시자라는 점은 config.mjs의 aiClassify 주석 참고.
+    'ai-classify-batch': config.aiClassify.placeholderPerItemMicros,
   };
   const v = map[sku];
   if (v == null) throw new Error('unknown-cost-sku:' + sku);

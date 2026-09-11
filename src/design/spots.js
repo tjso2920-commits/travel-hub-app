@@ -813,13 +813,18 @@ async function daLookupCandidateSheet(id) {
   const ambiguousNote = cand.ambiguous ? ' 이 이름의 장소가 여러 곳 있을 수 있어요 —' : '';
   open('위치 확인', `<div class="detail"><h2>이 위치가 맞나요?</h2><p><b>${A.esc(cand.name || p.name)}</b>${cand.address ? `<br>${A.esc(cand.address)}` : ''}<br>위도 ${cand.lat.toFixed(5)}, 경도 ${cand.lng.toFixed(5)}</p>` +
     `<p class="inline-note">이름으로 찾은 후보일 뿐 확정된 위치가 아닙니다 —${ambiguousNote} 실제로 저장하신 곳이 맞는지 꼭 확인한 뒤에만 저장해 주세요.</p>` +
-    `<button class="primary" data-lookup-confirm="${A.esc(id)}|${cand.lat}|${cand.lng}|${A.esc(cand.placeId || '')}">맞아요 · 이 위치로 저장</button>` +
+    `<button class="primary" data-lookup-confirm="${A.esc(id)}|${cand.lat}|${cand.lng}|${A.esc(cand.placeId || '')}|${A.esc((cand.types || []).join(','))}">맞아요 · 이 위치로 저장</button>` +
     `<button class="text-button" data-dismiss>아니에요 · 취소</button></div>`);
 }
-function finishLookupConfirm(id, lat, lng, placeId) {
+function finishLookupConfirm(id, lat, lng, placeId, types) {
   const p = foodMap.places.find((x) => x.id === id); if (!p) return;
   p.lat = lat; p.lng = lng;
   if (placeId && !p.placeId) p.placeId = placeId; // 이미 있던 강한 식별자는 절대 안 덮는다(daMerge 규칙과 일관).
+  // 2026-09-11 재검토(10차) 5절 — 자동분류 우선순위: 사용자 확정값 >
+  // "이미 확보한 신뢰 가능한 장소 유형"(방금 이 확인으로 얻은 공급자의
+  // types) > 이름 기반 규칙. 사용자가 이미 직접 고른(catConfirmed/
+  // tagsConfirmed=true) 값은 이 확인이 있어도 절대 덮지 않는다.
+  if (Array.isArray(types) && types.length) A.applyConfirmedTypes(p, types);
   const saved = A.saveFoodMap(foodMap);
   if (!saved) {
     foodMap = A.loadFoodMap();
@@ -1165,7 +1170,7 @@ function daShowBatchQueueStep() {
   const ambiguousNote = cand.ambiguous ? ' 이 이름의 장소가 여러 곳 있을 수 있어요 —' : '';
   open(`위치 확인 (${idx + 1}/${items.length})`, `<div class="detail"><h2>이 위치가 맞나요?</h2><p><b>${A.esc(cand.name || (p && p.name) || '')}</b>${cand.address ? `<br>${A.esc(cand.address)}` : ''}<br>위도 ${cand.lat.toFixed(5)}, 경도 ${cand.lng.toFixed(5)}</p>` +
     `<p class="inline-note">이름으로 찾은 후보일 뿐 확정된 위치가 아닙니다 —${ambiguousNote} 실제로 저장하신 곳이 맞는지 꼭 확인한 뒤에만 저장해 주세요.</p>` +
-    `<button class="primary" data-batch-confirm="${A.esc(item.id)}|${cand.lat}|${cand.lng}|${A.esc(cand.placeId || '')}">맞아요 · 이 위치로 저장</button>` +
+    `<button class="primary" data-batch-confirm="${A.esc(item.id)}|${cand.lat}|${cand.lng}|${A.esc(cand.placeId || '')}|${A.esc((cand.types || []).join(','))}">맞아요 · 이 위치로 저장</button>` +
     `<button class="text-button" data-batch-skip>건너뛰기</button></div>`);
 }
 /* ── 짧은 구매 흐름(로드맵 ⑨) ────────────────────────────────────────
@@ -1991,13 +1996,13 @@ $('#sheetContent').onclick = (e) => {
   if (b.dataset.tagsEdit) return tagsEditSheet(b.dataset.tagsEdit);
   if (b.dataset.lookupPlace) return daLookupCandidateSheet(b.dataset.lookupPlace);
   if (b.dataset.lookupConfirm) {
-    const [pid, lat, lng, placeId] = b.dataset.lookupConfirm.split('|');
-    return finishLookupConfirm(pid, +lat, +lng, placeId);
+    const [pid, lat, lng, placeId, typesStr] = b.dataset.lookupConfirm.split('|');
+    return finishLookupConfirm(pid, +lat, +lng, placeId, typesStr ? typesStr.split(',').filter(Boolean) : []);
   }
   if (b.hasAttribute('data-batch-lookup')) return daBatchLookupFlow();
   if (b.dataset.batchConfirm) {
-    const [pid, lat, lng, placeId] = b.dataset.batchConfirm.split('|');
-    finishLookupConfirm(pid, +lat, +lng, placeId);
+    const [pid, lat, lng, placeId, typesStr] = b.dataset.batchConfirm.split('|');
+    finishLookupConfirm(pid, +lat, +lng, placeId, typesStr ? typesStr.split(',').filter(Boolean) : []);
     if (daBatchQueue) { daBatchQueue.idx += 1; daShowBatchQueueStep(); }
     return;
   }

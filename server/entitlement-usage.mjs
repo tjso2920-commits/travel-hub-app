@@ -474,3 +474,31 @@ export function periodCostStatus(accountId, period) {
   const used = periodCostMicros(accountId, period.periodId);
   return { usedMicros: used, capMicros: period.costCapMicros, remainingMicros: Math.max(0, period.costCapMicros - used) };
 }
+
+/* 2026-09-11 재검토(10차) 6절 — "AI가 예산을 먼저 소진해서 약속한
+   위치확인 50곳·코스 30회를 막으면 안 된다"는 지시의 실제 구현. 단순히
+   "상한을 넘으면 막는다"에서 그치지 않고, 이 계정이 이번 이용권
+   기간에 **아직 안 쓴** 핵심 제공량(남은 위치확인·코스 생성)이 실제로
+   원가로 얼마나 되는지 먼저 계산해 그만큼을 "예약된 몫"으로 떼어 둔다
+   — AI는 그 예약분을 절대 건드리지 못하고, 남는 여유(headroom)만 쓸
+   수 있다. 코스 생성 원가는 세그먼트 수·경유지 수에 따라 실제로는
+   변하지만(routes-compute vs highvolume), 여기서는 "최소 원가로도
+   반드시 확보돼야 한다"는 보수적 하한선을 위해 더 싼 쪽(routes-compute)
+   단가로 예약한다 — 실제 코스 생성이 더 비싼 등급으로 청구되면 그
+   차액은 이미 그 코스 생성 자체의 chargeCostBatch가 같은 상한 안에서
+   확인하므로(이 함수는 "AI가 미리 갉아먹지 못하게" 막는 역할만 한다),
+   과소 예약이 core 제공량을 막는 결과로 이어지지 않는다. */
+export function aiClassifyBudgetHeadroomMicros(accountId, period) {
+  const db = openDb();
+  const row = usageRow(db, accountId, period.periodId);
+  const usedLookups = row ? row.place_lookups_used : 0;
+  const usedCourses = row ? row.course_successes_used : 0;
+  const remainingLookups = Math.max(0, period.placeLookupLimit - usedLookups);
+  const remainingCourses = Math.max(0, period.courseLimit - usedCourses);
+  const reservedForCoreMicros = remainingLookups * config.costEstimate.placesTextSearchMicros
+    + remainingCourses * config.costEstimate.routesComputeMicros;
+  const spentMicros = periodCostMicros(accountId, period.periodId);
+  const capMicros = period.costCapMicros;
+  const headroomMicros = Math.max(0, capMicros - spentMicros - reservedForCoreMicros);
+  return { headroomMicros, reservedForCoreMicros, spentMicros, capMicros, remainingLookups, remainingCourses };
+}

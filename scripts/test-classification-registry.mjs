@@ -113,6 +113,24 @@ t('5) 일괄 해제도 지정한 곳만 정확히 반영됨', !r5.afterRemove[0]
 const r6 = await p.evaluate(() => A.inferTags('아무 가게 이름'));
 t('6) "꼭 가기" 같은 개인 주제어는 이름 텍스트만으로 자동 추정되지 않음(사용자가 명시적으로 붙여야 함)', !r6.includes('꼭 가기'));
 
+// =====================================================================
+// 7) 자동분류 우선순위 — 사용자 확정값(catConfirmed/tagsConfirmed=true)
+//    은 방금 확보한 "신뢰 가능한 장소 유형"이 들어와도 절대 안 덮인다.
+//    확정 안 된 값만 확인된 유형으로 올라간다.
+// =====================================================================
+const r7 = await p.evaluate(() => {
+  const confirmed = { cat: '숙소', catConfirmed: true, tags: ['조식포함'], tagsConfirmed: true };
+  A.applyConfirmedTypes(confirmed, ['restaurant', 'food']);
+  const unconfirmed = { cat: '기타', catConfirmed: false, tags: [], tagsConfirmed: false };
+  A.applyConfirmedTypes(unconfirmed, ['cafe']);
+  return { confirmed, unconfirmed };
+});
+t('7) 사용자가 확정한 상위분류는 확인된 유형이 들어와도 그대로 유지됨', r7.confirmed.cat === '숙소');
+t('7) 사용자가 확정한 태그도 그대로 유지됨', JSON.stringify(r7.confirmed.tags) === JSON.stringify(['조식포함']));
+t('7) 확정 안 된 상위분류는 확인된 유형으로 실제로 올라감(기타 → 카페·디저트)', r7.unconfirmed.cat === '카페·디저트');
+t('7) 확정 안 된 태그도 확인된 유형에서 함께 제안됨(카페)', r7.unconfirmed.tags.includes('카페'));
+t('7) 확인된 유형 자체는 근거 추적을 위해 confirmedTypes에 기록됨', JSON.stringify(r7.unconfirmed.confirmedTypes) === JSON.stringify(['cafe']));
+
 t('최종 콘솔/런타임 오류 0', errs.length === 0);
 if (errs.length) console.log(errs);
 

@@ -79,6 +79,15 @@ export function buildConfig(env) {
   const hasWeatherKey = !!env.WEATHER_API_KEY;
   const webhookSecretIsDefault = !env.PAYMENT_WEBHOOK_SECRET || env.PAYMENT_WEBHOOK_SECRET === 'test-webhook-secret-not-for-production';
 
+  // 2026-09-11 재검토(10차) 5절 — AI 보조 분류는 "실제 공급자 미확정,
+  // 운영 AI 호출은 기본 비활성"이 명시된 요구사항이다. 다른 서비스처럼
+  // 키 유무로 real을 켜는 게 아니라, real 모드 자체를 아직 구현하지
+  // 않는다(server/adapters/ai-classify.mjs 참고) — 실수로도 실과금
+  // 경로가 열리지 않게 하기 위해서다. 개발/테스트에서만, 명시적으로
+  // AI_CLASSIFY_ADAPTER=mock을 준 경우에 한해 결정론적 모의 어댑터를
+  // 켤 수 있다(계약 테스트용).
+  const aiClassifyMode = isProd ? 'disabled' : (env.AI_CLASSIFY_ADAPTER === 'mock' ? 'mock' : 'disabled');
+
   let services;
   if (isProd) {
     // 운영에서는 절대 가짜 응답을 안 준다 — 키가 없으면 그 기능은
@@ -89,6 +98,7 @@ export function buildConfig(env) {
       payment: hasPaymentSecret && hasTossClientKey ? 'real' : 'unavailable',
       email: hasEmailKey ? 'real' : 'unavailable',
       weather: hasWeatherKey ? 'real' : 'unavailable',
+      aiClassify: aiClassifyMode,
     };
   } else {
     services = {
@@ -97,6 +107,7 @@ export function buildConfig(env) {
       payment: serviceModeDev(forceTest, hasPaymentSecret && hasTossClientKey, env.PAYMENT_ADAPTER),
       email: serviceModeDev(forceTest, hasEmailKey, env.EMAIL_ADAPTER),
       weather: serviceModeDev(forceTest, hasWeatherKey, env.WEATHER_ADAPTER),
+      aiClassify: aiClassifyMode,
     };
   }
 
@@ -106,7 +117,12 @@ export function buildConfig(env) {
     services,
     // 참고용 요약값(운영에서는 "전부 unavailable이 아니면 test는 아니다"는
     // 의미가 없어지므로, development/test에서만 의미 있게 쓴다).
-    testMode: !isProd && (forceTest || Object.values(services).every((m) => m === 'test')),
+    // 2026-09-11 재검토(10차) — aiClassify는 real/test 이분법이 아니라
+    // disabled/mock뿐이라(위 설명 참고) 이 "전부 test인지" 요약 판정에서
+    // 제외한다 — 안 그러면 다른 서비스가 전부 test여도 aiClassify가
+    // 'disabled'라는 이유만으로 testMode가 항상 false가 되는 회귀가
+    // 생긴다.
+    testMode: !isProd && (forceTest || Object.entries(services).every(([k, m]) => k === 'aiClassify' || m === 'test')),
     port: Number(env.PORT || 8787),
     dbPath: env.DB_PATH || path.join(HERE, 'data', 'app.db'),
 
@@ -382,6 +398,31 @@ export function buildConfig(env) {
       // 스팸이 몰리면 그 자체가 운영 부담이다).
       perAccountDailyLimit: Number(env.FEEDBACK_PER_ACCOUNT_DAILY_LIMIT || 10),
       perIpDailyLimit: Number(env.FEEDBACK_PER_IP_DAILY_LIMIT || 20),
+    },
+
+    // 2026-09-11 재검토(10차) 5·6절 — AI 보조 분류 비용 통제.
+    // **중요: aiClassifyPlaceholderMicros는 실제 공급자 견적이 아니다.**
+    // 이 라운드 시점에 AI 공급자·모델이 전혀 확정되지 않았고(사업 문서
+    // 어디에도 결정된 적 없음), 이 세션은 공식 가격 페이지 접속도 막혀
+    // 있어(placesTextSearchPro/routesCompute와 같은 상황, 위 주석 참고)
+    // 실제 단가를 확인할 방법이 없다. 이 값은 오직 "예산 예약·헤드룸
+    // 계산 코드 경로가 실제로 동작하는지"를 테스트하기 위한 구조적
+    // 자리표시자이며, 실제 원가 보고서(BUSINESS_DECISIONS.md 10차 갱신)
+    // 에는 이 숫자를 확정 단가처럼 쓰지 않고 "미검증"이라고 명시한다.
+    // 공급자가 정해지면 이 값을 실제 공식 단가로 교체해야 한다.
+    aiClassify: {
+      // 배치당(여러 장소를 한 번의 요청에 묶어 보낼 때) 항목 1개를
+      // 처리하는 데 드는 예상 비용의 자리표시자.
+      placeholderPerItemMicros: Number(env.AI_CLASSIFY_PLACEHOLDER_PER_ITEM_KRW_MICROS || 3_000_000), // 자리표시자 3원/건 — 검증되지 않음.
+      // 한 번의 배치 요청에 담을 수 있는 최대 항목 수(공급자 토큰
+      // 한도·타임아웃을 감안한 보수적 상한 — 공급자가 정해지면 재조정).
+      maxItemsPerBatch: Number(env.AI_CLASSIFY_MAX_ITEMS_PER_BATCH || 20),
+      // 계정당 하루 배치 호출 횟수 상한(재시도·남용 방지 — 코스 생성
+      // rate-limit과 같은 목적).
+      perAccountDailyBatchLimit: Number(env.AI_CLASSIFY_PER_ACCOUNT_DAILY_BATCH_LIMIT || 10),
+      // 분류 결과 캐시 무효화 버전 — 프롬프트·검증 규칙이 바뀌면 이
+      // 값을 올려서 기존 캐시(해시+버전 일치 확인)를 전부 무효화한다.
+      classificationVersion: Number(env.AI_CLASSIFY_VERSION || 1),
     },
   };
 }

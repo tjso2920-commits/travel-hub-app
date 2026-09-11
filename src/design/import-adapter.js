@@ -517,6 +517,53 @@ function daInferTags(s) {
   }
   return out;
 }
+/* 2026-09-11 재검토(10차) 5절 — 자동분류 우선순위: 사용자 확정값 >
+   "이미 확보한 신뢰 가능한 장소 유형" > 명확한 규칙(이름 텍스트) >
+   (필요시 AI) > 미분류. 이 표는 Google Places(New)의 자유형 types
+   문자열(공식: https://developers.google.com/maps/documentation/places/web-service/place-types
+   — 이 세션은 접속이 막혀 재확인은 못했다) 중 우리 상위분류·세부
+   태그로 안전하게 대응되는 것만 담는다 — 모르는 type은 그냥
+   무시한다(억지로 끼워 맞추지 않는다). 국가·언어와 무관한 매핑이라
+   방콕의 스시집도 정확히 스시로 분류된다(실제 근거가 공급자 데이터인
+   경우). */
+const PLACE_TYPE_TO_CATEGORY = {
+  lodging: '숙소', hotel: '숙소', hostel: '숙소', guest_house: '숙소',
+  transit_station: '교통', train_station: '교통', subway_station: '교통', airport: '교통', bus_station: '교통',
+  spa: '마사지·스파', massage: '마사지·스파',
+  pharmacy: '약국·병원', hospital: '약국·병원', doctor: '약국·병원',
+  cafe: '카페·디저트', bakery: '카페·디저트', coffee_shop: '카페·디저트',
+  bar: '바·이자카야', night_club: '바·이자카야', pub: '바·이자카야',
+  tourist_attraction: '관광·명소', museum: '관광·명소', park: '관광·명소', place_of_worship: '관광·명소',
+  shopping_mall: '쇼핑', supermarket: '쇼핑', store: '쇼핑', convenience_store: '쇼핑',
+  restaurant: '맛집·식당', food: '맛집·식당', meal_takeaway: '맛집·식당',
+};
+const PLACE_TYPE_TO_TAG = {
+  cafe: '카페', coffee_shop: '카페', bakery: '베이커리·디저트',
+  bar: null, // bar만으로는 이자카야/와인바 등 세부를 지어내지 않는다(근거 부족 시 미분류 원칙).
+  spa: '스파·온천', massage: '마사지',
+};
+/* types(공급자가 방금 돌려준 실제 유형 배열)로 cat/tags를 올린다.
+   사용자가 이미 확정한 값(catConfirmed/tagsConfirmed=true)은 이 확인이
+   방금 일어났어도 절대 덮지 않는다 — "사용자 확정값이 최우선"이라는
+   순서를 places 객체 단위로 강제한다. */
+function daApplyConfirmedTypes(p, types) {
+  if (!p || !Array.isArray(types)) return;
+  p.confirmedTypes = types; // 근거 추적용 — 나중에 재분류·디버깅에 쓴다.
+  if (!p.catConfirmed) {
+    for (const ty of types) {
+      const cat = PLACE_TYPE_TO_CATEGORY[ty];
+      if (cat) { p.cat = cat; break; }
+    }
+  }
+  if (!p.tagsConfirmed) {
+    const suggested = new Set(p.tags || []);
+    for (const ty of types) {
+      const tagLabel = PLACE_TYPE_TO_TAG[ty];
+      if (tagLabel) suggested.add(tagLabel);
+    }
+    p.tags = Array.from(suggested);
+  }
+}
 /* 태그 CRUD — 사용자가 새 태그를 만들거나 이름을 바꾸거나 지울 수
    있어야 한다는 지시(10차 4절) 반영. place.tags는 계속 label 문자열을
    저장하므로, 이름 수정은 레지스트리의 label만 바꾸는 게 아니라 이미
@@ -1179,6 +1226,7 @@ window.DesignAdapter = {
   bulkSetTag: daBulkSetTag,
   findTagByLabel: daFindTagByLabel,
   normalizeTagLabel: daNormalizeTagLabel,
+  applyConfirmedTypes: daApplyConfirmedTypes,
   knownCities: Object.keys(FM_CITY_ALT),
   esc: daEsc,
   hasCoords: daHasCoords,

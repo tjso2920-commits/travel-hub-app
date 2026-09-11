@@ -45,7 +45,12 @@ function testAdapter({ query }) {
   if (Math.abs(hash) % 5 === 0) return { ok: false, reason: 'not-found' };
   const lat = 33.5 + (Math.abs(hash) % 1000) / 10000;
   const lng = 130.3 + (Math.abs(hash >> 8) % 1000) / 10000;
-  return { ok: true, lat, lng, name: q, address: q, source: 'test-adapter', placeId: 'test-' + Math.abs(hash), ambiguous: false, candidates: [] };
+  // 2026-09-11 재검토(10차) 5절 — 개발/테스트에서도 "확인된 유형" 우선
+  // 분류 경로를 실제로 태워 볼 수 있게, 결정론적인 가짜 types를 준다
+  // (실제 Google 응답의 자유형 문자열 형태를 흉내낸 것일 뿐 실제
+  // 값이 아니다).
+  const fakeTypes = /역|타워|station|tower/i.test(q) ? ['transit_station'] : ['restaurant', 'food'];
+  return { ok: true, lat, lng, name: q, address: q, source: 'test-adapter', placeId: 'test-' + Math.abs(hash), ambiguous: false, candidates: [], types: fakeTypes, primaryType: fakeTypes[0] };
 }
 
 /* candidates 중 expectedArea(도시·동네 등 힌트 문자열)와 formattedAddress
@@ -69,6 +74,16 @@ function toCandidate(place) {
     address: place.formattedAddress,
     lat: loc.latitude,
     lng: loc.longitude,
+    // 2026-09-11 재검토(10차) 5절 — "이미 확보한 신뢰 가능한 장소
+    // 유형"을 분류 우선순위 체인에 쓰기 위해 캡처한다. 분류만을 위해
+    // 새 유료 조회를 추가하지 말라는 지시가 있어, 새 호출을 만들지
+    // 않고 위치 확인(이미 실행되는 이 호출) 응답에서 함께 얻는다.
+    // 주의: 이 필드 추가가 과금 등급(Pro 유지인지, 더 비싼 등급으로
+    // 바뀌는지)을 바꾸는지는 이 세션이 developers.google.com 접속이
+    // 막혀 재확인하지 못했다 — 위 파일 상단 주석과 같은 상황이며,
+    // 운영 전 반드시 공식 문서로 재확인해야 한다(RELEASE_STATUS.md).
+    types: Array.isArray(place.types) ? place.types : [],
+    primaryType: place.primaryType || null,
   };
 }
 
@@ -85,7 +100,7 @@ async function googleAdapter({ query, expectedArea }) {
       headers: {
         'Content-Type': 'application/json',
         'X-Goog-Api-Key': key,
-        'X-Goog-FieldMask': 'places.id,places.displayName,places.location,places.formattedAddress',
+        'X-Goog-FieldMask': 'places.id,places.displayName,places.location,places.formattedAddress,places.types,places.primaryType',
       },
       body: JSON.stringify({ textQuery: query, languageCode: 'ko' }),
     }, config.externalRequestTimeoutMs);
@@ -110,6 +125,8 @@ async function googleAdapter({ query, expectedArea }) {
       placeId: picked.placeId,
       ambiguous,
       candidates,
+      types: picked.types,
+      primaryType: picked.primaryType,
     };
   } catch (e) {
     return { ok: false, reason: 'network-error' };
