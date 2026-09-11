@@ -99,6 +99,24 @@ daTrackSafe('channel_inflow', { channel: window.Analytics ? window.Analytics.cla
    않고(안 잃음) 성공한 것만 반영한다. 반환값(성공 여부)은 daLogout이
    "동기화가 실제로 끝났는지"를 판단하는 데 쓴다. */
 let daSyncPushSeq = 0;
+/* 2026-09-11 재검토(10차) — 충돌 자동 재시도 폭주 방지. 재병합해도
+   다른 기기가 계속 동시에 고치는 중이면 매번 다시 충돌이 나 무한히
+   즉시 재시도(setTimeout(...,0))할 수 있다. 연속 자동 재시도 횟수를
+   세어 한도(3회)를 넘기면 즉시 재시도를 멈추고 다음 자연스러운
+   daSyncPushSafe 호출(사용자 조작 등)을 기다린다 — 데이터는 이미
+   로컬에 병합돼 안전하게 남아 있으므로 지금 당장 더 밀어붙이지 않아도
+   잃을 게 없다. 성공적으로(충돌 없이) 끝난 push는 이 카운터를 0으로
+   되돌린다. */
+let daSyncConflictRetryCount = 0;
+const DA_SYNC_CONFLICT_RETRY_LIMIT = 3;
+function daScheduleConflictRetry() {
+  daSyncConflictRetryCount++;
+  if (daSyncConflictRetryCount > DA_SYNC_CONFLICT_RETRY_LIMIT) {
+    daToast('다른 기기와 계속 동시에 저장되고 있어요. 잠시 후 다시 시도해 주세요.');
+    return;
+  }
+  setTimeout(() => daSyncPushSafe(), 0);
+}
 
 /* 2026-09-10 재검토(8차) — 알림용 토스트. 이미 index.html에 있는
    #toast 요소(승인 디자인이 만들어 둔 것, 지금까지는 아무도 안 씀)를
@@ -142,12 +160,20 @@ function daToast(msg) {
    병합 결과가 실제로 성공 저장되는 순간(성공 경로는 serverPlace를
    그대로 쓰므로 이 필드가 없다) 자연히 사라진다 — 별도 정리 로직이
    필요 없다. */
-function daRemergePlaceConflict(mine, base, theirs) {
+/* 2026-09-11 재검토(10차) — courses/trips 충돌도 같은 3-way 재병합이
+   필요하다는 지적(ChatGPT 재현: SERVER-NEW가 버전만 바뀐 재제출에
+   덮여 사라짐)에 따라, places 전용이던 로직을 "정체성 필드(식별자)
+   목록"만 다르게 받는 범용 함수로 뽑아낸다. places는 base(기준
+   스냅샷)를 추적하지만 courses/trips는 아직 그런 추적이 없다 — base가
+   없을 때의 동작(모든 필드를 "내가 건드렸을 수 있다"로 보고, 서로
+   다르면 병합 + 충돌 기록)은 그대로 재사용된다. */
+function daRemergeGenericConflict(mine, base, theirs, identityKeys) {
   if (!mine) return { ...theirs };
   const merged = { ...theirs };
   const fieldConflicts = {};
+  const skipKeys = new Set([...identityKeys, 'version', 'updatedAt', '_fieldConflicts']);
   for (const key of Object.keys(mine)) {
-    if (key === 'id' || key === 'version' || key === 'updatedAt' || key === '_fieldConflicts') continue;
+    if (skipKeys.has(key)) continue;
     const mineChanged = base ? (JSON.stringify(mine[key]) !== JSON.stringify(base[key])) : true;
     if (!mineChanged) continue; // 안 건드림 — 서버 값(merged엔 이미 theirs) 그대로.
     if (JSON.stringify(mine[key]) === JSON.stringify(theirs[key])) continue; // 우연히 같은 값 — 충돌 아님.
@@ -155,11 +181,14 @@ function daRemergePlaceConflict(mine, base, theirs) {
     const theirsChanged = base ? (JSON.stringify(theirs[key]) !== JSON.stringify(base[key])) : true;
     if (theirsChanged) fieldConflicts[key] = { mine: mine[key], theirs: theirs[key] };
   }
-  merged.id = mine.id;
+  for (const key of identityKeys) merged[key] = mine[key];
   merged.version = theirs.version; // 다음 시도의 기준 버전 — 서버가 방금 알려준 값.
   merged.updatedAt = new Date().toISOString();
   if (Object.keys(fieldConflicts).length) merged._fieldConflicts = fieldConflicts;
   return merged;
+}
+function daRemergePlaceConflict(mine, base, theirs) {
+  return daRemergeGenericConflict(mine, base, theirs, ['id']);
 }
 
 async function daSyncPush(token) {
@@ -201,6 +230,7 @@ async function daSyncPush(token) {
   if (mySeq !== daSyncPushSeq) return { placesOk: false, coursesOk: false, tripsOk: false, visitsOk: false, allOk: false, stale: true };
 
   let localViewNeedsRefresh = false; // 재병합/삭제충돌 복구로 화면이 보는 spots/cities를 즉시 갱신해야 하는지.
+  let placesRemergedAny = false;
   const placesOk = !!(placesRes.ok && placesRes.json && Array.isArray(placesRes.json.places));
   const coursesOk = !!(coursesRes.ok && coursesRes.json && Array.isArray(coursesRes.json.courses));
   const tripsOk = !!(tripsRes.ok && tripsRes.json && Array.isArray(tripsRes.json.trips));
@@ -211,7 +241,6 @@ async function daSyncPush(token) {
   if (placesOk) {
     const conflicts = Array.isArray(placesRes.json.conflicts) ? placesRes.json.conflicts : [];
     const editConflictById = new Map(conflicts.filter((c) => c.placeId && c.serverPlace && c.reason !== 'stale-base-version-delete').map((c) => [c.placeId, c]));
-    let remergedAny = false;
     // 2026-09-10 재검토(8차) — "단순히 서버 값을 받아 로컬 수정까지
     // 조용히 없애지 않기." 서버가 승인한 전체 배열을 그대로 덮어쓰지
     // 않고, 각 장소마다 "요청 시점 이후 로컬이 더 바뀌었는지"(저장 중
@@ -232,12 +261,23 @@ async function daSyncPush(token) {
       const changedDuringFlight = baseKey !== undefined && mineKey !== baseKey;
       if (!conflict && !changedDuringFlight) return serverPlace; // 가장 흔한 경우 — 그대로 받아들인다.
       const base = A.getPlaceBaseline(serverPlace.id);
-      remergedAny = true;
+      placesRemergedAny = true;
       const theirsUsed = conflict ? conflict.serverPlace : serverPlace; // 서버가 지금 실제로 갖고 있는 값.
       baselineOverrides.set(serverPlace.id, theirsUsed);
       return daRemergePlaceConflict(mine, base, theirsUsed);
     });
-    foodMap.places = merged;
+    // 2026-09-11 재검토(10차) — ChatGPT가 점검하라고 지시한 항목: "저장
+    // 중 새 장소 추가 보존"을 실제로 재현해 확인한 결과, 진짜 결함이
+    // 있었다. merged는 서버가 돌려준 배열만 훑으므로, 이 요청이 나간
+    // "이후"(요청 스냅샷에도 없고 서버 응답에도 없는) 새로 추가된
+    // 장소는 여기서 통째로 빠진다 — 다음 줄의 foodMap.places = merged가
+    // 그 새 장소를 조용히 지워 버렸다. 요청 스냅샷(requestSnapshot)에도
+    // 없고 서버 응답에도 없는 로컬 id는 "이번 요청이 나간 뒤 새로
+    // 생긴 것"이 확실하므로 그대로 살려 둔다 — 다음 daSyncPushSafe가
+    // 알아서 서버에 반영한다.
+    const mergedIds = new Set(merged.map((p) => p.id));
+    const addedDuringOrAfterFlight = (foodMap.places || []).filter((p) => p && p.id && !mergedIds.has(p.id) && !requestSnapshot.has(p.id));
+    foodMap.places = [...merged, ...addedDuringOrAfterFlight];
     // 서버가 확정한 값을 새 기준으로 삼는다 — 재병합이 일어난
     // 장소는 baselineOverrides에 담아 둔 "서버가 지금 실제로 갖고
     // 있는 값"을 쓰고(내가 고른 병합 결과가 아니라), 그 외에는
@@ -279,14 +319,14 @@ async function daSyncPush(token) {
       daToast('다른 기기에서 방금 수정된 장소가 있어 병합을 취소했어요. 중복 후보에서 다시 확인해 주세요.');
     }
 
-    if (remergedAny) {
+    if (placesRemergedAny) {
       daToast('다른 기기의 수정과 함께 자동으로 합쳐진 장소가 있어요.');
       // 재병합한 값과 반려된 삭제는 다음 사용자 조작을 기다리지 않고
       // 곧바로 한 번 더 시도한다(fire-and-forget — 이 호출 자체를
-      // 막지 않는다).
-      setTimeout(() => daSyncPushSafe(), 0);
+      // 막지 않는다). 단, 무한 반복은 daScheduleConflictRetry가 막는다.
+      daScheduleConflictRetry();
     }
-    localViewNeedsRefresh = remergedAny || restoredAny;
+    localViewNeedsRefresh = placesRemergedAny || restoredAny;
   }
   // 2026-09-11 재검토(9차) — ChatGPT가 지적한 점검: "HTTP 200과 충돌
   // 해결 완료는 다르다"는 원칙이 courses/trips에도 적용되는지 확인한
@@ -301,44 +341,72 @@ async function daSyncPush(token) {
   // 적용한다 — 내 값을 지키고 기준 버전만 서버 값으로 올려 재시도한다.
   // visits는 서버가 충돌 시에도 합집합으로 병합해 돌려주므로(날짜를
   // 절대 버리지 않음) 그대로 대입해도 안전하다 — 여기서 손대지 않는다.
+  let coursesRemergedAny = false;
   if (coursesOk) {
     const conflicts = Array.isArray(coursesRes.json.conflicts) ? coursesRes.json.conflicts : [];
     const courseKey = (c) => `${c.city}__${c.date}`;
     const conflictByKey = new Map(conflicts.filter((c) => c.city && c.date && c.serverCourse).map((c) => [courseKey(c), c]));
     const mineByKey = new Map((foodMap.courses || []).filter((c) => !c.tripId).map((c) => [courseKey(c), c]));
+    // 2026-09-11 재검토(10차) — ChatGPT 재현: 예전엔 충돌 시 서버가
+    // 실제로 갖고 있는 내용(conflict.serverCourse)을 완전히 버리고 내
+    // 로컬 객체 전체를 버전만 바꿔 재제출했다 — 그 사이 다른 기기가
+    // 고친 필드(예: note='SERVER-NEW')가 재시도 성공과 동시에 통째로
+    // 사라졌다. courses는 places처럼 기준(base) 스냅샷을 추적하지
+    // 않으므로 daRemergeGenericConflict를 base=null로 호출해 "내가
+    // 건드렸을 수 있는 모든 필드는 병합, 서로 다른 필드는 양쪽 값을
+    // _fieldConflicts에 보존"하는 안전한 경로를 그대로 재사용한다.
+    const courseBaselineOverrides = new Map();
     const mergedLegacy = coursesRes.json.courses.map((serverCourse) => {
       const conflict = conflictByKey.get(courseKey(serverCourse));
       if (!conflict) return serverCourse;
       const mine = mineByKey.get(courseKey(serverCourse));
       if (!mine) return serverCourse;
-      return { ...mine, version: conflict.serverVersion };
+      coursesRemergedAny = true;
+      const base = A.getCourseBaseline(serverCourse.city, serverCourse.date);
+      courseBaselineOverrides.set(courseKey(serverCourse), conflict.serverCourse);
+      return daRemergeGenericConflict(mine, base, conflict.serverCourse, ['city', 'date']);
     });
     // account_courses는 tripId 없는 레거시 코스만 담당한다 — trip에
     // 딸린 코스(foodMap.courses 중 tripId 있는 것)는 그대로 두고, 그
     // 부분만 서버의 병합 결과로 맞춘다.
     const tripCourses = (foodMap.courses || []).filter((c) => c.tripId);
     foodMap.courses = [...mergedLegacy, ...tripCourses];
-    if (conflictByKey.size) { daToast('다른 기기와 코스 정보가 달라 다시 맞추는 중이에요.'); setTimeout(() => daSyncPushSafe(), 0); }
+    // 서버가 지금 실제로 확정한 값을 다음 기준선으로 남긴다(병합
+    // 결과가 아니라) — places와 동일한 이유(9차 재검토 버그 재발 방지).
+    A.resyncCoursesBaseline(mergedLegacy, courseBaselineOverrides);
+    if (conflictByKey.size) { daToast('다른 기기와 코스 정보가 달라 자동으로 합쳐졌어요.'); daScheduleConflictRetry(); }
   }
+  let tripsRemergedAny = false;
   if (tripsOk) {
     const conflicts = Array.isArray(tripsRes.json.conflicts) ? tripsRes.json.conflicts : [];
     const conflictByTripId = new Map(conflicts.filter((c) => c.tripId && c.serverTrip).map((c) => [c.tripId, c]));
+    const tripBaselineOverrides = new Map();
     if (conflictByTripId.size) {
       const mineByTripId = new Map((foodMap.trips || []).map((t) => [t.tripId, t]));
+      // 위 courses와 동일한 이유로, 여기서도 더 이상 "버전만 바꿔 통째로
+      // 재제출"하지 않고 기준선 기반 3-way 재병합을 쓴다.
       foodMap.trips = tripsRes.json.trips.map((serverTrip) => {
         const conflict = conflictByTripId.get(serverTrip.tripId);
         if (!conflict) return serverTrip;
         const mine = mineByTripId.get(serverTrip.tripId);
         if (!mine) return serverTrip;
-        return { ...mine, version: conflict.serverVersion };
+        tripsRemergedAny = true;
+        const base = A.getTripBaseline(serverTrip.tripId);
+        tripBaselineOverrides.set(serverTrip.tripId, conflict.serverTrip);
+        return daRemergeGenericConflict(mine, base, conflict.serverTrip, ['tripId']);
       });
-      daToast('다른 기기와 여행 정보가 달라 다시 맞추는 중이에요.');
-      setTimeout(() => daSyncPushSafe(), 0);
+      daToast('다른 기기와 여행 정보가 달라 자동으로 합쳐졌어요.');
+      daScheduleConflictRetry();
     } else {
       foodMap.trips = tripsRes.json.trips;
     }
+    // 서버가 지금 실제로 확정한 값을 다음 기준선으로 남긴다 — courses와 동일.
+    A.resyncTripsBaseline(foodMap.trips, tripBaselineOverrides);
   }
   if (visitsOk) foodMap.visits = visitsRes.json.visits;
+  if (placesOk && coursesOk && tripsOk && !placesRemergedAny && !coursesRemergedAny && !tripsRemergedAny) {
+    daSyncConflictRetryCount = 0; // 충돌 없이 조용히 끝난 push — 재시도 카운터 원복.
+  }
   A.saveFoodMap(foodMap);
   // 2026-09-11 재검토(9차) — 재병합·삭제충돌 복구는 사용자가 아무
   // 조작도 안 했는데 백그라운드에서 foodMap을 바꾼다. 화면이 보는
@@ -421,6 +489,12 @@ async function daLogout() {
   delete foodMap.currentTripByCity;
   delete foodMap.deletedPlaceIds;
   A.saveFoodMap(foodMap);
+  // 2026-09-11 재검토(10차) — 기준선(baseline) 지속 저장을 도입하면서
+  // 새로 생긴 책임: 이 계정의 마지막 동기화 기준선이 다음 계정으로
+  // 새면 안 된다(특히 courses는 city+date 키라 서로 다른 계정이 같은
+  // 도시·날짜 키를 가질 수 있어 위험하다). 로그아웃 때 반드시 먼저
+  // 비운다.
+  A.clearSyncBaselines();
   foodMap = A.loadFoodMap();
   route.clear(); selected.clear(); filter = '전체';
   usingSample = true; spots = SAMPLE_SPOTS; cities = SAMPLE_CITIES; city = cities[0].name;

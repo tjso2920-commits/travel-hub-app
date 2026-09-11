@@ -120,6 +120,7 @@ function _resetPlacesSnapshot(places, overrides) {
     next.set(p.id, _placeContentKey(src));
   }
   _placesVersionSnapshot = next;
+  _persistBaselines();
 }
 /* 충돌 재병합(daRemergePlaceConflict, spots.js)이 "이 장소가 마지막
    으로 서버와 맞춰졌을 때 어떤 내용이었는지"를 읽을 수 있게 해 준다.
@@ -129,6 +130,93 @@ function _resetPlacesSnapshot(places, overrides) {
 function _getPlaceBaseline(id) {
   if (!_placesVersionSnapshot || !_placesVersionSnapshot.has(id)) return null;
   try { return JSON.parse(_placesVersionSnapshot.get(id)); } catch (e) { return null; }
+}
+/* 2026-09-11 재검토(10차) — ChatGPT 재현: courses/trips 충돌 시 "버전만
+   바꿔 로컬 객체 전체를 재제출"해 서버가 독립적으로 고친 필드까지
+   통째로 덮어썼다(예: {city,date,note:'base'} v1 → A가 note='SERVER-
+   NEW' 저장 v2 → B가 v1 기준으로 note='LOCAL-NEW' 저장 시도 → 재시도
+   성공 순간 SERVER-NEW가 완전히 사라짐). places처럼 "마지막으로 서버와
+   맞춘 시점의 내용"을 기준선으로 남겨 둬야 daRemergeGenericConflict가
+   "이 필드를 내가 실제로 고쳤는지" 판별할 수 있다 — 기준선이 없으면
+   모든 다른 필드를 "내가 고쳤을 수도"로 봐야 해서(안전 쪽으로 치우침)
+   실제로는 손대지 않은 필드까지 로컬 값이 서버의 진짜 변경을 덮어쓸
+   위험이 남는다. places와 동일한 패턴을 courses(city+date 키)·
+   trips(tripId 키)에도 그대로 적용한다. */
+let _coursesVersionSnapshot = null; // Map<'city__date', JSON 문자열(version/updatedAt 제외)>
+function _courseKey(c) { return `${c.city}__${c.date}`; }
+function _courseContentKey(c) {
+  const { version, updatedAt, ...rest } = c;
+  return JSON.stringify(rest);
+}
+function _resetCoursesSnapshot(courses, overrides) {
+  const next = new Map();
+  for (const c of (courses || [])) {
+    if (!c || !c.city || !c.date || c.tripId) continue; // trip에 딸린 코스는 trips 쪽 스냅샷이 담당.
+    const key = _courseKey(c);
+    const src = (overrides && overrides.has(key)) ? overrides.get(key) : c;
+    next.set(key, _courseContentKey(src));
+  }
+  _coursesVersionSnapshot = next;
+  _persistBaselines();
+}
+function _getCourseBaseline(city, date) {
+  const key = `${city}__${date}`;
+  if (!_coursesVersionSnapshot || !_coursesVersionSnapshot.has(key)) return null;
+  try { return JSON.parse(_coursesVersionSnapshot.get(key)); } catch (e) { return null; }
+}
+let _tripsVersionSnapshot = null; // Map<tripId, JSON 문자열(version/updatedAt/courses 제외)>
+function _tripContentKey(t) {
+  const { version, updatedAt, courses, ...rest } = t; // courses는 daSyncPush가 별도로 붙이는 파생 필드 — 본문 비교에서 제외.
+  return JSON.stringify(rest);
+}
+function _resetTripsSnapshot(trips, overrides) {
+  const next = new Map();
+  for (const t of (trips || [])) {
+    if (!t || !t.tripId) continue;
+    const src = (overrides && overrides.has(t.tripId)) ? overrides.get(t.tripId) : t;
+    next.set(t.tripId, _tripContentKey(src));
+  }
+  _tripsVersionSnapshot = next;
+  _persistBaselines();
+}
+function _getTripBaseline(tripId) {
+  if (!_tripsVersionSnapshot || !_tripsVersionSnapshot.has(tripId)) return null;
+  try { return JSON.parse(_tripsVersionSnapshot.get(tripId)); } catch (e) { return null; }
+}
+/* 2026-09-11 재검토(10차) — ChatGPT가 점검하라고 지시한 세 번째 항목:
+   "기준 스냅샷의 재시작 보존"을 실제로 재현해 확인한 결과, 이것도 진짜
+   결함이었다(합성 재현: 오프라인/재시작 전 고친 값이 다른 기기의 늦은
+   수정으로 조용히 사라짐). 원인 — _placesVersionSnapshot 등은 메모리
+   에만 있고 앱 새로고침/재시작 때 사라지는데, loadFoodMap이 그 자리를
+   "지금 로컬 스토리지에 있는 내용"으로 다시 채웠다. 그런데 그 내용이
+   아직 서버에 못 올라간 미동기화 수정이면, 그 수정 자체가 "기준"이
+   돼 버려 다음 충돌 때 "안 건드림"으로 오인해 조용히 서버 값(다른
+   기기의 것)으로 되돌려진다. 기준선을 별도 localStorage 키에 "마지막
+   으로 서버와 실제로 맞춘 시점의 내용"으로 지속시켜, 재시작해도
+   "지금 로컬에 뭐가 있는지"가 아니라 "마지막 동기화가 뭐였는지"를
+   구분할 수 있게 한다. 계정 전환 시 이 값이 새 계정으로 새는 걸
+   막기 위해 로그아웃 때 반드시 clearSyncBaselines로 함께 지운다
+   (courses는 city+date 키라 계정이 달라도 같은 도시·날짜 키가 겹칠
+   수 있어 특히 중요). */
+const BASELINE_STORAGE_KEY = 'sync_baseline_v1';
+function _persistBaselines() {
+  const places = {}, courses = {}, trips = {};
+  if (_placesVersionSnapshot) for (const [k, v] of _placesVersionSnapshot) places[k] = v;
+  if (_coursesVersionSnapshot) for (const [k, v] of _coursesVersionSnapshot) courses[k] = v;
+  if (_tripsVersionSnapshot) for (const [k, v] of _tripsVersionSnapshot) trips[k] = v;
+  daSave(BASELINE_STORAGE_KEY, { places, courses, trips });
+}
+function _restoreBaselinesFromStorage() {
+  const persisted = daLoad(BASELINE_STORAGE_KEY, null);
+  _placesVersionSnapshot = new Map(Object.entries((persisted && persisted.places) || {}));
+  _coursesVersionSnapshot = new Map(Object.entries((persisted && persisted.courses) || {}));
+  _tripsVersionSnapshot = new Map(Object.entries((persisted && persisted.trips) || {}));
+}
+function _clearSyncBaselines() {
+  _placesVersionSnapshot = new Map();
+  _coursesVersionSnapshot = new Map();
+  _tripsVersionSnapshot = new Map();
+  try { localStorage.removeItem(PFX + BASELINE_STORAGE_KEY); } catch (e) { /* 무시 */ }
 }
 /* 2026-09-09 코드 검토 반영 — sale-mode 메타 태그를 바꾸는 것만으로는
    cp1_ 데이터가 cs1_로 옮겨지지 않는다(그냥 다른 storage 칸을 보기
@@ -914,13 +1002,23 @@ window.DesignAdapter = {
     const fm = daLoad('foodmap_v1', { places: [], dest: '', destCountry: '' });
     _stampPlaceVersions(fm.places); // 버전 필드가 없는(한 번도 저장 안 된) 장소만 0으로 초기화.
     _migrateTags(fm.places); // 6-2절 — tags 필드가 아예 없는 예전 장소(약 160곳 포함)를 1회 채움.
-    _resetPlacesSnapshot(fm.places); // 세션 시작 시점 내용을 재병합 기준선으로 삼는다(tags 채운 뒤라야 맞음).
+    // 2026-09-11 재검토(10차) — "지금 로컬에 있는 내용"이 아니라 "마지막
+    // 으로 서버와 실제로 맞춘 시점의 내용"을 기준선으로 복원한다(재시작
+    // 보존). 이 앱은 로그인 직후에도 이 함수를 다시 부르지 않으므로,
+    // 계정 전환 시 새는 걸 막는 책임은 daLogout()의 clearSyncBaselines
+    // 호출에 있다(로그아웃 시 반드시 먼저 지운다).
+    _restoreBaselinesFromStorage();
     return fm;
   },
   saveFoodMap: (fm) => { _stampPlaceVersions(fm.places); return daSave('foodmap_v1', fm); },
   resyncPlacesBaseline: _resetPlacesSnapshot,
   getPlaceBaseline: _getPlaceBaseline,
   placeContentKey: _placeContentKey,
+  resyncCoursesBaseline: _resetCoursesSnapshot,
+  getCourseBaseline: _getCourseBaseline,
+  resyncTripsBaseline: _resetTripsSnapshot,
+  getTripBaseline: _getTripBaseline,
+  clearSyncBaselines: _clearSyncBaselines,
   parseCsv: daCsv,
   parseJson: daJsonPlaces,
   merge: daMerge,

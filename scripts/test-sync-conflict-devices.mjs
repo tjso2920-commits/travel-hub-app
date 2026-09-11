@@ -337,6 +337,188 @@ async function loginViaUi(page, email) {
   t('6) 재시도로 결국 A의 최신 수정이 서버에도 반영됨', onServer.name === 'A가 바꾼 이름');
 }
 
+// =====================================================================
+// 7) 2026-09-11 재검토(10차) — ChatGPT가 재현한 courses 충돌 결함.
+//    ①원본 코스{city,date,note:'base'} v1 ②A가 note='SERVER-NEW' 저장
+//    → v2 ③B는 v1 기준으로 다른 필드(memo)만 고쳐 저장 ④예전 코드는
+//    충돌 시 "버전만 바꿔 내 객체 전체를 재제출"했으므로, 내가 손대지
+//    않은 note 필드까지 내 옛 값('base')으로 되돌려 서버의 SERVER-NEW를
+//    통째로 지워 버렸다. 이제는 기준선(A.getCourseBaseline)으로 "내가
+//    실제로 고친 필드"만 가려내 병합해야 한다 — 손대지 않은 note는
+//    서버 값(SERVER-NEW) 그대로 남고, 내가 고친 memo만 반영돼야 한다.
+// =====================================================================
+{
+  const email = 'sync-devices-7@example.com';
+  const city = '코스충돌도시';
+  const date = '2026-10-25';
+  const pA = await newPage('A7');
+  await loginViaUi(pA, email);
+  await pA.evaluate((args) => {
+    foodMap.courses = [{ city: args.city, date: args.date, note: 'base', memo: 'base-memo', stops: [] }];
+    A.saveFoodMap(foodMap);
+  }, { city, date });
+  await pA.evaluate(() => daSyncPushSafe());
+  await pA.waitForTimeout(300); // 서버 버전 1.
+
+  const pB = await newPage('B7');
+  await loginViaUi(pB, email);
+  await pB.waitForTimeout(300); // B도 기준(v1, note='base', memo='base-memo')을 실제로 받아 옴.
+
+  // A가 note만 고쳐 먼저 저장한다(서버 버전 2, note='SERVER-NEW').
+  await pA.evaluate((args) => { foodMap.courses.find((c) => c.city === args.city && c.date === args.date).note = 'SERVER-NEW'; A.saveFoodMap(foodMap); }, { city, date });
+  await pA.evaluate(() => daSyncPushSafe());
+  await pA.waitForTimeout(300);
+
+  // B는 이 사실을 전혀 모른 채(기준 여전히 v1) note는 안 건드리고
+  // memo만 고쳐 저장한다 — 독립적인 필드 변경이라 충돌이 아니어야
+  // 정상이지만, 서버는 여전히 baseVersion(1) !== 현재버전(2)이라 정직
+  // 하게 충돌로 보고한다(courses는 서버가 필드 단위 병합을 안 하므로
+  // 클라이언트가 재병합해야 한다).
+  await pB.evaluate((args) => { foodMap.courses.find((c) => c.city === args.city && c.date === args.date).memo = 'B가 고친 메모'; A.saveFoodMap(foodMap); }, { city, date });
+  await pB.evaluate(() => daSyncPushSafe());
+  await pB.waitForTimeout(500); // 충돌 재병합 + 자동 재시도까지 기다린다.
+
+  const bAfter = await pB.evaluate((args) => foodMap.courses.find((c) => c.city === args.city && c.date === args.date), { city, date });
+  t('7) B가 안 건드린 note 필드는 서버의 최신 값(SERVER-NEW)을 그대로 받음(독립 필드 병합)', bAfter.note === 'SERVER-NEW');
+  t('7) B 자신이 고친 memo도 그대로 남음(내가 고친 필드는 안 잃음)', bAfter.memo === 'B가 고친 메모');
+
+  const serverToken = await pA.evaluate(() => foodMap.session.token);
+  const serverView = await fetch(`${apiBase}/api/courses`, { headers: { Authorization: `Bearer ${serverToken}` } }).then((r) => r.json());
+  const onServer = serverView.courses.find((c) => c.city === city && c.date === date);
+  t('7) 서버에도 A의 note와 B의 memo가 최종적으로 둘 다 반영됨(재시도로 수렴 — SERVER-NEW가 사라지지 않음)', onServer.note === 'SERVER-NEW' && onServer.memo === 'B가 고친 메모');
+
+  await pA.close(); await pB.close();
+}
+
+// =====================================================================
+// 8) 2026-09-11 재검토(10차) — 사용자가 "확정 오류라고 보고하지 말고
+//    먼저 점검하라"고 지시한 항목 중 하나("저장 중 새 장소 추가
+//    보존")를 실제로 재현해 확인한 결과 진짜 결함이었다: PUT /api/places
+//    요청이 나간 뒤(그 요청 스냅샷에는 없었던) 새 장소를 추가하면,
+//    서버 응답이 늦게 도착했을 때 그 응답 배열에만 있는 항목으로
+//    foodMap.places를 통째로 교체해 방금 추가한 새 장소가 조용히
+//    사라졌다.
+// =====================================================================
+{
+  const email = 'sync-devices-8@example.com';
+  const city = '새장소도중도시';
+  const pA = await newPage('A8');
+  await loginViaUi(pA, email);
+  await pA.evaluate((cityName) => {
+    foodMap.places = [{ id: 'p1', name: '기존 장소', cat: '기타', catConfirmed: true, city: cityName, cityKnown: true, cityConfirmed: true, sourceLists: [] }];
+    A.saveFoodMap(foodMap);
+  }, city);
+  await pA.evaluate(() => daSyncPushSafe());
+  await pA.waitForTimeout(300);
+
+  let delayedOnce = false;
+  await pA.route('**/api/places', async (route) => {
+    if (!delayedOnce) { delayedOnce = true; await new Promise((resolve) => setTimeout(resolve, 600)); }
+    await route.continue();
+  });
+  // p1만 실린 요청이 나간다(지연). 응답이 오기 전에 완전히 새로운
+  // 장소(p2)를 추가한다 — 이 요청 스냅샷에도, 아직 서버 응답에도
+  // 존재할 수 없는 항목이다.
+  await pA.evaluate(() => { foodMap.places[0].note = '살짝 수정'; A.saveFoodMap(foodMap); daSyncPushSafe(); });
+  await pA.waitForTimeout(150);
+  await pA.evaluate((cityName) => {
+    foodMap.places.push({ id: 'p2', name: '저장 중 새로 추가한 장소', cat: '기타', catConfirmed: true, city: cityName, cityKnown: true, cityConfirmed: true, sourceLists: [] });
+    A.saveFoodMap(foodMap);
+  }, city);
+  await pA.waitForTimeout(800); // 지연된 응답 도착 대기.
+
+  const afterFlight = await pA.evaluate(() => foodMap.places.map((p) => p.id));
+  t('8) 저장 중(응답 대기 중)에 추가한 새 장소가 응답 반영 후에도 사라지지 않음', afterFlight.includes('p2'));
+  t('8) 기존 장소도 그대로 있음', afterFlight.includes('p1'));
+
+  await pA.evaluate(() => daSyncPushSafe());
+  await pA.waitForTimeout(400);
+  const serverToken = await pA.evaluate(() => foodMap.session.token);
+  const serverView = await fetch(`${apiBase}/api/places`, { headers: { Authorization: `Bearer ${serverToken}` } }).then((r) => r.json());
+  t('8) 다음 저장으로 서버에도 새 장소가 실제로 반영됨', serverView.places.some((p) => p.id === 'p2'));
+
+  await pA.close();
+}
+
+// =====================================================================
+// 9) 2026-09-11 재검토(10차) — 사용자가 "확정 오류라고 보고하지 말고
+//    먼저 점검하라"고 지시한 세 번째 항목("기준 스냅샷의 재시작
+//    보존")도 재현해 확인한 결과 진짜 결함이었다: 재병합 기준선은
+//    메모리에만 있어 앱 재시작(새로고침) 때 사라지고, loadFoodMap이
+//    그 자리를 "지금 로컬 스토리지 내용"으로 다시 채웠다 — 그런데 그
+//    내용이 아직 서버에 못 올라간 미동기화 수정이면, 재시작 후 첫
+//    충돌 때 그 수정 자체가 "안 건드림"으로 오인돼 다른 기기의 값으로
+//    조용히 되돌려졌다. 이제는 기준선을 별도로 지속 저장해 재시작해도
+//    "마지막으로 서버와 실제로 맞춘 시점"을 정확히 기억해야 한다.
+// =====================================================================
+{
+  const email = 'sync-devices-9@example.com';
+  const city = '재시작기준선도시';
+  const pA = await newPage('A9');
+  await loginViaUi(pA, email);
+  await pA.evaluate((cityName) => {
+    foodMap.places = [{ id: 'p1', name: '원래 장소', note: 'v0', cat: '기타', catConfirmed: true, city: cityName, cityKnown: true, cityConfirmed: true, sourceLists: [] }];
+    A.saveFoodMap(foodMap);
+  }, city);
+  await pA.evaluate(() => daSyncPushSafe());
+  await pA.waitForTimeout(300); // 서버 v1, note='v0'.
+
+  // pA가 note를 고치고 로컬에는 저장하지만(saveFoodMap), 아직 서버에는
+  // 동기화하지 않은 상태를 재현한다(오프라인이거나 저장 직후 바로
+  // 앱을 닫은 경우).
+  await pA.evaluate(() => { foodMap.places.find((p) => p.id === 'p1').note = 'LOCAL-UNSYNCED'; A.saveFoodMap(foodMap); });
+
+  // 다른 기기가 그 사이 서버에 note='SERVER-NEW'를 성공적으로 반영한다.
+  const pB = await newPage('B9');
+  await loginViaUi(pB, email);
+  await pB.waitForTimeout(300);
+  await pB.evaluate(() => { foodMap.places.find((p) => p.id === 'p1').note = 'SERVER-NEW'; A.saveFoodMap(foodMap); });
+  await pB.evaluate(() => daSyncPushSafe());
+  await pB.waitForTimeout(300); // 서버 v2, note='SERVER-NEW'.
+
+  // pA가 "앱을 재시작"한다(페이지 새로고침 = 메모리 상태 완전 초기화,
+  // localStorage만 남음 — foodmap_v1에는 아직 동기화 안 된 값이 있다).
+  await pA.reload();
+  await pA.waitForTimeout(300);
+  const afterReload = await pA.evaluate(() => foodMap.places.find((p) => p.id === 'p1'));
+  t('9) 재시작 직후에도 동기화 안 된 로컬 수정이 로컬에 그대로 남아 있음', afterReload && afterReload.note === 'LOCAL-UNSYNCED');
+
+  // 재시작한 pA가 다시 동기화를 시도한다 — 기준 버전 불일치로 충돌이
+  // 보고될 것이다(pA는 여전히 v1, 서버는 이미 v2).
+  await pA.evaluate(() => daSyncPushSafe());
+  await pA.waitForTimeout(500);
+  const afterConflict = await pA.evaluate(() => foodMap.places.find((p) => p.id === 'p1'));
+  t('9) 재시작 후에도 동기화 안 됐던 내 수정이 충돌 재병합에서 조용히 사라지지 않음(내 값 유지 또는 충돌로 보존)', afterConflict.note === 'LOCAL-UNSYNCED' || (afterConflict._fieldConflicts && afterConflict._fieldConflicts.note && afterConflict._fieldConflicts.note.mine === 'LOCAL-UNSYNCED'));
+
+  // 로그아웃하면 이 계정의 기준선이 다음 계정으로 새면 안 된다(계정
+  // 격리) — clearSyncBaselines가 실제로 지우는지 확인한다.
+  await pA.evaluate(() => daLogout());
+  await pA.waitForTimeout(200);
+  const emailC = 'sync-devices-9c@example.com';
+  await pA.evaluate(() => showLoginSheet(() => {}));
+  await pA.waitForTimeout(150);
+  await pA.fill('#loginEmail', emailC);
+  await pA.click('#loginSendBtn');
+  await pA.waitForTimeout(200);
+  const sentC = sentEmailsForTest.filter((e) => e.to === emailC).pop();
+  const codeC = sentC.body.match(/(\d{6})/)[1];
+  await pA.fill('#loginCode', codeC);
+  await pA.click('#loginVerifyBtn');
+  await pA.waitForFunction(() => !!(foodMap.session && foodMap.session.token), { timeout: 5000 });
+  await pA.waitForTimeout(250);
+  await pA.evaluate(() => { const c = document.getElementById('close'); if (c) c.click(); });
+  await pA.evaluate((cityName) => {
+    foodMap.places = [{ id: 'p1', name: '새 계정의 같은 로컬 id', note: 'C계정 최초값', cat: '기타', catConfirmed: true, city: cityName, cityKnown: true, cityConfirmed: true, sourceLists: [] }];
+    A.saveFoodMap(foodMap);
+  }, city);
+  await pA.evaluate(() => daSyncPushSafe());
+  await pA.waitForTimeout(300);
+  const cPlace = await pA.evaluate(() => foodMap.places.find((p) => p.id === 'p1'));
+  t('9) 로그아웃 후 새 계정에서는 이전 계정의 값이 안 새어 들어오고 새 계정 값 그대로 저장됨(계정 간 기준선 격리)', cPlace.note === 'C계정 최초값');
+
+  await pA.close(); await pB.close();
+}
+
 t('최종 콘솔/런타임 오류 0', errs.length === 0);
 if (errs.length) console.log(errs);
 
