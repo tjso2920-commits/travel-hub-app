@@ -22,6 +22,8 @@ const { openDb, uuid, nowIso } = await import('../db.mjs');
 const { validateClassifyResult } = await import('../adapters/ai-classify.mjs');
 const { aiClassifyBudgetHeadroomMicros, currentPeriod, reservePlaceLookupSlot, finalizePlaceLookupResult } = await import('../entitlement-usage.mjs');
 const { classifyBatchRoute } = await import('../routes/ai-classify.mjs');
+const { planWorstCaseSkus, splitIntoSegments } = await import('../route-segments.mjs');
+const { skuCostMicros } = await import('../cost-ledger.mjs');
 
 let fail = 0; const t = (n, c) => { console.log((c ? 'PASS ' : 'FAIL ') + n); if (!c) fail++; };
 
@@ -99,6 +101,37 @@ t('3) 그만큼 AI 헤드룸이 방금 전(신선한 계정)보다 더 커짐(�
 
 // AI 비활성 상태에서는 헤드룸이 있어도 라우트 자체가 아예 어댑터를
 // 안 부른다(1절에서 이미 확인) — 여기서는 순수 계산 함수만 검증한다.
+
+// =====================================================================
+// 4) (12차 신규) 예약 계산이 실제 최대 입력·세그먼트 분할·SKU 등급에
+//    근거하는지 — "전형적인 하루 코스" 같은 임의 가정이 아니라
+//    config.maxPlacesPerGeneration(실제 서비스가 허용하는 최대 경유지
+//    수)을 그대로 쓰는지, 그리고 routing.mjs와 완전히 같은 함수
+//    (splitIntoSegments)로 계산하는지 직접 확인한다.
+// =====================================================================
+{
+  // 4-a) reservedForCoreMicros가 실제로 maxCourseReserveMicros 계산과
+  // 일치하는지(코스분만 따로 떼어) 확인 — 위치확인 몫을 빼고 비교한다.
+  const acc = directAccount('ai-headroom-formula@example.com');
+  const period = currentPeriod(acc);
+  const headroom = aiClassifyBudgetHeadroomMicros(acc, period);
+  const expectedSkus = planWorstCaseSkus(config.maxPlacesPerGeneration + 1);
+  const expectedPerCourseMicros = expectedSkus.reduce((sum, sku) => sum + skuCostMicros(sku), 0);
+  t('4) 헤드룸 함수가 돌려주는 코스당 예약액이 실제 세그먼트·SKU 계산과 정확히 일치함', headroom.perCourseReserveMicros === expectedPerCourseMicros);
+
+  // 4-b) 이 값이 routing.mjs가 실제로 쓰는 것과 같은 splitIntoSegments
+  // 함수를 거친 결과임을 직접 확인 — 자리표시자 배열로 같은 지점 수를
+  // 넣으면 세그먼트 수·경계가 완전히 같아야 한다.
+  const realSegments = splitIntoSegments(new Array(config.maxPlacesPerGeneration + 1));
+  t('4) 세그먼트 수가 실제 최대 입력(경유지 상한) 기준으로 여러 개로 나뉨(1개 고정 가정 아님)', realSegments.length > 1);
+  t('4) planWorstCaseSkus가 계산한 세그먼트 수와 실제 splitIntoSegments 결과가 일치함', expectedSkus.length === realSegments.length);
+
+  // 4-c) maxPlacesPerGeneration이 커지면(더 큰 코스를 허용하면) 예약액도
+  // 그만큼 커져야 한다 — "실제 허용 최대 입력에 근거"함을 보여준다.
+  const biggerSkus = planWorstCaseSkus(200);
+  const biggerMicros = biggerSkus.reduce((sum, sku) => sum + skuCostMicros(sku), 0);
+  t('4) 더 큰 최대 입력을 가정하면 예약액도 그만큼 늘어남(고정 1세그먼트 가정이었다면 안 늘어났을 것)', biggerMicros > expectedPerCourseMicros);
+}
 
 console.log(fail ? `\n실패 ${fail}건` : '\n전체 통과');
 process.exit(fail ? 1 : 0);

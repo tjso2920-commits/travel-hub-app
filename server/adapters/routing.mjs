@@ -45,6 +45,7 @@ import { markVerified } from '../status.mjs';
 import { fetchWithTimeout } from '../net.mjs';
 import { chargeCostBatch } from '../cost-ledger.mjs';
 import { currentPeriod } from '../entitlement-usage.mjs';
+import { splitIntoSegments, skuForSegment } from '../route-segments.mjs';
 
 const WALK_MIN_PLAUSIBLE_MPS = 0.3;
 const WALK_MAX_PLAUSIBLE_MPS = 2.2;
@@ -109,23 +110,12 @@ function simulateTestRoute(origin, ordered) {
   return { routedReal: true, legs: walkLegs };
 }
 
-/* points를 "한 번의 computeRoutes 호출로 처리 가능한 조각"들로 나눈다.
-   각 조각의 마지막 지점을 다음 조각의 첫 지점으로 그대로 이어 붙여
-   실제 이동 구간이 끊기지 않게 한다(2026-09-10 재검토 4차 — "분할 시
-   연결 구간과 실제 호출 수를 보존하라"). 조각 하나의 중간 경유지 수는
-   routesMaxIntermediatesPerCall을 넘지 않는다(경계 지점 2개 제외). */
-function splitIntoSegments(points) {
-  const maxIntermediates = config.routesMaxIntermediatesPerCall;
-  const maxPointsPerSegment = maxIntermediates + 2; // 시작점 + 경유지들 + 도착점
-  const segments = [];
-  let i = 0;
-  while (i < points.length - 1) {
-    const end = Math.min(i + maxPointsPerSegment - 1, points.length - 1);
-    segments.push(points.slice(i, end + 1));
-    i = end;
-  }
-  return segments;
-}
+/* points를 "한 번의 computeRoutes 호출로 처리 가능한 조각"들로 나눈다
+   (server/route-segments.mjs로 옮김 — 2026-09-11 재검토 12차: "실제
+   경로 실행과 AI 분류 예산 예약이 같은 비용 계산 함수를 쓰게 하라"는
+   지시대로, entitlement-usage.mjs의 예약 계산도 이 정확히 같은 함수를
+   그대로 재사용한다. 순환 참조 방지를 위해 이 어댑터 밖에 둔 것일 뿐,
+   알고리즘은 예전과 완전히 동일하다). */
 
 /* 실제 Google Routes 호출 — 세그먼트(이미 정해진 순서의 연속 구간)
    하나를 한 번의 computeRoutes 요청으로 처리한다. WALK 모드 응답이
@@ -198,10 +188,7 @@ async function callGoogleRoutesAll(origin, ordered, accountId) {
   // 세그먼트 계획을 먼저 다 세운 뒤 `chargeCostBatch` 한 번으로
   // "전부 확인 → 전부 기록"을 하나의 DB 트랜잭션으로 처리한다 —
   // 하나라도 예산을 넘으면 그 무엇도 기록되지 않는다.
-  const plan = segments.map((seg) => {
-    const intermediateCount = seg.length - 2;
-    return { sku: intermediateCount >= config.routesHighVolumeThreshold ? 'routes-compute-highvolume' : 'routes-compute' };
-  });
+  const plan = segments.map((seg) => ({ sku: skuForSegment(seg) }));
   // 2026-09-10 재검토(6차) — 이 비용도 이 계정의 지금 이용권 기간에
   // 귀속시켜 내부 원가 안전상한(무료 누적 700원/유료 이용권당 누적
   // 3,500원)을 함께 확인한다(places.mjs의 장소 조회 비용과 같은 원칙).

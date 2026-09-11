@@ -38,8 +38,9 @@
 import { openDb, uuid, nowIso } from './db.mjs';
 import { config } from './config.mjs';
 import { checkEntitlement } from './routes/entitlement.mjs';
-import { periodCostMicros } from './cost-ledger.mjs';
+import { periodCostMicros, skuCostMicros } from './cost-ledger.mjs';
 import { checkAndIncrement, dayWindow } from './rate-limit.mjs';
+import { planWorstCaseSkus } from './route-segments.mjs';
 
 /* 이 계정이 지금 속한 이용권 기간과 그 기간에 적용되는 한도. */
 export function currentPeriod(accountId) {
@@ -498,6 +499,25 @@ export function periodCostStatus(accountId, period) {
    — 이 한계는 그대로 인정하고 BUSINESS_DECISIONS.md에 숫자와 함께
    남긴다(무제한 경유지까지 예약하면 헤드룸이 사실상 항상 0이 돼
    AI 기능 자체가 무의미해진다). */
+/* 2026-09-11 재검토(12차) — ChatGPT가 지적한 결함: "남은 코스 횟수 ×
+   routes-compute-highvolume 단가 1세그먼트분"이라는 11차의 예약식은
+   "이 서비스가 실제로 지원하는 최대 입력(config.maxPlacesPerGeneration,
+   기본 60곳)"과 무관한 임의의(1세그먼트) 가정이었다 — 실제 코스 생성은
+   경유지가 많으면 여러 세그먼트로 나뉘고(server/route-segments.mjs의
+   splitIntoSegments) 세그먼트별로 SKU 등급도 달라진다. "전형적인 하루
+   코스"라는 표현 자체가 실제 근거 없는 낙관이었다는 지적을 반영해,
+   이 서비스가 실제로 허용하는 최대 경유지 수(maxPlacesPerGeneration)
+   기준으로 코스 하나가 실제로 만들어 낼 수 있는 세그먼트 수·SKU
+   등급을 정확히 계산해 그 합계를 예약한다 — routing.mjs의
+   callGoogleRoutesAll과 완전히 같은 함수(splitIntoSegments)를 공유해서
+   계산하므로 실제 실행 경로와 어긋날 수 없다. */
+function maxCourseReserveMicros() {
+  // +1은 출발지(origin)를 포함한 경계 지점 총수 — routing.mjs의
+  // callGoogleRoutesAll이 [origin, ...ordered]로 points를 구성하는
+  // 것과 정확히 같은 계산이다.
+  const skus = planWorstCaseSkus(config.maxPlacesPerGeneration + 1);
+  return skus.reduce((sum, sku) => sum + skuCostMicros(sku), 0);
+}
 export function aiClassifyBudgetHeadroomMicros(accountId, period) {
   const db = openDb();
   const row = usageRow(db, accountId, period.periodId);
@@ -505,11 +525,11 @@ export function aiClassifyBudgetHeadroomMicros(accountId, period) {
   const usedCourses = row ? row.course_successes_used : 0;
   const remainingLookups = Math.max(0, period.placeLookupLimit - usedLookups);
   const remainingCourses = Math.max(0, period.courseLimit - usedCourses);
-  const perCourseReserveMicros = config.costEstimate.routesComputeHighVolumeMicros * config.aiClassify.reservedRouteSegmentsPerCourse;
+  const perCourseReserveMicros = maxCourseReserveMicros();
   const reservedForCoreMicros = remainingLookups * config.costEstimate.placesTextSearchMicros
     + remainingCourses * perCourseReserveMicros;
   const spentMicros = periodCostMicros(accountId, period.periodId);
   const capMicros = period.costCapMicros;
   const headroomMicros = Math.max(0, capMicros - spentMicros - reservedForCoreMicros);
-  return { headroomMicros, reservedForCoreMicros, spentMicros, capMicros, remainingLookups, remainingCourses };
+  return { headroomMicros, reservedForCoreMicros, spentMicros, capMicros, remainingLookups, remainingCourses, perCourseReserveMicros };
 }

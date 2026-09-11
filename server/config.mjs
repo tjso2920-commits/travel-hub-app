@@ -425,19 +425,14 @@ export function buildConfig(env) {
       classificationVersion: Number(env.AI_CLASSIFY_VERSION || 1),
       // 2026-09-11 재검토(11차) — "남은 코스 횟수 × 가장 싼 routes-
       // compute 단가"만 곱하던 예약 계산이 과소평가라는 지적(ChatGPT)
-      // 반영. 코스 하나의 실제 원가는 경유지 수에 따라 세그먼트 수·
-      // SKU 등급(routes-compute vs highvolume)이 달라진다(routing.mjs
-      // splitIntoSegments). 정확한 상한(경유지 무제한, maxBudgetMinutes
-      // 최대 24시간)까지 예약하면 사실상 항상 헤드룸이 0이 돼 버려
-      // 실용성이 없으므로, "이 서비스가 실제로 지원하는 한 세그먼트
-      // (routesMaxIntermediatesPerCall=25경유지, 약 27곳) 안에 들어가는
-      // 전형적인 하루 코스"를 기준으로 더 비싼 등급(highvolume) 단가
-      // 1세그먼트분을 예약한다 — 진짜 최악(다중 세그먼트가 필요한
-      // 27곳 초과 코스)까지 커버하지 못한다는 걸 그대로 인정하고
-      // 문서(BUSINESS_DECISIONS.md)에 남긴다. 이 값을 늘리면 더
-      // 보수적으로(AI 여유가 줄어드는 대신 극단적으로 큰 코스도
-      // 안전하게) 예약할 수 있다.
-      reservedRouteSegmentsPerCourse: Number(env.AI_CLASSIFY_RESERVED_ROUTE_SEGMENTS_PER_COURSE || 1),
+      // 반영해 1세그먼트분만 예약했었으나, **12차에서 다시 지적됨**:
+      // maxPlacesPerGeneration(기본 60곳)까지 실제로 허용하면서
+      // 1세그먼트(약 27곳)만 예약하는 건 여전히 과소평가였다. 이제
+      // entitlement-usage.mjs의 aiClassifyBudgetHeadroomMicros가
+      // maxPlacesPerGeneration 전체를 routing.mjs와 완전히 같은 함수
+      // (server/route-segments.mjs의 splitIntoSegments)로 나눠 실제로
+      // 몇 세그먼트·어떤 SKU 등급이 나오는지 정확히 계산해 예약한다 —
+      // 별도 조정용 상수가 필요 없어져 이 값 자체를 없앴다(12차).
       // 2026-09-11 재검토(11차) — "전체 및 계정 한도"(4절 지시). 기존엔
       // 계정별 하루 배치 횟수 상한만 있고 전체(서비스 전체) 상한이
       // 없었다. places.mjs의 placeLookupGlobalDailyCap과 같은 목적·
