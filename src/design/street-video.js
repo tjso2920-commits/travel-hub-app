@@ -99,27 +99,67 @@ function metaHTML(entry) {
     <p class="weather-note street-video-disclaimer">이 영상은 현지 거리의 옷차림을 참고하기 위한 자료예요 — 화면에 나오는 사람들이 반드시 현지인이라는 뜻은 아니에요.</p>`;
 }
 
+// 2026-09-11 재검토(9차) 8절 — "loadIframeApi가 로드 오류·타임아웃
+// 처리가 전혀 없다"는 재현 지적 반영. 느린 해외 연결에서 무한정
+// 기다리지 않도록 이 시간 안에 준비되지 않으면 실패로 취급한다.
+// let로 둔 이유는 테스트에서만 이 값을 짧게 줄여(실제 8초를 기다리지
+// 않고) 타임아웃 경로를 결정론적으로 재현하기 위해서다(아래
+// _testHooks.setIframeApiTimeoutMs 참고) — 실제 화면 코드는 이 값을
+// 절대 바꾸지 않는다.
+let IFRAME_API_TIMEOUT_MS = 8000;
+
 let apiLoadPromise = null;
 /* https://developers.google.com/youtube/iframe_api_reference — 클릭
    시에만(패널을 열 때만) 딱 한 번 불러온다. 이미 불러왔으면 그 Promise를
-   재사용해 중복 스크립트 삽입을 막는다. */
+   재사용해 중복 스크립트 삽입을 막는다. 스크립트 로드 자체가 실패하거나
+   (광고 차단·네트워크 차단 등, script.onerror) 시간 안에 IFrame API가
+   준비되지 않으면(타임아웃) reject한다 — 예전엔 둘 다 처리가 없어서
+   느린 해외 연결에서 "영상 닫기" 버튼도 없이 빈 패널만 영원히 떠 있을
+   수 있었다(실제로 onerror·타임아웃 둘 다 강제로 재현해 확인했다). */
 function loadIframeApi() {
   if (window.YT && window.YT.Player) return Promise.resolve(window.YT);
   if (apiLoadPromise) return apiLoadPromise;
-  apiLoadPromise = new Promise((resolve) => {
+  apiLoadPromise = new Promise((resolve, reject) => {
     const prevReady = window.onYouTubeIframeAPIReady;
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error('iframe-api-timeout'));
+    }, IFRAME_API_TIMEOUT_MS);
     window.onYouTubeIframeAPIReady = () => {
       if (typeof prevReady === 'function') prevReady();
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       resolve(window.YT);
     };
     const tag = document.createElement('script');
     tag.src = 'https://www.youtube.com/iframe_api';
+    tag.onerror = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new Error('iframe-api-load-error'));
+    };
     document.head.appendChild(tag);
+  }).catch((err) => {
+    // 실패한 시도를 계속 캐시로 남기지 않는다 — 이번 네트워크가 잠깐
+    // 끊긴 것뿐일 수 있으니, 다음에 다시 열 때는 새로 시도할 수 있게 한다.
+    apiLoadPromise = null;
+    throw err;
   });
   return apiLoadPromise;
 }
 
 let activePlayer = null;
+/* 패널을 열 때마다 세대를 하나 올린다. 닫기/다른 도시로 빠르게 재열기를
+   하면 이전 openPanel 호출이 걸어 둔 loadIframeApi().then(...)이 나중에
+   뒤늦게 돌아올 수 있는데, 그 콜백이 (같은 고정 id를 쓰는) 새로 만들어진
+   iframe에 실수로 올라타 두 번째 YT.Player가 몰래 생기는 사고를 막는다
+   (재현: 열기→느린 API 로드 중 바로 닫기→다른 도시 빠르게 재열기 →
+   세대 검사 없이는 낡은 콜백이 새 iframe에 Player를 또 붙인다). */
+let panelGeneration = 0;
 
 /* 패널을 열고 실제로 임베드한다 — 이 호출 자체가 "클릭했을 때만
    불러온다"는 지시의 실행 지점이다(그 전까지는 버튼만 있고 iframe도
@@ -128,6 +168,7 @@ function openPanel(cityName) {
   const entry = pickVideo(cityName);
   const panel = document.getElementById('streetVideoPanel');
   if (!entry || !panel) return;
+  const myGen = ++panelGeneration;
   if (entry.embeddable === false) {
     // 이미 확인된 임베드 불가 영상 — 시도조차 하지 않고 곧바로 원본
     // 링크로 안내한다(지어낸 재생 시도를 보여주지 않는다).
@@ -136,19 +177,31 @@ function openPanel(cityName) {
     return;
   }
   const playerId = 'streetVideoPlayerFrame';
+  // "항상 원본 링크를 함께 제공" — 임베드가 아직 준비 중이거나 느려도
+  // 사용자가 곧바로 유튜브 원본으로 빠져나갈 수 있게 항상 같이 보여준다.
   panel.innerHTML = `<div class="street-video-frame-wrap"><iframe id="${playerId}" src="${esc(buildEmbedUrl(entry.videoId))}" title="현지 거리 영상" allow="encrypted-media" allowfullscreen></iframe></div>
     <button class="text-button" data-street-video-close>영상 닫기</button>
+    <a class="street-video-original-link" href="${esc(entry.sourceUrl)}" target="_blank" rel="noopener noreferrer">유튜브에서 원본으로 보기 ↗</a>
     ${metaHTML(entry)}`;
   panel.hidden = false;
 
   loadIframeApi().then((YT) => {
-    // 패널이 그 사이 닫혔으면(빠르게 닫기를 눌렀으면) 새로 만들지 않는다.
+    // 세대가 바뀌었으면(그 사이 닫혔거나 다른 영상을 또 열었으면) 낡은
+    // 콜백이니 아무것도 안 한다 — 같은 고정 id의 새 iframe에 잘못
+    // 올라타지 않는다.
+    if (myGen !== panelGeneration) return;
     if (!document.getElementById(playerId)) return;
     activePlayer = new YT.Player(playerId, {
       events: {
         onError: (e) => applyPlayerError(panel, entry, e && e.data),
       },
     });
+  }).catch(() => {
+    if (myGen !== panelGeneration) return; // 이미 닫히거나 다른 영상을 열었으면 실패 화면으로 덮어쓰지 않는다.
+    // 로드 자체가 실패했거나 시간 안에 준비되지 않음 — 이유를 추측하지
+    // 않고 "지금은 볼 수 없다" + 원본 링크로 정직하게 안내한다.
+    panel.innerHTML = metaHTML(entry) + fallbackHTML(entry, 'unavailable');
+    panel.hidden = false;
   });
 }
 
@@ -165,6 +218,7 @@ function applyPlayerError(panel, entry, code) {
    만으로 재생 중이던 미디어가 그 자리에서 멈춘다(플레이어 인스턴스가
    아직 준비 전이어도 항상 통한다). */
 function closePanel() {
+  panelGeneration++; // 대기 중이던 loadIframeApi 콜백(성공·실패 둘 다)을 여기서 이미 낡은 것으로 만든다.
   const panel = document.getElementById('streetVideoPanel');
   if (!panel) return;
   const iframe = panel.querySelector('iframe');
@@ -184,7 +238,13 @@ window.StreetVideo = {
   openPanel,
   closePanel,
   buildEmbedUrl,
-  // 아래 둘은 실제 유튜브 네트워크 없이 오류 대체 화면을 검증하기
-  // 위한 테스트 전용 훅이다 — 화면 코드가 직접 쓰지 않는다.
-  _testHooks: { applyPlayerError, pickVideo },
+  // 아래는 실제 유튜브 네트워크 없이 오류·타임아웃·낡은 콜백 방지
+  // 대체 화면을 검증하기 위한 테스트 전용 훅이다 — 화면 코드가 직접
+  // 쓰지 않는다.
+  _testHooks: {
+    applyPlayerError,
+    pickVideo,
+    setIframeApiTimeoutMs: (ms) => { IFRAME_API_TIMEOUT_MS = ms; },
+    getPanelGeneration: () => panelGeneration,
+  },
 };

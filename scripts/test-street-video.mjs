@@ -33,10 +33,12 @@ p.on('pageerror', (e) => errs.push('pageerror: ' + e.message));
 p.on('dialog', (d) => d.dismiss());
 // street-video.js가 클릭 시 실제로 https://www.youtube.com/iframe_api를
 // 불러오려 시도한다 — 이 샌드박스에는 실제 인터넷이 없을 수 있으므로,
-// 그 요청만 조용히 중단시켜 테스트가 실제 네트워크 유무와 무관하게
-// 결정론적으로 동작하게 한다(구조 검증이 목적이지 실제 유튜브 연동
-// 검증이 아니다 — onError 경로는 아래에서 _testHooks로 직접 검증한다).
-await p.route('https://www.youtube.com/iframe_api', (route) => route.abort());
+// 이 페이지에서는 그 요청을 응답하지 않고 그대로 붙들어 둔다(끝내지도
+// 실패시키지도 않음 — 8초 타임아웃보다 훨씬 짧은 이 테스트 구간
+// 안에서는 "아직 로딩 중" 상태가 그대로 유지된다). 실제 로드 성공/
+// 오류/타임아웃/낡은 콜백 방지는 아래 8~10번에서 각각 별도로,
+// 결정론적으로 제어되는 라우팅으로 검증한다.
+await p.route('https://www.youtube.com/iframe_api', () => {});
 
 await p.addInitScript((base) => { window.API_BASE = base; }, apiBase);
 await p.goto('file://' + process.cwd() + '/src/design/index.html');
@@ -147,6 +149,115 @@ t('6) (모의) 임베드 거부(코드 150) 시 원본 링크 안내로 대체�
   const costCount = db.prepare('SELECT COUNT(*) AS n FROM cost_ledger').get().n;
   t('7) 영상 기능 사용 중 이용권 사용량 테이블에 아무 기록도 안 생김', entCount === 0);
   t('7) 영상 기능 사용 중 비용 원장에도 아무 기록도 안 생김', costCount === 0);
+}
+
+// =====================================================================
+// 8. 2026-09-11 재검토(9차) 8절 — 스크립트 로드 자체가 실패(onerror,
+//    예: 광고 차단·네트워크 차단)하면 무한정 기다리지 않고 원본 링크
+//    안내로 바뀌어야 한다. 실제로 재현해 확인한다.
+// =====================================================================
+{
+  const b3 = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+  const p3 = await b3.newPage();
+  p3.on('dialog', (d) => d.dismiss());
+  await p3.route('https://www.youtube.com/iframe_api', (route) => route.abort());
+  await p3.addInitScript((base) => { window.API_BASE = base; }, apiBase);
+  await p3.goto('file://' + process.cwd() + '/src/design/index.html');
+  await p3.waitForTimeout(200);
+  await p3.evaluate(() => {
+    window.StreetVideo.STREET_VIDEOS['후쿠오카'] = [{
+      videoId: 'TEST0FAKE04', title: '(테스트) 로드 실패', channel: '테스트 채널',
+      filmingLocation: '테스트 촬영지', tzId: 'Asia/Tokyo', sourceUrl: 'https://www.youtube.com/watch?v=TEST0FAKE04',
+    }];
+  });
+  await p3.evaluate(() => showRoute());
+  await p3.waitForTimeout(150);
+  await p3.click('.street-video-button');
+  await p3.waitForTimeout(400); // 실제로 onerror가 도착할 시간을 준다.
+  const panelText8 = await p3.locator('#streetVideoPanel').innerText();
+  t('8) 스크립트 로드 자체가 실패(onerror)하면 무한정 안 기다리고 원본 링크 안내로 바뀜', /유튜브에서 직접|바로 재생할 수 없어요/.test(panelText8));
+  t('8) 실패 상태에서도 원본 유튜브 링크는 계속 제공됨', (await p3.locator('#streetVideoPanel .street-video-original-link').getAttribute('href')) === 'https://www.youtube.com/watch?v=TEST0FAKE04');
+  await b3.close();
+}
+
+// =====================================================================
+// 9. 응답이 아예 안 오는(느린 해외 연결 흉내) 경우도 정해진 시간이
+//    지나면 타임아웃으로 같은 원본 링크 안내로 바뀐다. 실제 8초를
+//    기다리지 않도록 테스트 전용 훅으로 타임아웃을 짧게 줄인다.
+// =====================================================================
+{
+  const b4 = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+  const p4 = await b4.newPage();
+  p4.on('dialog', (d) => d.dismiss());
+  await p4.route('https://www.youtube.com/iframe_api', () => {}); // 응답 자체를 영원히 안 함.
+  await p4.addInitScript((base) => { window.API_BASE = base; }, apiBase);
+  await p4.goto('file://' + process.cwd() + '/src/design/index.html');
+  await p4.waitForTimeout(200);
+  await p4.evaluate(() => window.StreetVideo._testHooks.setIframeApiTimeoutMs(200));
+  await p4.evaluate(() => {
+    window.StreetVideo.STREET_VIDEOS['후쿠오카'] = [{
+      videoId: 'TEST0FAKE05', title: '(테스트) 타임아웃', channel: '테스트 채널',
+      filmingLocation: '테스트 촬영지', tzId: 'Asia/Tokyo', sourceUrl: 'https://www.youtube.com/watch?v=TEST0FAKE05',
+    }];
+  });
+  await p4.evaluate(() => showRoute());
+  await p4.waitForTimeout(150);
+  await p4.click('.street-video-button');
+  await p4.waitForTimeout(400); // 테스트용 200ms 타임아웃보다 넉넉히 더 기다린다.
+  const panelText9 = await p4.locator('#streetVideoPanel').innerText();
+  t('9) 응답이 아예 없어도(느린 해외 연결 흉내) 정해진 시간이 지나면 타임아웃으로 원본 링크 안내로 바뀜', /유튜브에서 직접|바로 재생할 수 없어요/.test(panelText9));
+  await b4.close();
+}
+
+// =====================================================================
+// 10. 닫기/빠른 재열기 시 낡은 콜백이 새 플레이어 인스턴스에 영향을
+//     주면 안 된다. 첫 번째 열기의 응답을 일부러 붙들어 둔 채 바로
+//     닫고 다른 영상을 빠르게 다시 연 뒤, 그제서야 첫 번째 응답이
+//     늦게 도착하게 만들어 실제로 재현·확인한다.
+// =====================================================================
+{
+  const b5 = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+  const p5 = await b5.newPage();
+  p5.on('dialog', (d) => d.dismiss());
+  let resolveFirstRoute;
+  const firstRouteHeld = new Promise((res) => { resolveFirstRoute = res; });
+  await p5.route('https://www.youtube.com/iframe_api', async (route) => {
+    await firstRouteHeld; // 사용자가 닫고 다시 열 때까지 응답을 늦춘다(느린 응답 흉내).
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/javascript',
+      body: "window.YT=window.YT||{};window.YT.Player=function(elId){window.__ytPlayerCreations=window.__ytPlayerCreations||[];window.__ytPlayerCreations.push(elId);this.destroy=function(){};};if(typeof window.onYouTubeIframeAPIReady==='function')window.onYouTubeIframeAPIReady();",
+    });
+  });
+  await p5.addInitScript((base) => { window.API_BASE = base; }, apiBase);
+  await p5.goto('file://' + process.cwd() + '/src/design/index.html');
+  await p5.waitForTimeout(200);
+  await p5.evaluate(() => {
+    window.StreetVideo.STREET_VIDEOS['후쿠오카'] = [{
+      videoId: 'TEST0STALE1', title: '(테스트) 첫 번째', channel: '테스트', filmingLocation: '테스트', tzId: 'Asia/Tokyo', sourceUrl: 'https://www.youtube.com/watch?v=TEST0STALE1',
+    }];
+  });
+  await p5.evaluate(() => showRoute());
+  await p5.waitForTimeout(150);
+  await p5.click('.street-video-button'); // 첫 번째 열기 — 응답이 아직 안 옴(붙들려 있음).
+  await p5.waitForTimeout(100);
+  await p5.evaluate(() => window.StreetVideo.closePanel()); // 바로 닫음(세대가 올라감).
+  await p5.evaluate(() => {
+    window.StreetVideo.STREET_VIDEOS['후쿠오카'] = [{
+      videoId: 'TEST0STALE2', title: '(테스트) 두 번째', channel: '테스트', filmingLocation: '테스트', tzId: 'Asia/Tokyo', sourceUrl: 'https://www.youtube.com/watch?v=TEST0STALE2',
+    }];
+  });
+  await p5.evaluate(() => showRoute());
+  await p5.waitForTimeout(50);
+  await p5.click('.street-video-button'); // 빠르게 재열기 — 다른 영상.
+  await p5.waitForTimeout(100);
+  resolveFirstRoute(); // 이제서야 붙들려 있던 첫 번째 응답이 늦게 도착.
+  await p5.waitForTimeout(300);
+  const playerCreations = await p5.evaluate(() => window.__ytPlayerCreations || []);
+  t('10) 늦게 도착한 응답이 있어도 실제 YT.Player는 딱 한 번만 만들어짐(낡은 콜백이 중복 생성 안 함)', playerCreations.length === 1);
+  const finalIframeSrc = await p5.locator('#streetVideoPanel iframe').getAttribute('src');
+  t('10) 화면에 남는 것은 나중에 연 두 번째 영상임(낡은 콜백이 잘못 덮어쓰지 않음)', !!finalIframeSrc && finalIframeSrc.includes('TEST0STALE2'));
+  await b5.close();
 }
 
 t('최종 콘솔/런타임 오류 0', errs.length === 0);
