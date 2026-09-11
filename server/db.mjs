@@ -125,6 +125,21 @@ function migrate(d) {
       version INTEGER NOT NULL DEFAULT 1,
       PRIMARY KEY (account_id, city, date)
     );
+    /* account_tags: 2026-09-11 재검토(11차) — 사용자가 만든 태그(source:
+       'user')와 기본 태그의 계정별 표시명 override(source:'builtin-
+       override')를 계정별로 서버에 보관한다. account_places와 완전히
+       같은 버전 대조·비파괴 저장 패턴(server/routes/tags.mjs 참고) —
+       로그아웃해도 안 지워지고, 재로그인·다른 기기에서 그대로
+       복원되며, 계정이 다르면 서로 안 섞인다(계정별 PRIMARY KEY). */
+    CREATE TABLE IF NOT EXISTS account_tags (
+      account_id TEXT NOT NULL REFERENCES accounts(id),
+      tag_id TEXT NOT NULL,
+      data TEXT NOT NULL,
+      deleted INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 1,
+      PRIMARY KEY (account_id, tag_id)
+    );
 
     /* generation_locks: 계정당 동시에 하나의 코스 생성만 진행 중일 수
        있다(PRIMARY KEY account_id — trial_usage와 같은 원자성 확보

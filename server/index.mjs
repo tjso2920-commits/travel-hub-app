@@ -32,6 +32,7 @@ import { recordEvent } from './routes/events.mjs';
 import { joinWaitlist } from './routes/waitlist.mjs';
 import { generateCourseRoute } from './routes/course-generation.mjs';
 import { getPlaces, syncPlaces, getCourses, syncCourses } from './routes/account-data.mjs';
+import { getTags, syncTags } from './routes/tags.mjs';
 import { paymentConfigRoute, createOrderRoute, confirmOrderRoute, cancelOrderRoute } from './routes/payment.mjs';
 import { listTrips, createTrip, updateTrip, getTripCourses, putTripCourses, syncTrips } from './routes/trips.mjs';
 import { getVisits, markVisited, unmarkVisited, setWantRevisit, setNotes, syncVisits } from './routes/visits.mjs';
@@ -144,6 +145,18 @@ async function handle(req, res) {
       const accountId = requireAccount(req, res); if (!accountId) return;
       const body = JSON.parse((await readBody(req)) || '{}');
       const result = syncCourses(accountId, body.courses);
+      return sendJson(res, result.status || 200, result);
+    }
+    // 2026-09-11 재검토(11차) — 계정별 태그 레지스트리(사용자가 만든
+    // 태그 + 기본 태그 표시명 override). account_places와 같은 패턴.
+    if (req.method === 'GET' && pathname === '/api/tags') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      return sendJson(res, 200, getTags(accountId));
+    }
+    if (req.method === 'PUT' && pathname === '/api/tags') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const result = syncTags(accountId, body.tags, body.deletedIds);
       return sendJson(res, result.status || 200, result);
     }
     // 예전 단일 코스 저장(로드맵 ⑧ 최초 설계) — 클라이언트가 실제로

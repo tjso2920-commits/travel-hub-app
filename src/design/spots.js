@@ -276,7 +276,7 @@ function daFieldConflictBlockHTML(conflicts, resolveAttrName, idForAttr) {
 }
 
 async function daSyncPush(token) {
-  if (!token) return { placesOk: true, coursesOk: true, tripsOk: true, visitsOk: true, allOk: true };
+  if (!token) return { placesOk: true, coursesOk: true, tripsOk: true, visitsOk: true, tagsOk: true, allOk: true, hasUnresolvedConflicts: false, fullySynced: true };
   const epochAtStart = sessionEpoch;
   // 2026-09-10 재검토(7차) — daSyncPushSafe는 로컬이 바뀔 때마다 fire-
   // and-forget으로 겹쳐 불릴 수 있다(예: 방문 표시 직후 + 곧이어 여행
@@ -299,19 +299,27 @@ async function daSyncPush(token) {
   // 나간 "이후"에 생긴 새 로컬 수정을 조용히 잃어버린다.
   const outgoingPlaces = (foodMap.places || []).map((p) => ({ ...p }));
   const requestSnapshot = new Map(outgoingPlaces.map((p) => [p.id, A.placeContentKey(p)]));
-  const [placesRes, coursesRes, tripsRes, visitsRes] = await Promise.all([
+  // 2026-09-11 재검토(11차) — 태그 레지스트리(사용자가 만든 태그 +
+  // 기본 태그 표시명 override)도 계정별로 서버에 동기화한다. 저장
+  // 중에 새로 만든 태그가 사라지지 않게(장소와 같은 이유) 요청 스냅샷을
+  // 남긴다.
+  const outgoingTags = (A.rawCustomTags || []).map((tg) => ({ ...tg }));
+  const pendingDeletedTags = (A.deletedTagIds || []).slice();
+  const tagRequestSnapshot = new Set(outgoingTags.map((tg) => tg.id));
+  const [placesRes, coursesRes, tripsRes, visitsRes, tagsRes] = await Promise.all([
     A.api('/api/places', { method: 'PUT', token, body: { places: outgoingPlaces, deletedIds: pendingDeleted } }),
     A.api('/api/courses', { method: 'PUT', token, body: { courses: (foodMap.courses || []).filter((c) => !c.tripId) } }),
     A.api('/api/trips/sync', { method: 'POST', token, body: { trips: tripsPayload } }),
     A.api('/api/visits/sync', { method: 'POST', token, body: { visits: foodMap.visits || [] } }),
+    A.api('/api/tags', { method: 'PUT', token, body: { tags: outgoingTags, deletedIds: pendingDeletedTags } }),
   ]);
   // 응답이 오는 사이 로그아웃하고 다른 계정으로 로그인했으면(세대가
   // 바뀌었으면) 지금 이 응답을 화면에 반영하지 않는다 — 다른 계정의
   // 데이터를 이전 계정의 늦은 응답이 덮어쓰는 사고를 막는다.
-  if (sessionEpoch !== epochAtStart) return { placesOk: false, coursesOk: false, tripsOk: false, visitsOk: false, allOk: false, stale: true };
+  if (sessionEpoch !== epochAtStart) return { placesOk: false, coursesOk: false, tripsOk: false, visitsOk: false, tagsOk: false, allOk: false, stale: true };
   // 그 사이 더 최신 daSyncPush가 이미 시작됐으면 이 응답은 낡은 것 —
   // 적용하지 않는다(그 최신 호출이 알아서 반영한다).
-  if (mySeq !== daSyncPushSeq) return { placesOk: false, coursesOk: false, tripsOk: false, visitsOk: false, allOk: false, stale: true };
+  if (mySeq !== daSyncPushSeq) return { placesOk: false, coursesOk: false, tripsOk: false, visitsOk: false, tagsOk: false, allOk: false, stale: true };
 
   let localViewNeedsRefresh = false; // 재병합/삭제충돌 복구로 화면이 보는 spots/cities를 즉시 갱신해야 하는지.
   let placesRemergedAny = false;
@@ -497,6 +505,31 @@ async function daSyncPush(token) {
     A.resyncTripsBaseline(foodMap.trips, tripBaselineOverrides);
   }
   if (visitsOk) foodMap.visits = visitsRes.json.visits;
+  // 2026-09-11 재검토(11차) — 태그 레지스트리 동기화 응답 반영. 태그는
+  // 여러 기기가 동시에 같은 태그를 서로 다르게 고치는 일이 드물고,
+  // 지시도 trips/courses처럼 별도 충돌 해결 화면을 요구하지 않으므로
+  // 여기서는 places/courses보다 단순하게 처리한다 — 충돌이 나면(아주
+  // 드문 경우) 서버가 지금 갖고 있는 값을 그대로 받아들인다(다음
+  // 화면에서 바로 보인다). 다만 "저장 중 새로 만든 태그"는 장소와
+  // 같은 이유로 잃지 않는다 — 응답에도, 요청 스냅샷에도 없는 태그는
+  // 이 요청이 나간 뒤 새로 생긴 것이 확실하므로 그대로 살려 둔다.
+  const tagsOk = !!(tagsRes.ok && tagsRes.json && Array.isArray(tagsRes.json.tags));
+  if (tagsOk) {
+    const conflicts = Array.isArray(tagsRes.json.conflicts) ? tagsRes.json.conflicts : [];
+    const conflictById = new Map(conflicts.filter((c) => c.tagId && c.serverTag).map((c) => [c.tagId, c.serverTag]));
+    const merged = tagsRes.json.tags.map((serverTag) => conflictById.get(serverTag.id) || serverTag);
+    const mergedIds = new Set(merged.map((tg) => tg.id));
+    const addedDuringOrAfterFlight = (A.rawCustomTags || []).filter((tg) => tg && tg.id && !mergedIds.has(tg.id) && !tagRequestSnapshot.has(tg.id));
+    foodMap.customTags = [...merged, ...addedDuringOrAfterFlight];
+    // 반려된 삭제(기준 버전이 안 맞음)는 큐에서 빼지 않고 그대로 두면
+    // 다음 push 때 다시 시도된다 — places의 "삭제 충돌"과 달리 되살릴
+    // 필요는 없다(태그 삭제는 연결만 끊는 저위험 작업이라 자동
+    // 재시도만으로 충분하다). 실제로 반영된(성공했거나, 서버가 이미
+    // 몰라서 그냥 넘어간) 것만 큐에서 제거한다.
+    const deleteConflictIds = new Set(conflicts.filter((c) => c.reason === 'stale-base-version-delete').map((c) => c.tagId));
+    foodMap.deletedTagIds = (A.deletedTagIds || []).filter((d) => !pendingDeletedTags.some((pd) => pd.id === d.id) || deleteConflictIds.has(d.id));
+    A.resyncCustomTagsRef(foodMap);
+  }
   if (placesOk && coursesOk && tripsOk && !placesRemergedAny && !coursesRemergedAny && !tripsRemergedAny) {
     daSyncConflictRetryCount = 0; // 충돌 없이 조용히 끝난 push — 재시도 카운터 원복.
   }
@@ -524,8 +557,8 @@ async function daSyncPush(token) {
     (foodMap.places || []).some((p) => p && p._fieldConflicts && Object.keys(p._fieldConflicts).length) ||
     (foodMap.courses || []).some((c) => c && c._fieldConflicts && Object.keys(c._fieldConflicts).length) ||
     (foodMap.trips || []).some((tr) => tr && tr._fieldConflicts && Object.keys(tr._fieldConflicts).length);
-  const allOk = placesOk && coursesOk && tripsOk && visitsOk;
-  return { placesOk, coursesOk, tripsOk, visitsOk, allOk, hasUnresolvedConflicts, fullySynced: allOk && !hasUnresolvedConflicts };
+  const allOk = placesOk && coursesOk && tripsOk && visitsOk && tagsOk;
+  return { placesOk, coursesOk, tripsOk, visitsOk, tagsOk, allOk, hasUnresolvedConflicts, fullySynced: allOk && !hasUnresolvedConflicts };
 }
 function daSyncPushSafe() {
   const token = A.sessionToken(foodMap);
@@ -598,6 +631,7 @@ async function daLogout() {
   delete foodMap.courses;
   delete foodMap.trips;
   delete foodMap.customTags;
+  delete foodMap.deletedTagIds;
   delete foodMap.visits;
   delete foodMap.currentTripByCity;
   delete foodMap.deletedPlaceIds;
@@ -806,10 +840,20 @@ function tagsEditSheet(id) {
   // 붙여 본 태그를 먼저 보여준 뒤 나머지는 "더 보기"로 접어 둔다.
   const freq = new Map();
   (foodMap.places || []).forEach((pl) => (pl.tags || []).forEach((t) => freq.set(t, (freq.get(t) || 0) + 1)));
-  const known = A.knownTags;
+  // 2026-09-11 재검토(11차) — "다른 기기에서 받은 알 수 없는 태그도
+  // 편집 화면에서 빠뜨리지 마." A.knownTags(레지스트리)에는 없지만
+  // 실제로 어느 장소엔가 이미 붙어 있는 라벨(예: 레지스트리 항목이
+  // 아직 동기화되기 전에 장소만 먼저 동기화된 경우)도 놓치지 않고
+  // 토글 칩으로 보여준다.
+  const known = Array.from(new Set([...A.knownTags, ...freq.keys()]));
   const frequent = known.filter((t) => freq.has(t)).sort((a, b) => (freq.get(b) - freq.get(a)) || a.localeCompare(b));
   const rest = known.filter((t) => !freq.has(t));
   const chipHTML = (t) => `<button data-tag-toggle="${A.esc(t)}" class="${current.has(t) ? 'active' : ''}" aria-pressed="${current.has(t)}">${A.esc(t)}</button>`;
+  // 태그 이름 바꾸기·삭제 — 커스텀 태그(사용자가 만든 것)만 삭제
+  // 버튼을 보여준다(기본 태그는 이름만 바꿀 수 있고, 이 계정만의
+  // 표시명으로 저장된다 — daRenameTag 참고).
+  const manageEntries = A.tagEntries.slice().sort((a, b) => a.label.localeCompare(b.label));
+  const manageOptionsHTML = manageEntries.map((t) => `<option value="${A.esc(t.label)}" data-source="${A.esc(t.source)}">${A.esc(t.label)}${t.source === 'user' ? ' (내가 만든 태그)' : ''}</option>`).join('');
   open('세부 태그', `<div class="detail"><h2>세부 태그를 골라 주세요</h2><p>${A.esc(p.name)}</p>` +
     `<p class="inline-note">여러 개를 함께 고를 수 있어요(예: 야키토리+이자카야). 자동 추정이 틀렸으면 직접 고치거나 새 태그를 만들 수 있어요.</p>` +
     (frequent.length ? `<p class="inline-note" style="margin-top:10px"><b>${A.esc(A.t('tags.frequent'))}</b></p>` : '') +
@@ -817,7 +861,12 @@ function tagsEditSheet(id) {
     (rest.length ? `<button id="tagsMoreBtn" style="margin-top:10px">${A.esc(A.t('tags.more'))}(${rest.length})</button>` : '') +
     `<div class="filters" id="tagEditChipsMore" hidden style="flex-wrap:wrap;overflow:visible;margin-top:10px">${rest.map(chipHTML).join('')}</div>` +
     `<div style="margin-top:14px;display:flex;gap:8px"><input id="tagsNewInput" placeholder="${A.esc(A.t('tags.newPlaceholder'))}" maxlength="20" style="flex:1"><button id="tagsNewBtn">${A.esc(A.t('tags.add'))}</button></div>` +
-    `<button class="primary" id="tagsSaveBtn" style="margin-top:14px">저장</button></div>`);
+    `<button class="primary" id="tagsSaveBtn" style="margin-top:14px">저장</button>` +
+    (manageEntries.length ? `<div class="inline-note" style="margin-top:16px"><b>태그 이름 바꾸기 · 삭제</b>` +
+      `<select id="tagManageSelect" style="width:100%;margin-top:8px;padding:10px;border-radius:12px;border:1px solid #e5e6e1;font:inherit">${manageOptionsHTML}</select>` +
+      `<div style="display:flex;gap:8px;margin-top:8px"><input id="tagRenameInput" placeholder="새 이름" maxlength="20" style="flex:1"><button id="tagRenameBtn">이름 바꾸기</button></div>` +
+      `<button class="text-button" id="tagDeleteBtn" style="padding:6px 0;margin-top:4px" hidden>이 태그 삭제(연결된 곳에서만 빠지고, 장소는 안 지워져요)</button></div>` : '') +
+    `</div>`);
   const wireChip = (b) => {
     b.onclick = () => {
       const t = b.dataset.tagToggle;
@@ -837,14 +886,69 @@ function tagsEditSheet(id) {
     const r = A.createTag(label);
     if (!r.ok) { alert('태그를 만들지 못했어요.'); return; }
     current.add(r.tag.label);
-    A.saveFoodMap(foodMap); // customTags는 foodMap의 일부라 즉시 저장해 둔다(다른 장소에서도 바로 보이게).
+    // 2026-09-11 재검토(11차) — 저장 실패도 확인하고 되돌린다(성공을
+    // 가정하지 않는다). 실패하면 방금 메모리에 만든 태그도 없던 일로
+    // 한다 — 화면엔 이미 추가됐는데 실제로는 저장 안 된 상태를 남기지
+    // 않기 위해서다.
+    const saved = A.saveFoodMap(foodMap);
+    if (!saved) {
+      foodMap = A.loadFoodMap();
+      current.delete(r.tag.label);
+      alert('태그를 저장하지 못했어요. 브라우저 저장 공간을 확인해 주세요.');
+      return;
+    }
+    daSyncPushSafe(); // 장소에 아직 안 붙였어도(레지스트리만) 곧바로 다른 기기에 반영되게.
     const btn = document.createElement('button');
     btn.dataset.tagToggle = r.tag.label; btn.className = 'active'; btn.setAttribute('aria-pressed', 'true'); btn.textContent = r.tag.label;
     wireChip(btn);
     $('#tagEditChipsFrequent').appendChild(btn);
     $('#tagsNewInput').value = '';
+    if ($('#tagManageSelect')) {
+      const opt = document.createElement('option');
+      opt.value = r.tag.label; opt.dataset.source = 'user'; opt.textContent = r.tag.label + ' (내가 만든 태그)';
+      $('#tagManageSelect').appendChild(opt);
+    }
   };
   $('#tagsSaveBtn').onclick = () => finishTagsEdit(id, Array.from(current));
+  const manageSelect = $('#tagManageSelect');
+  const deleteBtn = $('#tagDeleteBtn');
+  const refreshDeleteVisibility = () => {
+    if (!manageSelect || !deleteBtn) return;
+    const opt = manageSelect.selectedOptions[0];
+    deleteBtn.hidden = !opt || opt.dataset.source !== 'user';
+  };
+  if (manageSelect) {
+    manageSelect.onchange = refreshDeleteVisibility;
+    refreshDeleteVisibility();
+    $('#tagRenameBtn').onclick = () => {
+      const oldLabel = manageSelect.value;
+      const newLabel = $('#tagRenameInput').value;
+      const r = A.renameTag(oldLabel, newLabel, foodMap.places);
+      if (!r.ok) {
+        alert(r.reason === 'duplicate-label' ? '이미 있는 태그 이름이에요.' : '이름을 바꾸지 못했어요(1~20자, 빈 값 불가).');
+        return;
+      }
+      const saved = A.saveFoodMap(foodMap);
+      if (!saved) { foodMap = A.loadFoodMap(); alert('저장에 실패했어요. 브라우저 저장 공간을 확인해 주세요.'); return; }
+      daSyncPushSafe();
+      refreshFromStorage();
+      tagsEditSheet(id); // 바뀐 이름이 칩·목록에 바로 보이게 다시 그린다.
+    };
+    if (deleteBtn) {
+      deleteBtn.onclick = () => {
+        const label = manageSelect.value;
+        const tag = A.findTagByLabel(label);
+        if (!tag) return;
+        const r = A.deleteCustomTag(tag.id, foodMap.places);
+        if (!r.ok) { alert('태그를 삭제하지 못했어요.'); return; }
+        const saved = A.saveFoodMap(foodMap);
+        if (!saved) { foodMap = A.loadFoodMap(); alert('저장에 실패했어요. 브라우저 저장 공간을 확인해 주세요.'); return; }
+        daSyncPushSafe();
+        refreshFromStorage();
+        tagsEditSheet(id);
+      };
+    }
+  }
 }
 function finishTagsEdit(id, tags) {
   A.setTags(foodMap.places, id, tags);
@@ -2358,11 +2462,65 @@ function resolveDup(aId, bId, action) {
   const stillThere = spots.find((s) => s.id === aId);
   if (stillThere) detail(aId); else sheet.close();
 }
+/* 2026-09-11 재검토(11차) 3절 — "장소 다중 선택에서 일괄 태그 추가·
+   제거를 제공해." 이미 있는 다중 선택(#selectionbar)을 그대로 쓰고
+   별도 대형 관리 화면은 만들지 않는다 — 태그 하나를 고른 뒤 붙이기/
+   떼기 버튼만 누르면 된다. */
+function bulkTagEditSheet(ids) {
+  if (!ids.length) return;
+  const known = A.tagEntries.slice().sort((a, b) => a.label.localeCompare(b.label));
+  let pickedTag = null;
+  open('태그 일괄 편집', `<div class="detail"><h2>${ids.length}곳에 태그 일괄 적용</h2>` +
+    `<p class="inline-note">태그를 하나 고른 뒤, 고른 ${ids.length}곳 전부에 한 번에 붙이거나 뗄 수 있어요.</p>` +
+    `<div class="filters" id="bulkTagChips" style="flex-wrap:wrap;overflow:visible">${known.map((t) => `<button data-bulk-tag="${A.esc(t.label)}">${A.esc(t.label)}</button>`).join('')}</div>` +
+    `<div style="display:flex;gap:8px;margin-top:14px"><input id="bulkTagNewInput" placeholder="새 태그 이름" maxlength="20" style="flex:1"><button id="bulkTagNewBtn">추가</button></div>` +
+    `<div style="display:flex;gap:8px;margin-top:14px"><button class="primary" id="bulkTagAddBtn" style="flex:1">고른 태그 붙이기</button><button id="bulkTagRemoveBtn" style="flex:1">고른 태그 떼기</button></div>` +
+    `<button class="text-button" data-dismiss style="margin-top:10px">닫기</button></div>`);
+  const pickChip = (b) => {
+    $('#bulkTagChips').querySelectorAll('[data-bulk-tag]').forEach((x) => x.classList.remove('active'));
+    b.classList.add('active');
+    pickedTag = b.dataset.bulkTag;
+  };
+  $('#bulkTagChips').querySelectorAll('[data-bulk-tag]').forEach((b) => { b.onclick = () => pickChip(b); });
+  $('#bulkTagNewBtn').onclick = () => {
+    const label = A.normalizeTagLabel($('#bulkTagNewInput').value);
+    if (!label) { alert('태그 이름을 확인해 주세요(1~20자, 빈 값 불가).'); return; }
+    const r = A.createTag(label);
+    if (!r.ok) { alert('태그를 만들지 못했어요.'); return; }
+    const saved = A.saveFoodMap(foodMap);
+    if (!saved) { foodMap = A.loadFoodMap(); alert('태그를 저장하지 못했어요. 브라우저 저장 공간을 확인해 주세요.'); return; }
+    daSyncPushSafe();
+    const btn = document.createElement('button');
+    btn.dataset.bulkTag = r.tag.label; btn.textContent = r.tag.label;
+    btn.onclick = () => pickChip(btn);
+    $('#bulkTagChips').appendChild(btn);
+    pickChip(btn);
+    $('#bulkTagNewInput').value = '';
+  };
+  const applyBulk = (add) => {
+    if (!pickedTag) { alert('먼저 태그를 골라 주세요.'); return; }
+    const changed = A.bulkSetTag(foodMap.places, ids, pickedTag, add);
+    const saved = A.saveFoodMap(foodMap);
+    if (!saved) { foodMap = A.loadFoodMap(); alert('저장에 실패했어요. 브라우저 저장 공간을 확인해 주세요.'); return; }
+    daSyncPushSafe();
+    refreshFromStorage();
+    updateCity();
+    selected.clear(); selecting = false; render();
+    daToast(`${changed}곳에 "${pickedTag}" 태그를 ${add ? '붙였어요' : '뗐어요'}.`);
+    sheet.close();
+  };
+  $('#bulkTagAddBtn').onclick = () => applyBulk(true);
+  $('#bulkTagRemoveBtn').onclick = () => applyBulk(false);
+}
 $('#addRoute').onclick = () => {
   const ids = spots.filter((p) => p.city === city && selected.has(p.id)).map((p) => p.id);
   if (city === A.UNKNOWN_CITY) return cityAssignSheet(ids);
   ids.forEach((id) => { route.add(id); selected.delete(id); });
   selecting = false; render(); showRoute();
+};
+$('#bulkTagEdit').onclick = () => {
+  const ids = spots.filter((p) => p.city === city && selected.has(p.id)).map((p) => p.id);
+  bulkTagEditSheet(ids);
 };
 $('#route').onclick = showRoute;
 document.querySelectorAll('[data-profile]').forEach((b) => { b.onclick = profile; });

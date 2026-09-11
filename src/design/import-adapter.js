@@ -484,11 +484,36 @@ const TAG_REGISTRY_BUILTIN = [
   { id: 'indian_curry', label: '인도·커리', pattern: /인도음식|커리|\bcurry\b|indian food/, synonyms: [] },
   { id: 'chinese', label: '중식', pattern: /중식|중국요리|chinese restaurant|dim ?sum|딤섬/, synonyms: [] },
 ];
-/* 사용자가 만든 태그(foodMap.customTags에 저장) — loadFoodMap이 채우고
-   CRUD 함수(daCreateTag/daRenameTag/daDeleteCustomTag)가 갱신한다.
-   세션 중엔 이 배열도 daInferTags/daKnownTags가 함께 참고한다. */
+/* 사용자가 만든 태그·기본 태그 표시명 override(foodMap.customTags에
+   저장) — loadFoodMap이 채우고 CRUD 함수(daCreateTag/daRenameTag/
+   daDeleteCustomTag)가 갱신한다. 한 항목은 둘 중 하나다:
+   - source:'user' — 사용자가 직접 만든 진짜 새 태그.
+   - source:'builtin-override' — 기본 태그(TAG_REGISTRY_BUILTIN) 하나의
+     "이 계정에서만 다르게 보일 표시명"(id가 그 기본 태그의 id와 같다).
+   2026-09-11 재검토(11차) — "기본 태그 이름 변경을 허용한다면 원본
+   전역 배열을 수정하지 말고 계정별 표시명으로 저장해"라는 지시 반영.
+   TAG_REGISTRY_BUILTIN은 이 페이지가 켜져 있는 동안 모든 계정이 같은
+   모듈 인스턴스를 공유하는 상수이므로, 직접 고치면 로그아웃 후 다른
+   계정으로 들어와도 이전 계정의 이름 변경이 새어 들어온다 — override
+   레코드로 완전히 분리해 둔다. */
 let _customTags = [];
-function _allTagEntries() { return TAG_REGISTRY_BUILTIN.concat(_customTags); }
+// foodMap.deletedTagIds와 같은 참조를 가리킨다(loadFoodMap이 연결) —
+// account_places의 deletedPlaceIds와 같은 역할.
+let _deletedTagIds = [];
+function _builtinOverrideMap() {
+  const m = new Map();
+  for (const t of _customTags) if (t && t.source === 'builtin-override') m.set(t.id, t.label);
+  return m;
+}
+/* 화면 표시·검색용 "지금 유효한 태그 목록" — 기본 태그는 override가
+   있으면 그 표시명으로 바꿔 보여주고(원본 객체는 그대로, 스프레드로
+   새 객체만 만든다), 사용자 태그는 그대로 이어붙인다. */
+function _allTagEntries() {
+  const overrides = _builtinOverrideMap();
+  const builtinResolved = TAG_REGISTRY_BUILTIN.map((t) => (overrides.has(t.id) ? { ...t, label: overrides.get(t.id) } : t));
+  const userTags = _customTags.filter((t) => t && t.source !== 'builtin-override');
+  return builtinResolved.concat(userTags);
+}
 function _slugifyTagId(label) {
   const base = String(label || '').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '_').replace(/^_+|_+$/g, '') || 'tag';
   let id = 'custom_' + base, n = 1;
@@ -502,10 +527,20 @@ function _slugifyTagId(label) {
    제외한다. 완전한 문장 이해는 아니고 딱 이 패턴 하나를 가려내는
    한정적 규칙이다(과도한 일반화 금지 — 문서에도 그대로 남긴다). */
 const NEGATION_AFTER = /^\s*(말고|아니고|아니라|대신|보다는|하지\s?말고)/;
+/* 2026-09-11 재검토(11차) — "개인 태그와 실제 업종 태그를 구분해. 개인
+   태그가 다른 장소의 업종 자동 추정에 사용되면 안 된다." 사용자가
+   만든 태그(꼭 가기 같은 개인 주제어)는 절대 이 함수를 통해 다른
+   장소로 자동 번지면 안 된다 — TAG_REGISTRY_BUILTIN(우리가 실제
+   업종 패턴을 검증해 둔 21개 + 늘어날 항목)만 자동 추정 후보로
+   쓴다. 사용자 태그는 언제나 사람이 명시적으로 붙여야만(단일 편집·
+   일괄 편집) 장소에 남는다. 기본 태그의 override 표시명은 여기서도
+   그대로 반영한다(패턴은 원본과 동일 — 표시명만 바뀐다). */
 function daInferTags(s) {
   s = String(s || '').toLowerCase();
   const out = [];
-  for (const tag of _allTagEntries()) {
+  const overrides = _builtinOverrideMap();
+  for (const builtinTag of TAG_REGISTRY_BUILTIN) {
+    const tag = overrides.has(builtinTag.id) ? { ...builtinTag, label: overrides.get(builtinTag.id) } : builtinTag;
     let hit = false;
     if (tag.pattern) {
       const flags = tag.pattern.flags.includes('g') ? tag.pattern.flags : tag.pattern.flags + 'g';
@@ -638,7 +673,10 @@ function daCreateTag(label, synonyms) {
   // 적용할 수 있게 별도 함수로 분리해 둔다 — daNormalizeTagLabel 참고).
   const existing = _allTagEntries().find((t) => t.label.toLowerCase() === norm.toLowerCase());
   if (existing) return { ok: true, tag: existing, created: false };
-  const tag = { id: _slugifyTagId(norm), label: norm, synonyms: Array.isArray(synonyms) ? synonyms.filter(Boolean).map(String) : [], source: 'user', createdAt: new Date().toISOString() };
+  // version: 0은 "서버에 아직 한 번도 저장 안 됨"을 뜻한다(account_places
+  // 의 baseVersion 관례와 동일) — 다음 daSyncPush가 이 값을 기준으로
+  // 서버에 새로 만든다.
+  const tag = { id: _slugifyTagId(norm), label: norm, synonyms: Array.isArray(synonyms) ? synonyms.filter(Boolean).map(String) : [], source: 'user', createdAt: new Date().toISOString(), version: 0 };
   _customTags.push(tag);
   return { ok: true, tag, created: true };
 }
@@ -657,26 +695,43 @@ function daRenameTag(oldLabel, newLabelRaw, places) {
   const tag = daFindTagByLabel(oldLabel);
   if (!tag) return { ok: false, reason: 'not-found' };
   if (daFindTagByLabel(newLabel) && newLabel.toLowerCase() !== oldLabel.toLowerCase()) return { ok: false, reason: 'duplicate-label' };
-  tag.label = newLabel;
+  const isBuiltin = TAG_REGISTRY_BUILTIN.some((t) => t.id === tag.id);
+  if (isBuiltin) {
+    // 2026-09-11 재검토(11차) — 전역 배열(TAG_REGISTRY_BUILTIN)은 절대
+    // 직접 고치지 않는다. 이 계정만의 표시명 override를 customTags
+    // 안에 별도 항목으로 저장한다(같은 id를 다시 바꾸면 그 항목만
+    // 갱신 — 새 override를 계속 쌓지 않는다).
+    let ov = _customTags.find((t) => t.id === tag.id && t.source === 'builtin-override');
+    if (ov) ov.label = newLabel;
+    else _customTags.push({ id: tag.id, label: newLabel, source: 'builtin-override', synonyms: [], version: 0 });
+  } else {
+    const custom = _customTags.find((t) => t.id === tag.id);
+    if (custom) custom.label = newLabel; // _allTagEntries()가 사용자 태그는 원본 참조를 그대로 돌려주므로 안전하게 직접 고칠 수 있다.
+  }
   for (const p of (places || [])) {
     if (!Array.isArray(p.tags)) continue;
     const i = p.tags.indexOf(oldLabel);
     if (i >= 0) p.tags[i] = newLabel;
   }
-  return { ok: true, tag };
+  return { ok: true, tag: { ...tag, label: newLabel } };
 }
 /* 태그를 지워도 장소는 절대 안 지운다 — 연결(tags 배열의 문자열)만
    끊는다. 빌트인 태그는 정규식 매칭 자체를 없앨 수 없으므로(다음
-   자동분류 때 다시 붙을 수 있음) 삭제 대상은 사용자가 만든 태그로
-   한정한다. */
+   자동분류 때 다시 붙을 수 있음) 삭제 대상은 사용자가 만든 진짜
+   태그(source:'user')로 한정한다 — 기본 태그 표시명 override는 이
+   함수로 지우지 않는다(다시 이름을 바꾸면 그 항목이 갱신될 뿐이다). */
 function daDeleteCustomTag(id, places) {
-  const idx = _customTags.findIndex((t) => t.id === id);
+  const idx = _customTags.findIndex((t) => t.id === id && t.source === 'user');
   if (idx < 0) return { ok: false, reason: 'not-found' };
   const [removed] = _customTags.splice(idx, 1);
   for (const p of (places || [])) {
     if (!Array.isArray(p.tags)) continue;
     p.tags = p.tags.filter((t) => t !== removed.label);
   }
+  // 2026-09-11 재검토(11차) — 이 삭제가 서버에도 반영되게(다른 기기·
+  // 재로그인에도 되살아나지 않게) 기준 버전과 함께 삭제 큐에 남긴다
+  // (account_places의 deletedPlaceIds와 같은 패턴).
+  _deletedTagIds.push({ id: removed.id, baseVersion: removed.version || 0 });
   return { ok: true };
 }
 /* 일괄 편집 — 여러 장소에 한 태그를 한 번에 붙이거나 뗀다(10차 4절
@@ -1241,6 +1296,8 @@ window.DesignAdapter = {
     // 동기화 코드가 필요 없다.
     fm.customTags = Array.isArray(fm.customTags) ? fm.customTags : [];
     _customTags = fm.customTags;
+    fm.deletedTagIds = Array.isArray(fm.deletedTagIds) ? fm.deletedTagIds : [];
+    _deletedTagIds = fm.deletedTagIds;
     _stampPlaceVersions(fm.places); // 버전 필드가 없는(한 번도 저장 안 된) 장소만 0으로 초기화.
     _migrateTags(fm.places); // 6-2절 — tags 필드가 아예 없는 예전 장소(약 160곳 포함)를 1회 채움.
     // 2026-09-11 재검토(10차) — "지금 로컬에 있는 내용"이 아니라 "마지막
@@ -1283,6 +1340,23 @@ window.DesignAdapter = {
   bulkSetTag: daBulkSetTag,
   findTagByLabel: daFindTagByLabel,
   normalizeTagLabel: daNormalizeTagLabel,
+  // 2026-09-11 재검토(11차) — 태그 레지스트리 계정별 동기화(daSyncPush가
+  // 씀). rawCustomTags는 저장 그대로(id/label/synonyms/source/version)를
+  // 돌려준다 — knownTags/tagEntries는 화면 표시용으로 이미 가공돼 있어
+  // 동기화 페이로드로 못 쓴다.
+  get rawCustomTags() { return _customTags; },
+  get deletedTagIds() { return _deletedTagIds; },
+  // fm.customTags/fm.deletedTagIds를 spots.js가 통째로 새 배열로
+  // 바꿔치기한 뒤(서버 응답 반영) 이 어댑터의 내부 참조도 다시
+  // 맞춘다 — loadFoodMap이 처음 연결할 때와 같은 이유(별도 복사본을
+  // 두지 않고 항상 같은 배열을 가리키게 해 CRUD 함수의 in-place
+  // 변경이 곧바로 foodMap에도 반영되게 한다).
+  resyncCustomTagsRef(fm) {
+    fm.customTags = Array.isArray(fm.customTags) ? fm.customTags : [];
+    _customTags = fm.customTags;
+    fm.deletedTagIds = Array.isArray(fm.deletedTagIds) ? fm.deletedTagIds : [];
+    _deletedTagIds = fm.deletedTagIds;
+  },
   applyConfirmedTypes: daApplyConfirmedTypes,
   t: daT,
   setLocale: daSetLocale,
