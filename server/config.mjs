@@ -89,14 +89,18 @@ export function buildConfig(env) {
   // 서비스 자체는 정상 동작"인 부가 기능이다.
   const hasGoogleClientId = !!env.GOOGLE_CLIENT_ID;
 
-  // 2026-09-11 재검토(10차) 5절 — AI 보조 분류는 "실제 공급자 미확정,
-  // 운영 AI 호출은 기본 비활성"이 명시된 요구사항이다. 다른 서비스처럼
-  // 키 유무로 real을 켜는 게 아니라, real 모드 자체를 아직 구현하지
-  // 않는다(server/adapters/ai-classify.mjs 참고) — 실수로도 실과금
-  // 경로가 열리지 않게 하기 위해서다. 개발/테스트에서만, 명시적으로
-  // AI_CLASSIFY_ADAPTER=mock을 준 경우에 한해 결정론적 모의 어댑터를
-  // 켤 수 있다(계약 테스트용).
-  const aiClassifyMode = isProd ? 'disabled' : (env.AI_CLASSIFY_ADAPTER === 'mock' ? 'mock' : 'disabled');
+  // 2026-09-11 재검토(13차) 4절 — 실제 AI 공급자(Anthropic Claude
+  // Haiku 4.5 — 선정 근거는 adapters/ai-classify.mjs 상단 주석) 연결
+  // 코드는 이제 있지만, "운영 기본값은 계속 비활성" 요구를 코드로도
+  // 강제한다 — 키가 있다는 사실 하나만으로는 절대 real이 켜지지
+  // 않는다. AI_CLASSIFY_ENABLE_REAL=true(명시적 의견 스위치)와 실제
+  // ANTHROPIC_API_KEY 둘 다 있어야만 real이 켜진다(이중 게이트 —
+  // 둘 중 하나라도 빠지면 예전처럼 비활성/모의로만 동작). 이번
+  // 라운드에서 이 두 값을 실제로 같이 설정하지 않으므로 새 유료
+  // 계약·실과금은 생기지 않는다.
+  const hasAnthropicKey = !!env.ANTHROPIC_API_KEY;
+  const aiClassifyRealEnabled = env.AI_CLASSIFY_ENABLE_REAL === 'true' && hasAnthropicKey;
+  const aiClassifyMode = aiClassifyRealEnabled ? 'real' : (isProd ? 'disabled' : (env.AI_CLASSIFY_ADAPTER === 'mock' ? 'mock' : 'disabled'));
 
   let services;
   if (isProd) {
@@ -472,6 +476,17 @@ export function buildConfig(env) {
       // 같은 순서(계정 한도를 먼저 확인해 거부되면 전체 한도를 아예
       // 건드리지 않는다)로 둔다.
       globalDailyBatchLimit: Number(env.AI_CLASSIFY_GLOBAL_DAILY_BATCH_LIMIT || 2000),
+    },
+    // 2026-09-11 재검토(13차) 4절 — 실제 AI 분류 공급자(Anthropic).
+    // apiKey가 없으면(대부분의 환경) services.aiClassify는 절대 'real'이
+    // 안 된다(위 aiClassifyMode 계산 참고). classifyModel은 선정 근거·
+    // 원가 계산과 함께 adapters/ai-classify.mjs 상단에 문서화.
+    anthropic: {
+      apiKey: env.ANTHROPIC_API_KEY || '',
+      apiBase: env.ANTHROPIC_API_BASE || 'https://api.anthropic.com',
+      apiVersion: env.ANTHROPIC_API_VERSION || '2023-06-01',
+      classifyModel: env.AI_CLASSIFY_MODEL || 'claude-haiku-4-5',
+      timeoutMs: Number(env.AI_CLASSIFY_PROVIDER_TIMEOUT_MS || 20000),
     },
     // 2026-09-11 재검토(13차) 3절 — Google Maps 장소 링크 붙여넣기로
     // 추가. 링크에서 이름·좌표 힌트만 뽑아낼 뿐 Places API를 안 부르므로

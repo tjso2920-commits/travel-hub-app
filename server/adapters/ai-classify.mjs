@@ -83,16 +83,110 @@ export function validateClassifyResult(raw, localIdSet) {
   return out;
 }
 
-/* items: [{localId, name, note, address}] — 최대
+/* 2026-09-11 재검토(13차) 4절 — "실제 AI 자동분류는 아직 없다"를
+   실제로 채운다. 모델 선정 근거(BUSINESS_DECISIONS.md에 그대로
+   옮겨 적음):
+   - Anthropic 공식 가격표(WebSearch로 확인, 이 세션 환경에서
+     anthropic.com 직접 열람은 네트워크 정책상 막혀 있어 검색 결과
+     교차 확인으로 대체 — RELEASE_STATUS.md에 이 제약을 그대로 남김):
+     Claude Haiku 4.5(모델 ID claude-haiku-4-5) — 입력 $1/1M 토큰,
+     출력 $5/1M 토큰. 이 배치 하나가 하는 일은 "장소 이름·주소·이미
+     확인된 유형만 보고 세계 공통 상위분류 하나 고르기"라는 가볍고
+     낮은 위험도(low-stakes) 작업이라, 굳이 더 비싼 상위 모델(Opus·
+     Sonnet 계열)을 쓸 이유가 없다 — 코딩·복잡 추론이 아니라 단순
+     분류이므로 이 등급에서 품질 손실 위험이 낮다.
+   - 원가 추정(자리표시자가 아니라 이 프롬프트·스키마 기준 실측
+     근사): 배치당 시스템 프롬프트 약 250토큰 + 항목당 입력 약
+     40~60토큰(이름·주소·유형 몇 개) + 항목당 출력 약 40~70토큰
+     (JSON 하나). 20개 배치 기준 입력 ≈1,450토큰·출력 ≈1,200토큰 →
+     ($1×1450+$5×1200)/1,000,000 ≈ $0.00725/배치 ≈ 항목당 $0.00036
+     ≈ 항목당 0.5원(환율 1,400원/$ 가정) — 기존 안전 자리표시자
+     (3원/건)보다 훨씬 쌈. **그래도 자리표시자(placeholderPerItemMicros)
+     값 자체는 낮추지 않는다** — 이건 실제 청구서가 아니라 "예산
+     안전판" 목적이라, 응답이 예상보다 길어지는 경우(예: evidence
+     문구가 길어짐)까지 감안해 보수적으로 높게 유지한다(요구사항
+     "내부 안전상한을 확정 이익/원가처럼 서술 금지"와 같은 이유).
+   - 실제 API 키로 검증된 적은 없다 — 이 라운드는 모의 검증(아래
+     테스트에서 실제 fetch 대신 가짜 응답을 주입해 파싱·오류 처리
+     경로만 검증)까지다. 운영 기본값은 계속 비활성이며(config.mjs의
+     이중 게이트 — AI_CLASSIFY_ENABLE_REAL=true AND 실제 키 둘 다
+     필요), 이 라운드에서 새 유료 계약·실과금을 만들지 않는다.
+   items: [{localId, name, note, address}] — 최대
    config.aiClassify.maxItemsPerBatch개(호출부가 이미 자름). */
+const CLASSIFY_SYSTEM_PROMPT = `당신은 세계 각지에서 저장된 장소 목록을 정리하는 보조 도구입니다.
+특정 나라(예: 일본)에 한정하지 말고 이름·주소가 어느 나라 것이든 똑같이 판단하세요.
+각 장소를 다음 카테고리 중 정확히 하나로 분류하세요: ${TOP_CATEGORIES.join(', ')}.
+이름·주소·이미 확인된 유형만으로 근거가 부족하면 category를 null로 두고 unresolved를 true로 표시하세요 — 절대 추측해서 지어내지 마세요.
+관련 있다면 짧은 태그(각 20자 이내)를 최대 5개까지 제안할 수 있습니다(없으면 빈 배열).
+반드시 아래 입력과 같은 순서·개수로, 오직 JSON 배열만 응답하세요(다른 설명·코드블록 표시 없이). 각 원소는 다음 형태여야 합니다:
+{"localId": "...", "category": "..."|null, "tags": ["..."], "evidence": "짧은 근거", "confidence": "low"|"medium"|"high", "unresolved": true|false}`;
+
+function stripCodeFence(text) {
+  const t = String(text || '').trim();
+  const fenced = t.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return fenced ? fenced[1] : t;
+}
+
+/* 실제 Anthropic Messages API를 raw fetch로 호출한다 — 이 저장소의
+   다른 실제 공급자 어댑터(payment-toss.mjs, email.mjs 등)와 똑같이
+   SDK를 새로 추가하지 않고 fetch만 쓰는 기존 관례를 그대로 따른다
+   (이 백엔드는 의도적으로 런타임 의존성이 없다). */
+async function realClassifyBatch(list) {
+  if (!config.anthropic.apiKey) return { ok: false, reason: 'ai-classify-unavailable' };
+  const payload = list.map((x) => ({ localId: x.localId, name: x.name, address: x.address, confirmedTypes: x.confirmedTypes || [] }));
+  const body = {
+    model: config.anthropic.classifyModel,
+    // 항목당 넉넉히 잡되 무한정 늘어나지 않게 상한을 둔다(응답 폭주로
+    // 인한 출력 비용 급증 방지 — 위 원가 추정의 "출력 약 40~70토큰/건"
+    // 가정을 실제로 강제하는 안전판).
+    max_tokens: Math.min(4096, 250 + list.length * 150),
+    system: CLASSIFY_SYSTEM_PROMPT,
+    messages: [{ role: 'user', content: JSON.stringify(payload) }],
+  };
+  let res;
+  try {
+    res = await fetch(`${config.anthropic.apiBase}/v1/messages`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': config.anthropic.apiKey,
+        'anthropic-version': config.anthropic.apiVersion,
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(config.anthropic.timeoutMs),
+    });
+  } catch (e) {
+    return { ok: false, reason: 'ai-classify-provider-network-error' };
+  }
+  if (!res.ok) return { ok: false, reason: `ai-classify-provider-http-${res.status}` };
+  let json;
+  try { json = await res.json(); } catch (e) { return { ok: false, reason: 'ai-classify-provider-bad-response' }; }
+  const textBlock = Array.isArray(json.content) ? json.content.find((b) => b && b.type === 'text') : null;
+  if (!textBlock || !textBlock.text) return { ok: false, reason: 'ai-classify-provider-empty-response' };
+  let parsed;
+  try { parsed = JSON.parse(stripCodeFence(textBlock.text)); } catch (e) { return { ok: false, reason: 'ai-classify-provider-unparseable' }; }
+  if (!Array.isArray(parsed)) return { ok: false, reason: 'ai-classify-provider-unparseable' };
+  return { ok: true, results: parsed };
+}
+
 export async function classifyBatch(items) {
   const mode = config.services.aiClassify;
   if (mode === 'disabled') return { ok: false, reason: 'ai-classify-disabled' };
-  if (mode !== 'mock') return { ok: false, reason: 'ai-classify-unavailable' };
+  if (mode !== 'mock' && mode !== 'real') return { ok: false, reason: 'ai-classify-unavailable' };
   const list = Array.isArray(items) ? items.slice(0, config.aiClassify.maxItemsPerBatch) : [];
   if (!list.length) return { ok: true, results: [] };
   const localIdSet = new Set(list.map((x) => x.localId));
-  const raw = list.map(mockClassifyOne);
+  let raw;
+  if (mode === 'mock') {
+    raw = list.map(mockClassifyOne);
+  } else {
+    const r = await realClassifyBatch(list);
+    // 공급자 오류·타임아웃·파싱 실패는 그대로 위로 전달한다 — "실패
+    // 시 성공한 척 안 하고 추정(규칙 기반)으로 대체"라는 원칙을 여기서도
+    // 지킨다(지어낸 분류로 채우지 않는다).
+    if (!r.ok) return r;
+    raw = r.results;
+  }
   const results = raw.map((r) => validateClassifyResult(r, localIdSet)).filter(Boolean);
   return { ok: true, results, itemCount: list.length };
 }
