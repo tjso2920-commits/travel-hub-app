@@ -45,10 +45,10 @@ let _myGpsLocation = null;
    호출부가 "기준을 못 정함"으로 정직하게 표시한다. */
 function daLocationBasis() {
   const testLoc = A.testModeAllowed() ? A.getTestLocation() : null;
-  if (testLoc) return { lat: testLoc.lat, lng: testLoc.lng, source: 'test', label: `테스트 위치(${testLoc.label})` };
-  if (_myGpsLocation) return { lat: _myGpsLocation.lat, lng: _myGpsLocation.lng, source: 'gps', label: '내 위치(GPS)' };
+  if (testLoc) return { lat: testLoc.lat, lng: testLoc.lng, source: 'test', label: `${A.t('location.testPrefix')}(${testLoc.label})` };
+  if (_myGpsLocation) return { lat: _myGpsLocation.lat, lng: _myGpsLocation.lng, source: 'gps', label: A.t('location.gps') };
   const avg = A.centroid(spots.filter((p) => p.city === city));
-  if (avg) return { lat: avg.lat, lng: avg.lng, source: 'average', label: '평균 위치' };
+  if (avg) return { lat: avg.lat, lng: avg.lng, source: 'average', label: A.t('location.average') };
   return null;
 }
 
@@ -733,10 +733,11 @@ function tagsEditSheet(id) {
   const chipHTML = (t) => `<button data-tag-toggle="${A.esc(t)}" class="${current.has(t) ? 'active' : ''}" aria-pressed="${current.has(t)}">${A.esc(t)}</button>`;
   open('세부 태그', `<div class="detail"><h2>세부 태그를 골라 주세요</h2><p>${A.esc(p.name)}</p>` +
     `<p class="inline-note">여러 개를 함께 고를 수 있어요(예: 야키토리+이자카야). 자동 추정이 틀렸으면 직접 고치거나 새 태그를 만들 수 있어요.</p>` +
+    (frequent.length ? `<p class="inline-note" style="margin-top:10px"><b>${A.esc(A.t('tags.frequent'))}</b></p>` : '') +
     `<div class="filters" id="tagEditChipsFrequent" style="flex-wrap:wrap;overflow:visible">${frequent.map(chipHTML).join('')}</div>` +
-    (rest.length ? `<button id="tagsMoreBtn" style="margin-top:10px">더 보기(${rest.length})</button>` : '') +
+    (rest.length ? `<button id="tagsMoreBtn" style="margin-top:10px">${A.esc(A.t('tags.more'))}(${rest.length})</button>` : '') +
     `<div class="filters" id="tagEditChipsMore" hidden style="flex-wrap:wrap;overflow:visible;margin-top:10px">${rest.map(chipHTML).join('')}</div>` +
-    `<div style="margin-top:14px;display:flex;gap:8px"><input id="tagsNewInput" placeholder="목록에 없으면 새 태그 이름 입력" maxlength="20" style="flex:1"><button id="tagsNewBtn">추가</button></div>` +
+    `<div style="margin-top:14px;display:flex;gap:8px"><input id="tagsNewInput" placeholder="${A.esc(A.t('tags.newPlaceholder'))}" maxlength="20" style="flex:1"><button id="tagsNewBtn">${A.esc(A.t('tags.add'))}</button></div>` +
     `<button class="primary" id="tagsSaveBtn" style="margin-top:14px">저장</button></div>`);
   const wireChip = (b) => {
     b.onclick = () => {

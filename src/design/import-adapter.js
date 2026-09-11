@@ -529,6 +529,51 @@ function daInferTags(s) {
   }
   return out;
 }
+/* 2026-09-11 재검토(10차) 8절 — 영어 지원은 "구조만" 준비한다(번역
+   자체·기존 화면 전체 확대는 이번 범위 밖). 핵심 원칙:
+   - 내부 키(ID)와 표시 문구를 분리한다. TAG_REGISTRY_BUILTIN이 이미
+     id(yakitori)/label(야키토리)을 분리해 둔 것과 같은 원칙을 여기서
+     "화면 문구"에도 적용한다 — 지금 만드는 새 화면(태그 관리 등)만
+     daT()로 문구를 뽑아 쓰게 해, 나중에 언어를 늘릴 때 이 화면들은
+     사전만 채우면 되고 코드를 안 건드려도 되는 구조를 보여준다.
+   - 날짜·시간·거리 단위·목적지 시간대는 이 로케일 값과 완전히
+     무관하다. daDestNow(위)는 FM_CITY_TZ(도시별 실제 시간대)만 보고
+     이 _locale을 절대 참조하지 않는다 — "영어를 고르면 목적지 시간대가
+     바뀌는" 사고를 애초에 구조적으로 만들 수 없게 한다(다른 함수가
+     실수로 이 값을 시간대 계산에 섞어 쓰지 않는 한).
+   - 장소 원문(originName 등)·사용자 메모는 이 사전이나 어떤 자동
+     번역으로도 덮어쓰지 않는다 — 이 사전은 "우리가 만든 화면 문구"만
+     다루고 사용자 데이터には 절대 관여하지 않는다.
+   - 화면을 열 때마다 AI 번역을 부르는 구조를 만들지 않는다 — 이
+     사전은 정적 문자열 조회일 뿐 네트워크 호출이 전혀 없다. */
+const I18N_DICTIONARIES = {
+  ko: {
+    'tags.frequent': '자주 쓰는 태그',
+    'tags.more': '더 보기',
+    'tags.newPlaceholder': '목록에 없으면 새 태그 이름 입력',
+    'tags.add': '추가',
+    'location.average': '평균 위치',
+    'location.gps': '내 위치(GPS)',
+    'location.testPrefix': '테스트 위치',
+  },
+  // en: 아직 없음(실제 영어 문구가 준비되면 이 자리만 채우면 됨 —
+  // daT를 쓰는 코드는 손댈 필요가 없다). 지금은 UI에 언어 선택지
+  // 자체를 노출하지 않는다 — 구조 검증 단계일 뿐 실제 영어 지원
+  // 출시가 아니다.
+};
+let _locale = 'ko';
+function daT(key, fallbackText) {
+  const dict = I18N_DICTIONARIES[_locale] || I18N_DICTIONARIES.ko;
+  if (Object.prototype.hasOwnProperty.call(dict, key)) return dict[key];
+  return fallbackText !== undefined ? fallbackText : key;
+}
+function daSetLocale(loc) {
+  if (!I18N_DICTIONARIES[loc]) return false; // 사전 없는 로케일은 조용히 무시(깨진 화면 방지) — 지금은 'ko'만 존재.
+  _locale = loc;
+  return true;
+}
+function daLocale() { return _locale; }
+
 /* 2026-09-11 재검토(10차) 5절 — 자동분류 우선순위: 사용자 확정값 >
    "이미 확보한 신뢰 가능한 장소 유형" > 명확한 규칙(이름 텍스트) >
    (필요시 AI) > 미분류. 이 표는 Google Places(New)의 자유형 types
@@ -1239,6 +1284,9 @@ window.DesignAdapter = {
   findTagByLabel: daFindTagByLabel,
   normalizeTagLabel: daNormalizeTagLabel,
   applyConfirmedTypes: daApplyConfirmedTypes,
+  t: daT,
+  setLocale: daSetLocale,
+  get locale() { return daLocale(); },
   knownCities: Object.keys(FM_CITY_ALT),
   esc: daEsc,
   hasCoords: daHasCoords,
