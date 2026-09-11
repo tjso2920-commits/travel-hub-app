@@ -13,6 +13,17 @@
  *     반영된 값으로 좁혀서 넘기므로, 헤드룸을 이미 다 쓴 뒤의 추가
  *     분류 요청은 원자적 트랜잭션 안에서 실제로 거절됨(단순히 "읽은
  *     시점의 헤드룸"만 보고 통과시키지 않음).
+ *  5) (12차 신규) 캐시 localId 오염 방지 — ChatGPT가 실제로 재현한
+ *     결함: localId A로 분류→캐시된 뒤, 완전히 다른 localId B가 우연히
+ *     같은 이름·주소·confirmedTypes로 요청하면 캐시 결과가 A의
+ *     localId를 그대로 돌려줬다(B의 요청인데 A로 응답). 캐시는 분류
+ *     내용만 저장하고, 응답은 항상 지금 요청의 localId로 라벨링해야
+ *     한다.
+ *  6) (12차 신규) 동시 요청 중복 처리·비용 이중기록 방지 — 같은 계정·
+ *     입력·분류버전의 캐시미스 요청 두 개를 Promise.all로 동시에
+ *     보내도 실제 분류(및 과금)는 한 번만 일어나고, 둘 다 각자의
+ *     localId로 정확한 결과를 받는다. 배치 하나 안에 동일 입력이
+ *     여러 개 있어도 마찬가지다.
  *
  * 실행: node server/test/ai-classify-cache-and-budget-race.test.mjs
  */
@@ -106,6 +117,81 @@ function accountWithHeadroom(email) {
   const rows = db.prepare('SELECT classification_version FROM ai_classify_cache WHERE account_id = ?').all(acc);
   t('2) 캐시 행이 현재 분류버전으로 저장됨(버전이 바뀌면 이 값과 안 맞아 자연히 무효화됨)', rows.length > 0 && rows.every((r) => r.classification_version === config.aiClassify.classificationVersion));
   delete process.env.AI_CLASSIFY_VERSION;
+}
+
+// =====================================================================
+// 5) (12차 신규) 캐시 localId 오염 방지 — 서로 다른 localId가 우연히
+//    같은 입력(이름·주소·confirmedTypes)을 가지면, 두 번째 요청의
+//    캐시 응답이 반드시 "두 번째 요청 자신의 localId"로 와야 한다 —
+//    첫 번째 요청 때의 localId가 그대로 새어 나오면 안 된다.
+// =====================================================================
+{
+  const acc = accountWithHeadroom('ai-cache-localid@example.com');
+  const itemA = { localId: 'place-A', name: '우연히같은가게', address: '같은주소시' };
+  const itemB = { localId: 'place-B', name: '우연히같은가게', address: '같은주소시' }; // A와 완전히 같은 입력, localId만 다름.
+
+  const rA = await classifyBatchRoute(acc, [itemA]);
+  t('5) 첫 요청(A)은 실제로 분류되고 자기 localId로 응답함', rA.ok === true && rA.processedCount === 1 && rA.results[0].localId === 'place-A');
+
+  const rB = await classifyBatchRoute(acc, [itemB]);
+  t('5) 같은 입력이지만 다른 localId(B)로 보내면 캐시로 처리되면서도 B 자신의 localId로 응답함', rB.ok === true && rB.processedCount === 0 && rB.cachedCount === 1 && rB.results[0].localId === 'place-B');
+  t('5) B의 응답에 A의 localId가 잘못 섞여 나오지 않음', rB.results[0].localId !== 'place-A');
+  t('5) 분류 내용(category)은 같은 입력이므로 A와 B가 동일함', rB.results[0].category === rA.results[0].category);
+
+  // 한 배치 안에 서로 다른 localId·같은 입력이 여러 개 섞여 있어도
+  // 각자 자기 localId로 정확히 응답해야 한다.
+  const itemC = { localId: 'place-C', name: '또다른우연가게', address: '주소2' };
+  const itemD = { localId: 'place-D', name: '또다른우연가게', address: '주소2' };
+  const rBatch = await classifyBatchRoute(acc, [itemC, itemD]);
+  t('5) 한 배치 안에서도 서로 다른 localId가 각자 정확히 매칭됨', rBatch.ok === true);
+  const byId = new Map(rBatch.results.map((r) => [r.localId, r]));
+  t('5) 배치 응답에 C·D 각각의 localId가 정확히 존재함(서로 안 섞임)', byId.has('place-C') && byId.has('place-D'));
+}
+
+// =====================================================================
+// 6) (12차 신규) 동시 요청 중복 처리·비용 이중기록 방지 — ChatGPT가
+//    실제로 재현한 결함: 같은 계정·입력·분류버전의 캐시미스 요청 두
+//    개를 Promise.all로 동시에 보내면, 예전엔 둘 다 독립적으로
+//    "캐시에 없다"고 판단해 각자 분류하고 각자 과금했다(비용 2배).
+//    실제로 Promise.all을 써서 재현한다(지시대로 "동일 작업을 합쳐
+//    한 번만 처리").
+// =====================================================================
+{
+  const acc = accountWithHeadroom('ai-concurrent-dedup@example.com');
+  const itemX = { localId: 'concurrent-X', name: '동시요청가게', address: '동시주소' };
+  const itemY = { localId: 'concurrent-Y', name: '동시요청가게', address: '동시주소' }; // X와 완전히 같은 입력, localId만 다름.
+
+  const period0 = currentPeriod(acc);
+  const costBefore = periodCostMicros(acc, period0.periodId);
+  const [rX, rY] = await Promise.all([
+    classifyBatchRoute(acc, [itemX]),
+    classifyBatchRoute(acc, [itemY]),
+  ]);
+  const costAfter = periodCostMicros(acc, period0.periodId);
+  const unitMicros = config.aiClassify.placeholderPerItemMicros;
+
+  t('6) 두 동시 요청 모두 성공함', rX.ok === true && rY.ok === true);
+  t('6) 각자 자기 localId로 정확한 결과를 받음', rX.results[0].localId === 'concurrent-X' && rY.results[0].localId === 'concurrent-Y');
+  t('6) 실제 비용은 딱 한 건 분(합쳐서 한 번만 처리)만 늘어남 — 예전 버그는 2배였음', costAfter - costBefore === unitMicros);
+  // processedCount 합계도 실제로 처리된 고유 입력 수(1)를 반영해야
+  // 한다 — 두 요청 각각 자기 localId 몫 1건씩만 "처리됨"으로 셈해도
+  // 되지만, 핵심은 실제 분류 호출·과금이 한 번만 일어났다는 사실이다.
+  t('6) 두 요청 모두 실제로 결과를 받았음(processedCount>=1 또는 캐시 경유)', (rX.processedCount + rX.cachedCount) >= 1 && (rY.processedCount + rY.cachedCount) >= 1);
+
+  // 같은 배치 안에 동일 입력이 여러 번 있어도 마찬가지로 한 번만 처리.
+  const accBatch = accountWithHeadroom('ai-inbatch-dedup@example.com');
+  const period1 = currentPeriod(accBatch);
+  const costBefore2 = periodCostMicros(accBatch, period1.periodId);
+  const dupItems = [
+    { localId: 'dup-1', name: '배치중복가게', address: '배치주소' },
+    { localId: 'dup-2', name: '배치중복가게', address: '배치주소' },
+    { localId: 'dup-3', name: '배치중복가게', address: '배치주소' },
+  ];
+  const rDup = await classifyBatchRoute(accBatch, dupItems);
+  const costAfter2 = periodCostMicros(accBatch, period1.periodId);
+  t('6) 한 배치 안의 동일 입력 3개도 실제로는 한 번만 과금됨', costAfter2 - costBefore2 === unitMicros);
+  const dupIds = new Set(rDup.results.map((r) => r.localId));
+  t('6) 그래도 3개 localId 모두 각자 결과를 받음', dupIds.has('dup-1') && dupIds.has('dup-2') && dupIds.has('dup-3'));
 }
 
 // =====================================================================
