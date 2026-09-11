@@ -26,7 +26,7 @@ function bodyWithoutH1(text) {
 }
 
 const parts = [];
-parts.push('# travel hub — 전달 문서 모음 (2026-09-11, 9차 재검토)\n');
+parts.push('# travel hub — 전달 문서 모음 (2026-09-11, 10차 재검토)\n');
 parts.push('이 파일 하나에 RELEASE_STATUS·BUSINESS_DECISIONS·MARKETING_LAUNCH_PLAN·OPERATIONS_SETUP\n네 문서를 전부 이어 붙였다(다운로드 편의 + ChatGPT가 한 번에 읽을 수 있게).\n앞으로도 문서 전달은 이 방식(파일 하나)으로 한다.\n');
 parts.push('## 차례\n');
 parts.push(sources.map((s) => `- ${s.num}. ${s.title}`).join('\n') + '\n');

@@ -44,6 +44,39 @@ SNS 게시, 외부 메시지 발송, git 히스토리 재작성, 가격/사용�
 
 ---
 
+## 0-1. 10차 재검토 갱신 요약(9차 다음으로 중요 — 여기부터 읽기)
+
+이 메시지는 9차 결과 검토·정정, 만료 예약/코스 동기화 데이터 손실
+버그 수정, 분류 체계 세계 공통화, AI 보조 분류(기본 비활성)와 원가
+검증, 위치 공급 함수 통합, 영어 지원 구조를 모두 합친 단일 지시로
+받았다. 아래 표에 항목별 상태를 정리한다. **표기 원칙은 9차와
+동일하다 — "완료"는 코드가 실제로 동작하고 합성 데이터로 검증됐다는
+뜻이지, 실제 키·실제 기기·실제 배포 검증을 뜻하지 않는다.**
+
+| 항목 | 수정 위치 | 재현/검증 결과 | 상태 | 실연결 미검증 | 다음 행동(사용자) |
+|---|---|---|---|---|---|
+| R10-1 9차 보고 정정 | `docs/RELEASE_STATUS.md` | ChatGPT가 직접 파일 수를 세어 "53개"가 서버+화면 테스트를 잘못 합산한 숫자임을 지적 — 서버 34개/화면 21개로 정정 | 완료 | 없음(문서 정정) | 없음 |
+| R10-2 만료 예약 늦은 성공 무료확정 | `server/entitlement-usage.mjs`(commitNewLookupUsageCharge) | ①old 예약→②만료로 되돌림→③new 예약이 old를 스윕→④new 성공 확정→⑤만료된 old가 뒤늦게 성공 응답 — 예전엔 old가 공짜로 확정(`entitlement_place_confirmed`만 늘고 `used`는 그대로). git stash로 수정 전 재현 후 수정 확인(`server/test/entitlement-expired-reservation-late-success.test.mjs` 13개, 기존 `place-lookup-reservation-idempotency.test.mjs`도 같은 원칙으로 정정) | 완료 | 없음(순수 서버 로직) | 없음 |
+| R10-3 courses/trips 충돌 시 서버 최신값 소실 | `src/design/spots.js`(daRemergeGenericConflict), `src/design/import-adapter.js`(courses/trips 기준선 신규) | 원본 v1→A가 note='SERVER-NEW' 저장 v2→B가 v1 기준으로 memo만 고쳐 저장 — 예전엔 충돌 시 "버전만 바꿔 전체 재제출"해 SERVER-NEW가 통째로 사라짐. courses/trips에도 places와 같은 기준선(baseline) 추적을 새로 추가해 필드 단위 병합으로 고침. 같은 세션에서 점검하라고 지시받은 "저장 중 새 장소 추가 보존"(응답 대기 중 추가한 장소가 사라짐)과 "기준 스냅샷의 재시작 보존"(미동기화 수정이 재시작 후 충돌에서 조용히 사라짐)도 실제로 재현해 확인 후 수정 — 기준선을 localStorage에 지속시키고 로그아웃 시 계정 간 유출 방지까지 처리. git stash로 세 건 모두 수정 전 재현 확인(`scripts/test-sync-conflict-devices.mjs` 시나리오 7~9) | 완료 | 없음(순수 클라이언트 로직) | 없음 |
+| R10-4 분류 세계 공통화+태그 레지스트리 | `src/design/import-adapter.js`(TAG_REGISTRY_BUILTIN) | `daInferTags('居酒屋')`가 부분 문자열(酒屋)로 주류샵과 잘못 겹치는 문제, `daInferTags('스시 말고 라멘 먹기')`가 부정문을 실제 업종으로 오인하는 문제 둘 다 실제 재현 후 수정(문자 클래스 제외 + 부정 단서 감지). 21개 고정 정규식을 id/label/synonyms/source 분리 레지스트리로 바꾸고 사용자 태그 생성·이름수정·삭제·일괄편집 CRUD 신규 구현(place.tags는 계속 label 문자열 저장 — 비파괴적). git stash로 두 버그 모두 수정 전 재현 확인(`scripts/test-classification-registry.mjs` 22개, 기존 `test-tags-and-category.mjs`도 새 UI 구조에 맞게 갱신) | 완료 | 없음(순수 클라이언트 로직) | 새 태그 이름 수정·삭제·일괄편집은 코드는 있으나 전용 관리 화면은 없음(장소별 태그 편집 화면에서만 조작 가능) — 별도 관리 화면 필요 시 요청 |
+| R10-5 자동분류 우선순위+AI 보조(기본 비활성) | `server/adapters/ai-classify.mjs`(신규), `server/routes/ai-classify.mjs`(신규), `src/design/import-adapter.js`(daApplyConfirmedTypes) | 우선순위(사용자 확정값>확인된 장소 유형>규칙>AI>미분류)를 실제 구현. 위치 확인 응답의 Google types/primaryType을 분류에 활용(분류만을 위한 새 유료 호출 없음). AI는 실제 공급자 없음(의도적 미구현) — mock 어댑터로 출력 스키마 검증(상위분류 화이트리스트, 태그 개수/길이/중복정규화, localId 위조 방지)과 비활성 기본값을 확인(`server/test/ai-classify.test.mjs` 17개, `ai-classify-mock-enabled.test.mjs` 10개, `scripts/test-place-lookup.mjs`·`test-classification-registry.mjs`에 우선순위 체인 시나리오 추가) | **구조 구현 + 모의 검증만 완료. 실제 AI 분류는 미완료**(AI 키 자체가 없음) | AI 실제 공급자·모델·단가 전부 미확정 — `/api/health` 같은 응답으로 "AI 연결됨"이라 말한 적 없음 | AI 공급자·모델 선정 여부 결정(선정 전까지 AI 보조 분류는 계속 비활성) |
+| R10-6 AI 원가 검증 보고 | `docs/BUSINESS_DECISIONS.md` 3-3-6절, `scripts/analyze-classification-rate.mjs`(신규) | 실제 daInfer/daInferTags 코드를 합성 다국어 데이터로 돌려 50/160/300+3 시나리오의 ①전체 장소 수 ②규칙 해결 수 ③AI 후보 수 ④배치 요청 수를 실측(합성 데이터일 뿐 실제 고객 평균 아님을 명시). ⑤~⑦(토큰·모델·단가)은 공급자 미확정이라 미검증으로 명시, 임의 숫자 미작성. 무료체험(700원) 기준 핵심 제공량 예약 후 AI 헤드룸이 약 245원뿐임을 계산해 보고 | 완료(보고서 작성 — 실제 원가 확정은 공급자 선정 후) | 실제 AI 단가·실제 고객 분류 성공률 전부 미검증 | 3-3-6절 읽고 AI 도입 시 예산 배분 방향 결정 |
+| R10-7 위치 공급 함수 통합 | `src/design/spots.js`(daLocationBasis), `server/db.mjs`(test_access 컬럼), `server/routes/entitlement.mjs`, `server/index.mjs` | 거리순·코스출발점이 공통 함수(테스트 위치>세션 GPS>평균 위치 우선순위)를 쓰도록 통합. "평균 위치"를 "지정 위치"로 잘못 부르던 표현 전부 정정. 코스 출발지의 GPS 버튼이 테스트 위치를 무시하고 항상 실제 GPS를 부르던 결함 수정(테스트 위치 켜져 있으면 그 좌표 사용, 실제 GPS 미호출을 테스트로 확인). "?testmode=1만으로 영구 잠금 해제"되던 결함을 서버 승인 모델로 교체 — accounts.test_access 컬럼 신규, 관리자 전용 API(`/api/admin/test-access`)로만 켜고 끌 수 있음, 클라이언트는 로그인마다 서버에 재확인. git stash 없이 새 서버 모델 자체를 재현 테스트로 검증(`server/test/test-access.test.mjs` 10개, `scripts/test-test-location-mode.mjs` 20개 재작성 — URL 파라미터 무효화·GPS 미호출·승인 철회 시 로컬 잔여값 무시 확인 포함) | 완료 | 실제 GPS·로밍 조건 검증 아님(테스트 위치는 좌표 치환일 뿐) | 아이폰 실기기·현지 GPS 검증은 여전히 사용자 직접 확인 필요(8절 참고) |
+| R10-8 영어 지원 구조 | `src/design/import-adapter.js`(A.t/A.setLocale/A.locale) | 내부 키/표시 문구 분리 사전 조회 구조 신규(ko 사전만 존재, en 없음). 로케일 전환 전후 목적지(도쿄) 날짜·시간 완전 동일함을 재현 테스트로 확인(시간대와 로케일 무관 증명). 사전 없는 로케일 전환은 안전하게 실패 처리. 이번 라운드 신규 화면(태그 관리)만 이 구조를 실제로 씀(`scripts/test-i18n-structure.mjs` 10개) | 완료(구조만 — 번역 자체는 범위 밖) | 실제 영어 사전 없음(의도됨), 기존 화면 대부분 여전히 한국어 하드코딩 | 실제 영어 지원 착수 시점·우선순위 화면 결정 |
+
+**이번 라운드에서 절대 안 한 것(9차와 동일 원칙 유지)**: 실제 공개
+배포, master 병합, 실과금, 유료 계약(AI 포함), SNS 게시, 외부 메시지
+발송, git 히스토리 재작성, 가격/사용한도 값 임의 변경, 실제 AI
+공급자 연결.
+
+**전체 회귀(10차)**: 서버 테스트 `server/test/*.test.mjs` **38개**
+(9차 34개 + 신규 4개: 만료예약 재현, AI 분류 계약 2개, 테스트접근
+계약), 화면 테스트 `scripts/test-*.mjs` **23개**(9차 21개 + 신규 2개:
+분류 레지스트리, i18n 구조). 합계 **61개 파일**을 이번 라운드 마지막에
+한 번에 실행해 전부 종료코드 0(전체 통과)임을 확인했다.
+
+---
+
 작성: 2026-09-10(1차) · 갱신: 2026-09-10(2차 — 확정 상품 반영) ·
 갱신: 2026-09-10(3차 — 결제/이메일/경로 공급자 확정, 서버 집행 구조
 재설계) · 갱신: 2026-09-10(4차 — ChatGPT가 실제로 재현한 문제 수정,
