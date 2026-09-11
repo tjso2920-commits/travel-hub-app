@@ -28,6 +28,7 @@ import { checkEntitlement, checkTestAccess, setTestAccessByEmail } from './route
 import { handleWebhook } from './routes/webhook.mjs';
 import { handleTossWebhook } from './routes/webhook-toss.mjs';
 import { lookupPlaceRoute, lookupPlacesBatchRoute } from './routes/places.mjs';
+import { resolvePlaceLinkRoute } from './routes/place-link.mjs';
 import { classifyBatchRoute } from './routes/ai-classify.mjs';
 import { recordEvent } from './routes/events.mjs';
 import { joinWaitlist } from './routes/waitlist.mjs';
@@ -336,6 +337,16 @@ async function handle(req, res) {
       const accountId = requireAccount(req, res); if (!accountId) return;
       const body = JSON.parse((await readBody(req)) || '{}');
       const result = await lookupPlacesBatchRoute(accountId, body.items);
+      return sendJson(res, result.status, result);
+    }
+    // 2026-09-11 재검토(13차) 3절 — Google Maps 장소 링크 붙여넣기로
+    // 한 곳 추가. Places API를 안 불러 비용·이용권과 무관하다(이름·좌표
+    // 힌트만 뽑아냄) — 실제 위치 확인은 위 lookup/lookup-batch를 그대로
+    // 다시 타므로 기존 한도가 우회되지 않는다.
+    if (req.method === 'POST' && pathname === '/api/places/resolve-link') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const result = await resolvePlaceLinkRoute(accountId, body.url);
       return sendJson(res, result.status, result);
     }
     // 2026-09-11 재검토(10차 5·6절, 11차 4절) — AI 보조 분류(기본

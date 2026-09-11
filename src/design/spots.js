@@ -2361,10 +2361,60 @@ function add() {
   /* 06_UPDATES_AND_EXPORT_CORRECTION.md 정정: 일반 저장 목록은 'Saved',
      별표로 저장했거나 구분이 불명확하면 'Saved' + '지도(내 장소)'를 함께
      내보내야 한다. 'Saved'만 안내하면 별표 장소를 놓친다. */
-  open('내 장소 가져오기', `<div class="detail import-flow"><span class="flow-tag">실제 가져오기</span><h2>저장한 곳,<br>그대로 모아볼까요?</h2><p>구글맵에서 받은 <b>Takeout ZIP을 그대로</b> 선택하거나, CSV·JSON 파일로 시작해요. ZIP은 압축을 미리 풀 필요 없이 안에서 저장 목록을 자동으로 찾습니다.</p><div class="file-surface"><span class="file-symbol">↓</span><b>내보낸 파일 가져오기</b><span>ZIP · CSV · JSON</span></div><input type="file" id="realFileIn" accept=".zip,application/zip,application/x-zip-compressed,.csv,text/csv,.json,application/json" style="display:none"><button class="primary" id="realFileBtn">받은 ZIP·CSV·JSON 선택</button>${importMsg ? `<p class="inline-note">${importMsg}</p>` : ''}<button class="text-button" id="sampleBtn">샘플로 먼저 둘러보기</button><details class="import-help"><summary>구글맵에서 파일은 어떻게 받나요?</summary><ol><li>Google Takeout을 열어요.</li><li>일반 저장 목록은 <b>‘저장됨(Saved)’</b>을 선택하세요. 별표로 저장한 장소도 챙기려면(또는 어느 쪽인지 잘 모르겠으면) <b>‘지도(내 장소)’</b>도 함께 선택하세요.</li><li>받은 zip 파일을 <b>그대로</b> 이 화면에서 선택하세요 — 압축을 손으로 풀 필요 없이, 안에 있는 목록별 csv와 별표 장소 json을 자동으로 찾아 한 번에 가져옵니다(같은 곳은 자동으로 안 겹칩니다). 리뷰 파일은 장소가 아니라서 자동으로 뺍니다.</li></ol><a href="https://takeout.google.com/" target="_blank" rel="noopener noreferrer">Google Takeout 열기 ↗</a><p>계정에 따라 내보내기 준비 시간이 걸릴 수 있어요.</p></details></div>`);
+  open('내 장소 가져오기', `<div class="detail import-flow"><span class="flow-tag">실제 가져오기</span><h2>저장한 곳,<br>그대로 모아볼까요?</h2><p>구글맵에서 받은 <b>Takeout ZIP을 그대로</b> 선택하거나, CSV·JSON 파일로 시작해요. ZIP은 압축을 미리 풀 필요 없이 안에서 저장 목록을 자동으로 찾습니다.</p><div class="file-surface"><span class="file-symbol">↓</span><b>내보낸 파일 가져오기</b><span>ZIP · CSV · JSON</span></div><input type="file" id="realFileIn" accept=".zip,application/zip,application/x-zip-compressed,.csv,text/csv,.json,application/json" style="display:none"><button class="primary" id="realFileBtn">받은 ZIP·CSV·JSON 선택</button>${importMsg ? `<p class="inline-note">${importMsg}</p>` : ''}<button class="text-button" id="mapLinkOpenBtn">또는 지도 링크로 한 곳만 추가</button><button class="text-button" id="sampleBtn">샘플로 먼저 둘러보기</button><details class="import-help"><summary>구글맵에서 파일은 어떻게 받나요?</summary><ol><li>Google Takeout을 열어요.</li><li>일반 저장 목록은 <b>‘저장됨(Saved)’</b>을 선택하세요. 별표로 저장한 장소도 챙기려면(또는 어느 쪽인지 잘 모르겠으면) <b>‘지도(내 장소)’</b>도 함께 선택하세요.</li><li>받은 zip 파일을 <b>그대로</b> 이 화면에서 선택하세요 — 압축을 손으로 풀 필요 없이, 안에 있는 목록별 csv와 별표 장소 json을 자동으로 찾아 한 번에 가져옵니다(같은 곳은 자동으로 안 겹칩니다). 리뷰 파일은 장소가 아니라서 자동으로 뺍니다.</li></ol><a href="https://takeout.google.com/" target="_blank" rel="noopener noreferrer">Google Takeout 열기 ↗</a><p>계정에 따라 내보내기 준비 시간이 걸릴 수 있어요.</p></details></div>`);
   $('#realFileBtn').onclick = () => $('#realFileIn').click();
   $('#realFileIn').onchange = handleRealFile;
   $('#sampleBtn').onclick = () => { usingSample = true; spots = SAMPLE_SPOTS; cities = SAMPLE_CITIES; city = cities[0].name; updateCity(); sheet.close(); };
+  const linkBtn = $('#mapLinkOpenBtn');
+  if (linkBtn) linkBtn.onclick = () => showAddByMapLinkSheet();
+}
+/* 2026-09-11 재검토(13차) 3절 — "가져오기 한 번이면 다 되지만, 나중에
+   한두 곳만 더 담고 싶을 때는 링크 하나로 되게" 지시 반영. 구글맵에서
+   공유한 장소 링크(짧은 링크 포함)를 붙여넣으면 이름(가능하면 좌표도)을
+   찾아 바로 담는다 — 실제 위치 "확인"(유료 조회)은 여기서 하지 않고,
+   기존 위치 확인 흐름(needsLookup 큐)에 그대로 올라가 기존 이용권·한도가
+   그대로 적용된다. 지원하지 않는 링크는 절대 조용히 성공 처리하지
+   않는다(명확한 안내 후 아무것도 안 담음).
+   daMerge(A.merge)를 그대로 재사용해 중복 판정·재추가 시 사용자 편집
+   보존을 ZIP/CSV 가져오기와 완전히 같은 규칙으로 적용한다. */
+function showAddByMapLinkSheet() {
+  const token = A.sessionToken(foodMap);
+  if (!token) { showLoginSheet(() => showAddByMapLinkSheet()); return; }
+  open('지도 링크로 추가', `<div class="detail"><h2>구글맵 장소 링크,<br>하나만 있나요?</h2><p>지도 앱에서 공유한 장소 링크를 붙여넣으면 이름을 찾아 바로 담아드려요(짧은 링크(maps.app.goo.gl)도 됩니다).</p>` +
+    `<input class="xinput" id="mapLinkInput" type="url" inputmode="url" placeholder="https://maps.app.goo.gl/..." style="width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit">` +
+    `<button class="primary" id="mapLinkAddBtn" style="margin-top:10px">이 링크로 추가</button>` +
+    `<p class="inline-note" id="mapLinkMsg" hidden></p></div>`);
+  const msg = (t2) => { const el = $('#mapLinkMsg'); if (el) { el.textContent = t2; el.hidden = false; } };
+  $('#mapLinkAddBtn').onclick = async () => {
+    const urlVal = $('#mapLinkInput').value.trim();
+    if (!urlVal) { msg('링크를 붙여넣어 주세요.'); return; }
+    const btn = $('#mapLinkAddBtn');
+    btn.disabled = true; btn.textContent = '확인 중…';
+    const r = await A.api('/api/places/resolve-link', { method: 'POST', token, body: { url: urlVal } });
+    btn.disabled = false; btn.textContent = '이 링크로 추가';
+    if (!r.ok || !r.json || !r.json.ok) {
+      const reason = r.json && r.json.reason;
+      const reasonMsg = {
+        'unsupported-link': '이 링크는 구글맵 링크가 아니거나 아직 지원하지 않아요. 지도 앱에서 "공유"로 받은 링크를 그대로 붙여넣어 주세요.',
+        'invalid-url': '올바른 링크 형식이 아니에요.',
+        'link-resolve-failed': '짧은 링크를 여는 데 실패했어요. 지도 앱에서 다시 공유해 링크를 새로 받아 주세요.',
+        'no-place-info-found': '이 링크에서 장소 이름을 찾지 못했어요. 검색 결과 링크가 아니라 장소 상세 화면의 링크로 다시 시도해 주세요.',
+        'place-link-resolve-daily-limit-reached': '오늘 링크로 추가할 수 있는 횟수를 다 썼어요. 내일 다시 시도해 주세요.',
+        unauthorized: '로그인이 풀렸어요. 다시 로그인해 주세요.',
+      }[reason];
+      msg(reasonMsg || '이 링크로는 추가하지 못했어요.');
+      return;
+    }
+    const { name, lat, lng, finalUrl } = r.json;
+    const item = { name, url: finalUrl || urlVal, lat: (typeof lat === 'number') ? lat : null, lng: (typeof lng === 'number') ? lng : null };
+    const z = A.merge([item], '지도 링크로 추가', foodMap.places, null);
+    A.saveFoodMap(foodMap);
+    daSyncPushSafe();
+    refreshFromStorage();
+    updateCity();
+    daToast(z.updated ? '이미 담아 둔 곳과 합쳐졌어요.' : `"${name}"을(를) 담았어요.`);
+    sheet.close();
+  };
 }
 /* 병합 로직은 private/personal.html 의 fmMerge 를 그대로 옮긴 A.merge() 를
    쓴다 — 여기서 다시 만들지 않는다(중복 판정이 갈리는 사고를 막는다).

@@ -473,6 +473,12 @@ export function buildConfig(env) {
       // 건드리지 않는다)로 둔다.
       globalDailyBatchLimit: Number(env.AI_CLASSIFY_GLOBAL_DAILY_BATCH_LIMIT || 2000),
     },
+    // 2026-09-11 재검토(13차) 3절 — Google Maps 장소 링크 붙여넣기로
+    // 추가. 링크에서 이름·좌표 힌트만 뽑아낼 뿐 Places API를 안 부르므로
+    // 비용 상한과는 무관하다 — 그래도 서버가 대신 외부 fetch를 반복
+    // 수행하는 경로라 순수 남용 방지용으로만 가볍게 막는다(실제 위치
+    // 확인은 기존 장소 조회 한도가 그대로 적용됨).
+    placeLinkResolveDailyLimit: Number(env.PLACE_LINK_RESOLVE_DAILY_LIMIT || 30),
   };
 }
 
