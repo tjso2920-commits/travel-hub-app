@@ -314,12 +314,32 @@ function fm2Coord(v, max) {
   return Number.isFinite(n) && Math.abs(n) <= max ? n : null;
 }
 
-/* private/personal.html: function fmCoordFromUrl — 그대로 옮김. */
+/* private/personal.html: function fmCoordFromUrl — 그대로 옮김.
+   2026-09-11 재검토(14차) 3절 — ChatGPT 지적: "@lat,lng"는 지도 화면의
+   중심(뷰포트)일 뿐 그 장소의 진짜 좌표라는 보장이 없다(사용자가 지도를
+   조금 움직인 뒤 공유했을 수도 있음). !3d!4d는 Google Maps가 특정 장소
+   데이터 블록에 실제로 박아 넣는 정밀 좌표라 신뢰할 수 있다. 그래서
+   "확정 좌표"만 daCoordFromUrl이 반환하고, "중심/뷰포트 좌표"는 별도
+   함수(daCenterCoordFromUrl)로 분리한다 — daHasCoords가 daCoordFromUrl
+   결과만 신뢰하므로, 이렇게 분리하는 것만으로 뷰포트 좌표가 "확정된
+   장소 좌표"로 저장돼 코스 생성 등에 실좌표처럼 쓰이는 경로를 막는다.
+   server/routes/place-link.mjs의 confirmedCoordFromUrl/centerCoordFromUrl과
+   반드시 동기화 유지해야 한다(수동 동기화 필요 — 위 daIsPlaceUrl 주석과
+   같은 성격). */
 function daCoordFromUrl(u) {
   const t = String(u || '');
   if (!t) return null;
-  let m = t.match(/!3d(-?\d{1,3}(?:\.\d+)?)!4d(-?\d{1,3}(?:\.\d+)?)/);
-  if (!m) m = t.match(/[@](-?\d{1,3}(?:\.\d+)?),(-?\d{1,3}(?:\.\d+)?)/);
+  const m = t.match(/!3d(-?\d{1,3}(?:\.\d+)?)!4d(-?\d{1,3}(?:\.\d+)?)/);
+  if (!m) return null;
+  const lat = fm2Coord(m[1], 90), lng = fm2Coord(m[2], 180);
+  if (lat === null || lng === null) return null;
+  if (Math.abs(lat) < 0.0001 && Math.abs(lng) < 0.0001) return null;
+  return { lat, lng };
+}
+function daCenterCoordFromUrl(u) {
+  const t = String(u || '');
+  if (!t) return null;
+  let m = t.match(/[@](-?\d{1,3}(?:\.\d+)?),(-?\d{1,3}(?:\.\d+)?)/);
   if (!m) m = t.match(/(?:[?&](?:q|ll|sll|center|daddr|destination|query)|query)=(-?\d{1,3}(?:\.\d+)?)(?:,|%2C)(-?\d{1,3}(?:\.\d+)?)/i);
   if (!m) return null;
   const lat = fm2Coord(m[1], 90), lng = fm2Coord(m[2], 180);

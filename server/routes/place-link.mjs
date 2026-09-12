@@ -36,17 +36,37 @@ function fm2Coord(v, max) {
   return n;
 }
 
-// import-adapter.js의 daCoordFromUrl과 같은 패턴(!3d!4d, @lat,lng,
-// q=lat,lng)을 그대로 재사용한다 — 클라이언트·서버가 서로 다른 런타임
-// (브라우저 vs Node)이라 모듈을 직접 공유하진 못하지만, 판정 로직 자체는
-// 반드시 동기화해서 유지해야 한다(server/adapters/ai-classify.mjs의
-// TOP_CATEGORIES와 client FM_INFER 간 "수동 동기화 필요" 한계와 같은
-// 성격 — RELEASE_STATUS.md에 명시).
-function coordFromUrl(u) {
+// 2026-09-11 재검토(14차) 3절 — ChatGPT 지적: "@lat,lng"는 그 장소의
+// 진짜 좌표가 아니라 지도 화면의 중심(뷰포트)일 수 있다 — 예를 들어
+// "/maps/place/테스트카페/@35.1,129.1,13z"에서 @ 뒤 좌표는 그 줌
+// 레벨에서 지도가 보여주는 중심일 뿐, "테스트카페"의 정확한 위치라는
+// 보장이 없다(사용자가 지도를 조금 움직인 뒤 공유했을 수도 있음).
+// 반면 !3d!4d 패턴은 Google Maps가 특정 장소 항목의 데이터 블록에
+// 실제로 박아 넣는 정밀 좌표라 장소 자체의 좌표로 신뢰할 수 있다.
+// 그래서 "확정 좌표"(!3d!4d)와 "중심/뷰포트 좌표"(@, q=, ll= 등)를
+// 서로 다른 함수로 분리한다 — 뒤엣것은 절대 "확정된 장소 좌표"로
+// 저장하지 않고(course-generation.mjs도 p.lat/p.lng가 실제로 채워져
+// 있어야만 실좌표로 쓰므로, 애초에 이 필드에 넣지 않는 것만으로
+// 코스 생성이 중심좌표를 실좌표로 오인하는 경로를 막는다), 이름이
+// 아예 없을 때만 "위치 확인이 더 필요함" 힌트로 클라이언트에 알려
+// 준다(아래 resolvePlaceLinkRoute의 nameRequired 참고).
+// import-adapter.js의 daCoordFromUrl과 판정 로직을 동기화 유지해야
+// 한다(server/adapters/ai-classify.mjs의 TOP_CATEGORIES와 client
+// FM_INFER 간 "수동 동기화 필요" 한계와 같은 성격 — RELEASE_STATUS.md).
+function confirmedCoordFromUrl(u) {
   const t = String(u || '');
   if (!t) return null;
-  let m = t.match(/!3d(-?\d{1,3}(?:\.\d+)?)!4d(-?\d{1,3}(?:\.\d+)?)/);
-  if (!m) m = t.match(/[@](-?\d{1,3}(?:\.\d+)?),(-?\d{1,3}(?:\.\d+)?)/);
+  const m = t.match(/!3d(-?\d{1,3}(?:\.\d+)?)!4d(-?\d{1,3}(?:\.\d+)?)/);
+  if (!m) return null;
+  const lat = fm2Coord(m[1], 90), lng = fm2Coord(m[2], 180);
+  if (lat === null || lng === null) return null;
+  if (Math.abs(lat) < 0.0001 && Math.abs(lng) < 0.0001) return null;
+  return { lat, lng };
+}
+function centerCoordFromUrl(u) {
+  const t = String(u || '');
+  if (!t) return null;
+  let m = t.match(/[@](-?\d{1,3}(?:\.\d+)?),(-?\d{1,3}(?:\.\d+)?)/);
   if (!m) m = t.match(/(?:[?&](?:q|ll|sll|center|daddr|destination|query)|query)=(-?\d{1,3}(?:\.\d+)?)(?:,|%2C)(-?\d{1,3}(?:\.\d+)?)/i);
   if (!m) return null;
   const lat = fm2Coord(m[1], 90), lng = fm2Coord(m[2], 180);
@@ -62,6 +82,54 @@ function nameFromUrl(u) {
     const decoded = decodeURIComponent(m[1].replace(/\+/g, ' ')).trim();
     return decoded ? decoded.slice(0, 200) : null;
   } catch (e) { return null; }
+}
+
+// 2026-09-11 재검토(14차) 3절 — "최종 호스트만 보면 되는 게 아니라
+// 리다이렉트 중간 경유지 하나하나를 검사해야 한다": redirect:'follow'는
+// 최종 res.url만 돌려주므로, 중간의 한 홉이 신뢰 안 되는 곳이어도(예:
+// 공격자가 한 번은 허용 호스트를 거쳤다가 다시 내부망으로 튀는 경우)
+// 겉으로는 "최종 목적지가 Google"인 것처럼 보일 수 있다. 그래서 매
+// 홉을 직접 확인하고(redirect:'manual'), 상한(MAX_REDIRECT_HOPS) 안에서
+// 끝나지 않으면 거절한다. 본문은 전혀 필요 없으므로(최종 URL만 필요)
+// HEAD로 요청해 불필요한 응답 본문 전송을 피한다.
+const MAX_REDIRECT_HOPS = 5;
+const REDIRECT_FETCH_TIMEOUT_MS = 5000;
+
+function allowedHopUrl(u) {
+  let p;
+  try { p = new URL(u); } catch (e) { return null; }
+  // 홉은 전부 HTTPS·기본 포트만 허용한다 — 평문 HTTP로 새거나 임의
+  // 포트로 튀는 리다이렉트는 그 자체로 의심스러운 신호이기 때문이다.
+  if (p.protocol !== 'https:') return null;
+  if (p.port) return null;
+  if (!ALLOWED_HOSTS.has(p.hostname)) return null;
+  return p;
+}
+
+async function followShortLink(startUrl, fetcher) {
+  let current = startUrl;
+  for (let hop = 0; hop < MAX_REDIRECT_HOPS; hop++) {
+    if (!allowedHopUrl(current)) return { ok: false, reason: 'unsupported-link' };
+    let res;
+    try {
+      res = await fetcher(current, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(REDIRECT_FETCH_TIMEOUT_MS) });
+    } catch (e) {
+      return { ok: false, reason: 'link-resolve-failed' };
+    }
+    const status = Number(res.status) || 0;
+    if (status >= 300 && status < 400) {
+      const location = res.headers && typeof res.headers.get === 'function' ? res.headers.get('location') : null;
+      if (!location) return { ok: false, reason: 'link-resolve-failed' };
+      let next;
+      try { next = new URL(location, current).toString(); } catch (e) { return { ok: false, reason: 'link-resolve-failed' }; }
+      current = next;
+      continue;
+    }
+    if (!allowedHopUrl(current)) return { ok: false, reason: 'unsupported-link' };
+    return { ok: true, finalUrl: current };
+  }
+  // 상한 안에 안 끝남 — 정상적인 단축 링크라면 이 정도로 안 길다.
+  return { ok: false, reason: 'link-resolve-failed' };
 }
 
 export async function resolvePlaceLinkRoute(accountId, url, opts) {
@@ -87,24 +155,29 @@ export async function resolvePlaceLinkRoute(accountId, url, opts) {
   if (SHORT_HOSTS.has(parsed.hostname)) {
     followedShortLink = true;
     const fetcher = opts.fetchImpl || fetch;
-    try {
-      const res = await fetcher(raw, { redirect: 'follow', signal: AbortSignal.timeout(5000) });
-      finalUrl = res.url || raw;
-    } catch (e) {
-      return { ok: false, status: 200, reason: 'link-resolve-failed' };
-    }
-    let finalParsed;
-    try { finalParsed = new URL(finalUrl); } catch (e) { return { ok: false, status: 200, reason: 'unsupported-link' }; }
-    if (!ALLOWED_HOSTS.has(finalParsed.hostname)) return { ok: false, status: 200, reason: 'unsupported-link' };
+    const followed = await followShortLink(raw, fetcher);
+    if (!followed.ok) return { ok: false, status: 200, reason: followed.reason, followedShortLink };
+    finalUrl = followed.finalUrl;
   }
 
   const name = nameFromUrl(finalUrl);
-  const coord = coordFromUrl(finalUrl);
-  if (!name && !coord) {
+  const confirmedCoord = confirmedCoordFromUrl(finalUrl);
+  const centerCoord = centerCoordFromUrl(finalUrl);
+  if (!name && !confirmedCoord && !centerCoord) {
     // 링크는 Google Maps가 맞지만(도메인 통과), 이름도 좌표도 뽑아낼
     // 근거가 전혀 없다 — "지원 안 하는 링크를 성공으로 위장"하지
     // 않고 명시적으로 실패를 돌려준다.
     return { ok: false, status: 200, reason: 'no-place-info-found', followedShortLink };
   }
-  return { ok: true, status: 200, name: name || null, lat: coord ? coord.lat : null, lng: coord ? coord.lng : null, finalUrl, followedShortLink };
+  // "중심/뷰포트 좌표"(centerCoord)는 확정 좌표로 절대 반환하지 않는다
+  // (course-generation.mjs 등 뒤쪽 어디서도 p.lat/p.lng를 실좌표로 바로
+  // 쓰므로, 이 필드에 아예 넣지 않는 게 안전하다) — 이름이 있으면
+  // 기존 needsLookup 큐에 올라가 실제 위치 확인(Places 조회)을 거치고,
+  // 이름조차 없으면 아래에서 nameRequired로 클라이언트에 입력을 요구한다.
+  const lat = confirmedCoord ? confirmedCoord.lat : null;
+  const lng = confirmedCoord ? confirmedCoord.lng : null;
+  if (!name) {
+    return { ok: true, status: 200, name: null, nameRequired: true, lat, lng, finalUrl, followedShortLink };
+  }
+  return { ok: true, status: 200, name, nameRequired: false, lat, lng, finalUrl, followedShortLink };
 }

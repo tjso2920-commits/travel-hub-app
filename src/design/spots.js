@@ -2385,14 +2385,46 @@ function add() {
    않는다(명확한 안내 후 아무것도 안 담음).
    daMerge(A.merge)를 그대로 재사용해 중복 판정·재추가 시 사용자 편집
    보존을 ZIP/CSV 가져오기와 완전히 같은 규칙으로 적용한다. */
+// 2026-09-11 재검토(14차) 3절 — 실제로 장소에 담아 넣는 마지막 한
+// 단계를 여기 한 곳에 모았다. saveFoodMap 반환값을 반드시 확인해서
+// 실패하면(브라우저 저장 공간 문제 등) 방금 merge()가 메모리 위에서
+// 추가한 내용을 storage 기준으로 되돌리고(finishCatAssign과 같은
+// 롤백 패턴), "저장됨"이라고 거짓 성공 처리하지 않는다. 실제로
+// added/updated가 하나도 없으면(이론상 도달하기 어렵지만 방어적으로)
+// 성공 토스트를 띄우지 않는다 — "0건 추가에도 성공 토스트" 금지.
+function daFinalizeMapLinkAdd(item, msg) {
+  const z = A.merge([item], '지도 링크로 추가', foodMap.places, null);
+  const saved = A.saveFoodMap(foodMap);
+  if (!saved) {
+    foodMap = A.loadFoodMap();
+    msg('저장에 실패했어요. 브라우저 저장 공간을 확인한 뒤 다시 시도해 주세요.');
+    return false;
+  }
+  if (!z.added && !z.updated) {
+    msg('이 링크로는 담을 내용을 찾지 못했어요.');
+    return false;
+  }
+  daSyncPushSafe();
+  refreshFromStorage();
+  updateCity();
+  daToast(z.updated ? '이미 담아 둔 곳과 합쳐졌어요.' : `"${item.name}"을(를) 담았어요.`);
+  return true;
+}
 function showAddByMapLinkSheet() {
   const token = A.sessionToken(foodMap);
   if (!token) { showLoginSheet(() => showAddByMapLinkSheet()); return; }
   open('지도 링크로 추가', `<div class="detail"><h2>구글맵 장소 링크,<br>하나만 있나요?</h2><p>지도 앱에서 공유한 장소 링크를 붙여넣으면 이름을 찾아 바로 담아드려요(짧은 링크(maps.app.goo.gl)도 됩니다).</p>` +
     `<input class="xinput" id="mapLinkInput" type="url" inputmode="url" placeholder="https://maps.app.goo.gl/..." style="width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit">` +
     `<button class="primary" id="mapLinkAddBtn" style="margin-top:10px">이 링크로 추가</button>` +
+    // 2026-09-11 재검토(14차) 3절 — 링크에서 좌표(지도 중심)는 찾았지만
+    // 이름을 찾을 근거가 없을 때(순수 좌표 핀 공유 등), 무명 장소를
+    // 조용히 만들지 않고 이름을 직접 입력받는다.
+    `<div id="mapLinkNameWrap" hidden style="margin-top:10px"><p class="inline-note">이 링크에서 장소 이름을 찾지 못했어요. 어떤 곳인지 이름을 붙여 주세요.</p>` +
+    `<input class="xinput" id="mapLinkNameInput" type="text" placeholder="예: 그 카페" style="width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit">` +
+    `<button class="primary" id="mapLinkNameConfirmBtn" style="margin-top:10px">이 이름으로 담기</button></div>` +
     `<p class="inline-note" id="mapLinkMsg" hidden></p></div>`);
   const msg = (t2) => { const el = $('#mapLinkMsg'); if (el) { el.textContent = t2; el.hidden = false; } };
+  let pendingLink = null; // nameRequired로 대기 중인 { url, lat, lng }
   $('#mapLinkAddBtn').onclick = async () => {
     const urlVal = $('#mapLinkInput').value.trim();
     if (!urlVal) { msg('링크를 붙여넣어 주세요.'); return; }
@@ -2413,15 +2445,27 @@ function showAddByMapLinkSheet() {
       msg(reasonMsg || '이 링크로는 추가하지 못했어요.');
       return;
     }
-    const { name, lat, lng, finalUrl } = r.json;
-    const item = { name, url: finalUrl || urlVal, lat: (typeof lat === 'number') ? lat : null, lng: (typeof lng === 'number') ? lng : null };
-    const z = A.merge([item], '지도 링크로 추가', foodMap.places, null);
-    A.saveFoodMap(foodMap);
-    daSyncPushSafe();
-    refreshFromStorage();
-    updateCity();
-    daToast(z.updated ? '이미 담아 둔 곳과 합쳐졌어요.' : `"${name}"을(를) 담았어요.`);
-    sheet.close();
+    const { name, lat, lng, finalUrl, nameRequired } = r.json;
+    const safeLat = (typeof lat === 'number') ? lat : null;
+    const safeLng = (typeof lng === 'number') ? lng : null;
+    if (nameRequired || !name) {
+      pendingLink = { url: finalUrl || urlVal, lat: safeLat, lng: safeLng };
+      const wrap = $('#mapLinkNameWrap');
+      if (wrap) wrap.hidden = false;
+      msg('');
+      $('#mapLinkMsg').hidden = true;
+      return;
+    }
+    const item = { name, url: finalUrl || urlVal, lat: safeLat, lng: safeLng };
+    if (daFinalizeMapLinkAdd(item, msg)) sheet.close();
+  };
+  const nameConfirmBtn = $('#mapLinkNameConfirmBtn');
+  if (nameConfirmBtn) nameConfirmBtn.onclick = () => {
+    if (!pendingLink) return;
+    const typedName = $('#mapLinkNameInput').value.trim();
+    if (!typedName) { msg('이름을 입력해 주세요.'); return; }
+    const item = { name: typedName, url: pendingLink.url, lat: pendingLink.lat, lng: pendingLink.lng };
+    if (daFinalizeMapLinkAdd(item, msg)) sheet.close();
   };
 }
 /* 병합 로직은 private/personal.html 의 fmMerge 를 그대로 옮긴 A.merge() 를
