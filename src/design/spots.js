@@ -994,7 +994,12 @@ function detail(id) {
     `<button class="text-button" data-tags-edit="${id}" style="padding:0;font-size:11px">${(p.tags && p.tags.length) ? '세부 태그 수정' : '세부 태그 추가'}</button></div>`;
   // 2026-09-11 재검토(13차) 5절 — 일본 목적지에만 "여기서 쓸 말" 진입점을
   // 보여준다(다른 나라 장소에 일본어 기능이 섞여 보이면 안 된다는 지시).
-  const phraseBlock = (typeof daIsJapanCity === 'function' && daIsJapanCity(p.city))
+  // 2026-09-11 재검토(14차) 5절 — 도시명 매칭만이 아니라, cities 목록에
+  // 이 도시의 country가 실제로 채워져 있으면 그 값을 우선 근거로 쓴다
+  // (daIsJapanCity 자체 구현 참고 — country가 있으면 그걸로 판정하고
+  // 없을 때만 도시 이름 목록으로 대체 판단).
+  const cityInfo = (cities || []).find((c) => c.name === p.city);
+  const phraseBlock = (typeof daIsJapanCity === 'function' && daIsJapanCity(p.city, cityInfo && cityInfo.country))
     ? `<button class="text-button" data-open-phrasebook style="padding:6px 0">🇯🇵 여기서 쓸 말</button>` : '';
   open(usingSample ? '샘플 장소' : '내 장소', `<div class="detail">${photoHTML(p, 'detail-photo')}<h2>${A.esc(p.name)}</h2><span class="category">${A.esc(p.category)}${!usingSample && !p.catConfirmed ? '(짐작)' : ''}</span>${catBlock}${!usingSample ? ` <span class="category">${A.esc(p.city)}${p.cityKnown && !p.cityConfirmed ? '(짐작)' : ''}</span>` : ''}${tagsBlock}<p>${A.esc(p.area) || '위치 정보 없음'}</p>${p.memo ? `<p>“${A.esc(p.memo)}”</p>` : ''}<button class="primary" data-detail-pick="${id}">${selected.has(id) ? '선택에서 빼기' : '오늘 갈 곳으로 선택'}</button>${mapHref ? `<a target="_blank" rel="noopener noreferrer" href="${mapHref}">${mapLabel}</a>` : ''}${phraseBlock}${visitBlockHTML(id)}${cityBlock}${notes.map((n) => `<small>${n}</small>`).join('')}</div>`);
   const phraseBtn = document.getElementById('sheetContent').querySelector('[data-open-phrasebook]');

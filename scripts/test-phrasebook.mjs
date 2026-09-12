@@ -15,6 +15,20 @@
  *  6) 프로필 화면 → "여행 도구" → 일본어로 한마디로도 같은 화면을
  *     열 수 있음.
  *
+ * 2026-09-11 재검토(14차) 5절 — 추가:
+ *  7) ChatGPT 재현 — 실제로 잘 재생되고 있는(4초보다 긴) 문장이 4초
+ *     타이머 때문에 "재생 실패"로 잘못 전환되지 않음(가짜 speech
+ *     이벤트로 재현: 재생 중 → 4초 경과 → 정상 유지).
+ *  8) 한 문장이 재생 중일 때 다른 문장 버튼을 누르면, 이전 버튼이
+ *     원래(듣기) 상태로 복구되고 새 버튼이 재생 중 상태가 됨.
+ *  9) 시트를 닫으면(재생 중이어도) 실제로 음성 재생이 취소됨(정리).
+ *  10) 한글 발음(kr)이 가나 읽기(reading)와 서로 다른 별도 필드로
+ *      실제로 화면에 보임(주석-구현 불일치 재현 차단).
+ *  11) 🔍 크게 보기를 누르면 확대 오버레이가 뜨고 닫으면 사라짐.
+ *  12) 도시명이 목록에 없어도 country가 "일본"이면 여행 도구 화면에
+ *      일본어 도구가 노출됨(도시명 매칭만이 아니라 국가 정보 우선).
+ *      반대로 일본 목적지가 전혀 없으면 도구가 안 보임.
+ *
  * 실행: node scripts/test-phrasebook.mjs
  */
 import { chromium } from 'playwright';
@@ -58,6 +72,36 @@ async function newPage(stubSpeech) {
           getVoices: () => [],
           cancel: () => {},
           speak: (u) => { window.__speakCalls.push({ text: u.text }); setTimeout(() => { if (u.onerror) u.onerror(); }, 10); },
+        },
+      });
+    });
+  } else if (stubSpeech === 'long') {
+    // 2026-09-11 재검토(14차) 5절 — 실제 재생이 4초보다 오래 이어지는
+    // 상황과, 재생 중에 다른 버튼을 눌러 cancel()이 호출되는 상황을
+    // 둘 다 재현한다. onstart 이후 onend를 스스로는 절대 안 부르고
+    // (테스트가 직접 끝내거나, cancel이 호출될 때만 onerror로 끝남),
+    // cancel()은 실제 브라우저처럼 "지금 말하던 중이던 발화"에
+    // onerror를 실제로 통지한다.
+    await page.addInitScript(() => {
+      window.__speakCalls = [];
+      window.__cancelCalls = 0;
+      let current = null;
+      class FakeUtterance { constructor(text) { this.text = text; this.lang = ''; this.rate = 1; this.voice = null; this.onstart = null; this.onend = null; this.onerror = null; this._done = false; } }
+      window.SpeechSynthesisUtterance = FakeUtterance;
+      Object.defineProperty(window, 'speechSynthesis', {
+        configurable: true,
+        value: {
+          getVoices: () => [{ name: 'Fake JA Voice', lang: 'ja-JP' }],
+          cancel: () => {
+            window.__cancelCalls++;
+            if (current && !current._done) { current._done = true; if (current.onerror) current.onerror(); }
+            current = null;
+          },
+          speak: (u) => {
+            window.__speakCalls.push({ text: u.text });
+            current = u;
+            setTimeout(() => { if (!u._done && u.onstart) u.onstart(); }, 10);
+          },
         },
       });
     });
@@ -182,6 +226,139 @@ async function newPage(stubSpeech) {
   await page.waitForTimeout(150);
   const phraseVisible = await page.evaluate(() => document.querySelectorAll('.phrase-row').length >= 8);
   t('6) 눌러서 실제로 같은 회화 화면이 열림', phraseVisible);
+  await page.close();
+}
+
+// =====================================================================
+// 7) ChatGPT 재현 — 4초보다 길게 재생 중인 문장이 4초 타이머 때문에
+//    "재생 실패"로 잘못 전환되지 않음.
+// =====================================================================
+{
+  const { page } = await newPage('long');
+  await page.evaluate(() => phrasebookSheet());
+  await page.waitForTimeout(150);
+  await page.click('[data-speak="order-1"]');
+  await page.waitForTimeout(150); // onstart가 실제로 옴 → "재생 중" 상태.
+  const midLabel = await page.evaluate(() => document.querySelector('[data-speak="order-1"]').textContent);
+  t('7) onstart 이후 실제로 "재생 중" 상태가 됨', midLabel.includes('재생 중'));
+  await page.waitForTimeout(4300); // 예전 버그의 4초 타이머가 살아있었다면 여기서 실패로 바뀌었을 시간.
+  const afterLabel = await page.evaluate(() => document.querySelector('[data-speak="order-1"]').textContent);
+  t('7) 4초가 지나도 여전히 "재생 중"이지 "재생 실패"로 안 바뀜(타이머 분리 확인)', afterLabel.includes('재생 중') && !afterLabel.includes('실패'));
+  await page.close();
+}
+
+// =====================================================================
+// 8) 재생 중 다른 문장 버튼을 누르면 이전 버튼이 원래 상태로 복구됨.
+// =====================================================================
+{
+  const { page } = await newPage('long');
+  await page.evaluate(() => phrasebookSheet());
+  await page.waitForTimeout(150);
+  await page.click('[data-speak="order-1"]');
+  await page.waitForTimeout(150);
+  const aPlaying = await page.evaluate(() => document.querySelector('[data-speak="order-1"]').textContent.includes('재생 중'));
+  t('8) 준비 확인 — A가 실제로 재생 중 상태임', aPlaying);
+
+  await page.click('[data-speak="order-2"]');
+  await page.waitForTimeout(20); // 복구는 클릭과 동시에 동기적으로 일어나야 한다(이벤트 순서에 의존 안 함).
+  const aAfterSwitch = await page.evaluate(() => document.querySelector('[data-speak="order-1"]').textContent);
+  t('8) 다른 버튼을 누르면 이전 버튼(A)이 즉시 원래(듣기) 상태로 복구됨', aAfterSwitch.includes('듣기') && !aAfterSwitch.includes('재생 중'));
+  await page.waitForTimeout(150);
+  const bPlaying = await page.evaluate(() => document.querySelector('[data-speak="order-2"]').textContent.includes('재생 중'));
+  t('8) 새로 누른 버튼(B)은 정상적으로 재생 중 상태가 됨', bPlaying);
+  const cancelCalls = await page.evaluate(() => window.__cancelCalls);
+  t('8) 전환 과정에서 실제로 이전 재생이 취소됨(cancel 호출됨)', cancelCalls >= 1);
+  await page.close();
+}
+
+// =====================================================================
+// 9) 시트를 닫으면 재생 중이어도 실제로 음성이 취소됨(정리).
+// =====================================================================
+{
+  const { page } = await newPage('long');
+  await page.evaluate(() => phrasebookSheet());
+  await page.waitForTimeout(150);
+  await page.click('[data-speak="order-1"]');
+  await page.waitForTimeout(150);
+  const cancelBefore = await page.evaluate(() => window.__cancelCalls);
+  await page.evaluate(() => { const c = document.getElementById('close'); if (c) c.click(); });
+  await page.waitForTimeout(50);
+  const cancelAfter = await page.evaluate(() => window.__cancelCalls);
+  t('9) 시트를 닫으면 재생 중이던 음성이 실제로 취소됨', cancelAfter > cancelBefore);
+  await page.close();
+}
+
+// =====================================================================
+// 10) 한글 발음(kr)이 가나 읽기(reading)와 서로 다른 별도 필드로 실제로
+//     화면에 보임 — 예전 주석·구현 불일치(reading이 가나인데 "한글로
+//     변환"이라고 주석에 적혀 있던 문제)의 재현 차단.
+// =====================================================================
+{
+  const { page } = await newPage('full');
+  await page.evaluate(() => phrasebookSheet());
+  await page.waitForTimeout(150);
+  const rows = await page.evaluate(() => Array.from(document.querySelectorAll('.phrase-row')).map((el) => ({
+    reading: el.querySelector('.phrase-reading').textContent,
+    kr: el.querySelector('.phrase-kr') ? el.querySelector('.phrase-kr').textContent : null,
+  })));
+  t('10) 모든 항목에 한글 발음(.phrase-kr) 요소가 실제로 존재함', rows.every((r) => r.kr !== null));
+  t('10) 한글 발음이 비어있지 않음', rows.every((r) => r.kr.trim().length > 0));
+  t('10) 한글 발음이 가나 읽기와 서로 다른 값임(같은 필드 재사용 아님)', rows.every((r) => r.kr !== r.reading));
+  // 가나(히라가나/가타카나) 문자가 한글 발음 칸에는 안 섞여 있어야
+  // 진짜로 한글로 옮겨진 것이다.
+  t('10) 한글 발음 칸에 가나 문자가 섞여 있지 않음', rows.every((r) => !/[぀-ヿ]/.test(r.kr)));
+  await page.close();
+}
+
+// =====================================================================
+// 11) 🔍 크게 보기 — 확대 오버레이가 뜨고 닫으면 사라짐.
+// =====================================================================
+{
+  const { page } = await newPage('full');
+  await page.evaluate(() => phrasebookSheet());
+  await page.waitForTimeout(150);
+  await page.click('[data-large="order-1"]');
+  await page.waitForTimeout(50);
+  const overlayShown = await page.evaluate(() => {
+    const el = document.getElementById('phraseLargeOverlay');
+    return !!el && !el.hidden && el.textContent.includes('이거 주세요');
+  });
+  t('11) 크게 보기를 누르면 오버레이에 그 문장이 크게 뜸', overlayShown);
+  await page.evaluate(() => document.querySelector('#phraseLargeOverlay [data-large-close]').click());
+  await page.waitForTimeout(50);
+  const overlayHidden = await page.evaluate(() => document.getElementById('phraseLargeOverlay').hidden === true);
+  t('11) 닫으면 오버레이가 실제로 사라짐', overlayHidden);
+  await page.close();
+}
+
+// =====================================================================
+// 12) 도시명이 목록에 없어도 country가 "일본"이면 여행 도구에 노출됨
+//     (국가 정보 우선). 일본 목적지가 전혀 없으면 도구가 안 보임.
+// =====================================================================
+{
+  const { page } = await newPage('full');
+  await page.evaluate(() => {
+    foodMap.places = [{ id: 'unk1', name: '이름모를도시가게', cat: '맛집·식당', catConfirmed: true, city: '나가사키', cityKnown: true, cityConfirmed: true, sourceLists: [], tags: [] }];
+    A.saveFoodMap(foodMap);
+  });
+  await page.reload();
+  await page.waitForTimeout(200);
+  await page.evaluate(() => { cities[0].country = '일본'; }); // 도시명(나가사키)은 JP_CITIES 목록에 없지만 country로 판정돼야 한다.
+  await page.evaluate(() => profile());
+  await page.waitForTimeout(150);
+  await page.click('[data-tools-open]');
+  await page.waitForTimeout(150);
+  const shownByCountry = await page.evaluate(() => !!document.querySelector('[data-tool="jp-phrasebook"]'));
+  t('12) 도시명이 목록에 없어도 country="일본"이면 도구가 노출됨', shownByCountry);
+  await page.evaluate(() => { const c = document.getElementById('close'); if (c) c.click(); });
+
+  await page.evaluate(() => { cities[0].country = '베트남'; });
+  await page.evaluate(() => profile());
+  await page.waitForTimeout(150);
+  await page.click('[data-tools-open]');
+  await page.waitForTimeout(150);
+  const hiddenWhenNotJapan = await page.evaluate(() => !document.querySelector('[data-tool="jp-phrasebook"]'));
+  t('12) 일본 목적지가 전혀 없으면 도구가 안 보임', hiddenWhenNotJapan);
   await page.close();
 }
 
