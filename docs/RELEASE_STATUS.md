@@ -1,6 +1,27 @@
 # 출시 상태 (RELEASE_STATUS)
 
-## -5. 15차 재검토 갱신 요약(가장 최신 — 여기부터 읽기)
+## -6. 15차 재검토(2차 독립검토 후속) 갱신 요약(가장 최신 — 여기부터 읽기)
+
+ChatGPT가 15차 결과물을 독립적으로 실행해(HTTP 중심 검증 — 실제
+브라우저·공급자·휴대폰까지는 아님) 두 가지를 지적했다: (1)
+`server/index.mjs`의 직접실행 판정이 Windows/공백 경로에서 실패하는
+구조적 결함, (2) 실행 안내 문서의 정확성 문제(Node 버전 표기,
+Windows 명령 혼용, "호스팅 없음" 단정, HTTPS=도메인 필수라는 단정,
+development 모드 화면확인과 실제 연결의 혼동). 새 기능 없이 이 두
+가지만 처리했다.
+
+| 항목 | 수정 위치 | 재현/검증 결과 | 완료 여부 | 상태 | 다음 행동(사용자) |
+|---|---|---|---|---|---|
+| R15-7 서버 직접실행 판정을 pathToFileURL 기반으로 수정 | `server/index.mjs` | `import.meta.url === \`file://${process.argv[1]}\`` 문자열 비교가 Windows 경로(드라이브 문자·역슬래시)와 공백 있는 경로에서 실제 file: URL과 형태가 달라 항상 false가 되던 구조적 결함을 `pathToFileURL(process.argv[1]).href` 비교로 교체. 모듈을 import만 했을 때는 여전히 자동 실행되지 않음을 재확인(포트 바인딩 여부로 검증), 공백이 있는 실제 폴더(`/tmp/space test dir/`)에서 실제 프로세스를 실행해 `/api/health` 200 응답까지 확인. `server/test/server.test.mjs`·`server/test/production-boot.test.mjs`(서버를 실제 서브프로세스로 띄워 종료코드까지 확인하는 테스트) 재실행 — 전부 통과. Windows 경로 변환 자체는 `pathToFileURL`의 `windows:true` 옵션으로 시뮬레이션 검증했지만, **실제 Windows 머신에서의 프로세스 실행은 이 세션에 Windows 환경이 없어 여전히 미검증**(구분해서 기록) | 완료 | `실사용 가능`(Linux 기준 실행 검증 완료), Windows 실기 미검증 | 실제 Windows PC에서 한 번 직접 실행해 확인 권장 |
+| R15-8 실행 안내 문서 정확성 수정 | `docs/OPERATIONS_SETUP.md`, `package.json`, `server/db.mjs` | Node 버전 표기를 "20 이상 권장"에서 이 세션이 실제 실행해 확인한 **Node 24**로 통일(`package.json`에 `engines.node: ">=24"` 신규 추가). Windows 명령 프롬프트와 PowerShell 명령을 섞지 않고 각각 별도 블록으로 분리, 폰용 `HOST=0.0.0.0` 설정도 OS별 문법으로 분리. "저장소에 호스팅이 없다"는 단정을 "정적 배포(`.github/workflows/pages.yml`, `master`/`main` 전용, API 서버는 배포 안 함)와 API 서버 배포 설정 부재는 별개"로 구분. HTTPS 테스트 주소를 만드는 데 본인 도메인 구매가 유일한 방법이라는 인상을 주던 서술을 "이미 쓰는 호스팅의 서브도메인 등 다른 방법도 있고, 어느 게 가능한지는 이 세션이 확인할 수 없다"로 정정해 새 지출을 먼저 요구하지 않게 함. development 모드(키 없음) 실행이 테스트 어댑터로 동작해 실제 이메일 발송·실제 결제와는 다르다는 경고를 0-3-1절에 명시 추가 | 완료 | 문서 작업 | 없음 |
+
+**아직 미검증(정직하게 남김)**: 실제 Windows PC에서의 프로세스 실행,
+실제 Resend·토스페이먼츠·Google Places/Routes·Google 로그인 키 연결,
+실제 Google 계정으로 R15-1 화면을 끝까지 통과하는 것, 실제
+iPhone/Android 기기 확인, 실제 AI 공급자 청구 비용 대조 — 전부
+사용자가 실제 키·기기·환경으로 진행해야 하는 다음 단계다.
+
+## -5. 15차 재검토 갱신 요약
 
 15차는 두 차례로 나뉘어 진행됐다 — 먼저 Google 기존 계정 연결 화면과
 테스트 환경 준비 문서화, 그다음 ChatGPT가 그 결과물을 **실제 HTTP

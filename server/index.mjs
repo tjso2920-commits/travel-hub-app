@@ -18,6 +18,7 @@
  *   서버 저장(장소·날짜별 일정) 라우트가 추가됐다.
  */
 import http from 'node:http';
+import { pathToFileURL } from 'node:url';
 import { config, assertBootReady } from './config.mjs';
 import { openDb } from './db.mjs';
 import { requestLoginCode, verifyLoginCode, accountForToken, logout, googleSignIn } from './auth.mjs';
@@ -526,7 +527,15 @@ export function createServer() {
 }
 
 // 직접 실행됐을 때만 리스닝 시작(테스트에서는 createServer()만 불러 쓴다).
-if (import.meta.url === `file://${process.argv[1]}`) {
+// 2026-09-12 재검토(15차, 후속) 1절 — ChatGPT 지적: `file://${process.argv[1]}`
+// 문자열 조합은 Windows 경로(드라이브 문자 `C:\`, 역슬래시)와 공백이
+// 있는 경로에서 실제 file: URL과 형태가 달라져 항상 false가 된다(즉
+// Windows나 공백 있는 폴더에서는 `node server/index.mjs`로 직접
+// 실행해도 서버가 리스닝을 시작하지 않는 채로 조용히 끝나 버린다).
+// node:url의 pathToFileURL이 플랫폼에 맞게 인코딩·정규화해 주므로
+// 두 URL 객체를 비교한다 — 동작 자체(테스트에서 import만 하면 실행
+// 안 함)는 그대로 유지된다.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const ready = assertBootReady(config);
   if (!ready.ok) {
     console.error('서버 시작 거부 — 운영(production) 환경에 필수 설정이 없습니다:');
