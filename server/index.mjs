@@ -142,7 +142,17 @@ async function handle(req, res) {
         if (!ipCheck.allowed) return sendJson(res, 429, { ok: false, reason: 'ip-rate-limited' });
       }
       const body = JSON.parse((await readBody(req)) || '{}');
-      const result = await googleSignIn(body.idToken, body.inviteCode);
+      // 2026-09-11 재검토(14차) 2절 — 이 Google 신원이 아직 어떤 계정에도
+      // 연결되지 않았는데 그 이메일로 이미 다른 계정이 있다면, 그 계정에
+      // 무조건 합치지 않고 소유확인을 요구한다(auth.mjs의
+      // verifyOwnershipOfExistingAccount). 증거는 둘 중 하나 — 이미 그
+      // 계정으로 로그인된 세션(Authorization 헤더) 또는 그 이메일로 방금
+      // 받은 로그인 코드(body.emailCode). 최초 연결 때만 필요하고, 이후
+      // 로그인은 sub만으로 바로 통과한다.
+      const result = await googleSignIn(body.idToken, body.inviteCode, {
+        sessionToken: bearerToken(req),
+        emailCode: body.emailCode,
+      });
       return sendJson(res, result.status || (result.ok ? 200 : 400), result);
     }
 

@@ -65,6 +65,19 @@ function migrate(d) {
       expires_at TEXT NOT NULL,
       consumed INTEGER NOT NULL DEFAULT 0
     );
+    -- 2026-09-11 재검토(14차) 2절 — "이메일 문자열만으로 계정을 합치지
+    -- 않는다": Google이 절대 재사용하지 않는 안정 식별자 sub를 계정
+    -- 연결의 기본 키로 삼는다. sub가 이미 이 표에 있으면 그 계정으로
+    -- 바로 로그인(재확인 불필요), 없으면 새로 연결할 때만 auth.mjs의
+    -- 소유확인 절차(기존 세션 또는 이메일 코드)를 거친다.
+    CREATE TABLE IF NOT EXISTS google_identities (
+      sub TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL REFERENCES accounts(id),
+      email TEXT NOT NULL,
+      hd TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS courses (
       account_id TEXT PRIMARY KEY REFERENCES accounts(id),
       data TEXT NOT NULL,

@@ -31,8 +31,13 @@ function base64UrlDecode(str) {
   return Buffer.from(str, 'base64');
 }
 
+// 2026-09-11 재검토(14차) — ChatGPT 지적: JWKS 요청에 타임아웃이 없으면
+// Google 쪽이 응답을 안 주는 이상 상황에서 로그인 요청이 무한정 매달릴
+// 수 있다. 다른 외부 호출(weather.mjs, place-link.mjs)과 같은 수준의
+// 타임아웃을 건다.
+const JWKS_FETCH_TIMEOUT_MS = 5000;
 async function fetchGoogleJwks() {
-  const res = await fetch(config.googleAuth.jwksUri);
+  const res = await fetch(config.googleAuth.jwksUri, { signal: AbortSignal.timeout(JWKS_FETCH_TIMEOUT_MS) });
   if (!res.ok) throw new Error('jwks-fetch-failed:' + res.status);
   return res.json();
 }
@@ -44,10 +49,11 @@ let cachedJwks = null;
 let cachedJwksAt = 0;
 const JWKS_CACHE_TTL_MS = 60 * 60 * 1000;
 
-async function getJwks(fetchJwksOverride) {
+async function getJwks(fetchJwksOverride, opts) {
+  opts = opts || {};
   if (fetchJwksOverride) return fetchJwksOverride(); // 테스트 — 캐시를 거치지 않고 매번 주입된 값을 그대로 쓴다.
   const now = Date.now();
-  if (cachedJwks && (now - cachedJwksAt) < JWKS_CACHE_TTL_MS) return cachedJwks;
+  if (!opts.forceRefresh && cachedJwks && (now - cachedJwksAt) < JWKS_CACHE_TTL_MS) return cachedJwks;
   cachedJwks = await fetchGoogleJwks();
   cachedJwksAt = now;
   return cachedJwks;
@@ -77,7 +83,18 @@ export async function verifyGoogleIdToken(idToken, opts) {
   try { jwks = await getJwks(opts.fetchJwks); }
   catch (e) { return { ok: false, reason: 'jwks-unavailable' }; }
   if (!jwks || !Array.isArray(jwks.keys)) return { ok: false, reason: 'jwks-unavailable' };
-  const jwk = jwks.keys.find((k) => k.kid === header.kid);
+  let jwk = jwks.keys.find((k) => k.kid === header.kid);
+  // 2026-09-11 재검토(14차) — ChatGPT 지적: Google이 키를 회전시키면
+  // 우리 캐시(최대 1시간 묵음)에는 아직 옛 키 목록만 있을 수 있다 —
+  // 그 사이 발급된 정상 토큰이 "모르는 kid"로 거절당한다. 캐시에서
+  // 못 찾았을 때만 캐시를 무시하고 딱 한 번 더 최신 JWKS를 받아
+  // 다시 찾는다(매 요청마다 강제 새로고침하지 않음 — 캐시 이점 유지).
+  if (!jwk && !opts.fetchJwks) {
+    try {
+      jwks = await getJwks(null, { forceRefresh: true });
+      jwk = (jwks && Array.isArray(jwks.keys)) ? jwks.keys.find((k) => k.kid === header.kid) : null;
+    } catch (e) { /* 새로고침 실패 — 아래 unknown-key로 정직하게 거절 */ }
+  }
   if (!jwk) return { ok: false, reason: 'unknown-key' };
 
   let publicKey;
@@ -109,10 +126,23 @@ export async function verifyGoogleIdToken(idToken, opts) {
   // 계정 연결의 증거로 쓰지 않는다.
   if (!payload.email || payload.email_verified !== true) return { ok: false, reason: 'email-not-verified' };
 
+  // 2026-09-11 재검토(14차) — ChatGPT 지적(Google 공식 가이드:
+  // https://developers.google.com/identity/gsi/web/guides/verify-google-id-token):
+  // 이메일은 시간이 지나면 다른 사람에게 넘어갈 수 있는 값이라 계정
+  // 식별자로 못 쓴다 — Google이 명시적으로 "sub(고유하고 절대 재사용
+  // 안 됨)를 기본 키로 쓰라"고 안내한다. sub가 없는 토큰은 애초에
+  // 정상적인 Google ID 토큰이 아니므로 여기서 거절한다(계정 연결
+  // 로직이 sub 없이 이메일만으로 동작하는 경로 자체를 원천 차단).
+  if (!payload.sub) return { ok: false, reason: 'missing-subject' };
+
   return {
     ok: true,
     email: String(payload.email).trim().toLowerCase(),
-    sub: String(payload.sub || ''),
+    sub: String(payload.sub),
+    // hd(hosted domain) — Google Workspace 계정일 때만 실려 온다(개인
+    // Gmail·기타 계정은 없음). 이메일 도메인 신뢰도 구분(아래 auth.mjs
+    // 참고)에 쓴다 — 이 값 자체가 소유권 확인을 대신하지는 않는다.
+    hd: payload.hd ? String(payload.hd).toLowerCase() : null,
     name: String(payload.name || '').slice(0, 200),
     picture: String(payload.picture || '').slice(0, 500),
   };

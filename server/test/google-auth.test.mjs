@@ -96,6 +96,20 @@ function signIdToken(payloadOverrides, opts) {
   const unknownKid = signIdToken({}, { kid: 'nonexistent-kid' });
   const rUnknownKid = await verifyGoogleIdToken(unknownKid, { fetchJwks });
   t('1) JWKS에 없는 kid는 거절됨', rUnknownKid.ok === false && rUnknownKid.reason === 'unknown-key');
+
+  // 2026-09-11 재검토(14차) 2절 — sub가 없는 토큰은(정상적인 Google
+  // ID 토큰이라면 있을 수 없지만) 계정 연결의 기본 키가 없다는
+  // 뜻이므로 여기서부터 거절돼야 한다.
+  const noSub = signIdToken({ sub: undefined });
+  const rNoSub = await verifyGoogleIdToken(noSub, { fetchJwks });
+  t('1) sub가 없는 토큰은 거절됨(missing-subject)', rNoSub.ok === false && rNoSub.reason === 'missing-subject');
+
+  const withHd = signIdToken({ hd: 'company.example.com' });
+  const rWithHd = await verifyGoogleIdToken(withHd, { fetchJwks });
+  t('1) hd(Workspace 도메인) 클레임이 실려 오면 그대로 반환됨', rWithHd.ok === true && rWithHd.hd === 'company.example.com');
+  const withoutHd = signIdToken({ email: 'gmail-user@example.com' });
+  const rWithoutHd = await verifyGoogleIdToken(withoutHd, { fetchJwks });
+  t('1) hd가 없으면 null로 반환됨(개인 계정)', rWithoutHd.ok === true && rWithoutHd.hd === null);
 }
 
 // =====================================================================
@@ -115,14 +129,18 @@ function signIdToken(payloadOverrides, opts) {
 }
 
 // =====================================================================
-// 3) 로그인 방식이 바뀌어도 같은 계정 — 이메일 코드로 먼저 만든 계정에
-//    Google 로그인이 실제로 연결되고(새 계정 아님), 그 계정의 상태
-//    (예: 무료체험 소진 여부를 흉내낸 커스텀 필드)가 그대로 유지됨을
-//    확인한다.
+// 3) 로그인 방식이 바뀔 때 — ChatGPT 재현(14차 2절): owner@example.com
+//    계정이 이미 있는 상태에서 같은 이메일에 email_verified:true·hd
+//    없음·한 번도 못 본 sub인 Google 토큰을 보내면, 예전 코드는 추가
+//    확인 없이 그 계정에 그대로 로그인시켰다(계정 탈취 경로). 이제는
+//    소유확인(기존 세션 또는 이메일 코드) 없이는 거절돼야 하고, 확인을
+//    거치면 새 계정을 만들지 않고 정확히 그 계정에 연결되며, 계정별
+//    상태(무료체험/이용권 등)는 그대로 유지돼야 한다.
 // =====================================================================
 {
-  const email = 'cross-method@example.com';
-  // 이메일 코드 로그인으로 먼저 계정을 만든다.
+  const email = 'owner@example.com';
+  // 이메일 코드 로그인으로 먼저 계정을 만든다(공격 시나리오의 "이미
+  // 있는 계정").
   await requestLoginCode(email, '127.0.0.1');
   const sent = sentEmailsForTest.filter((e) => e.to === email).pop();
   const code = sent.body.match(/(\d{6})/)[1];
@@ -138,16 +156,53 @@ function signIdToken(payloadOverrides, opts) {
   const marker = 'cross-method-marker-' + uuid();
   db.prepare('UPDATE accounts SET plan = ? WHERE id = ?').run(marker, emailAccountId);
 
-  // 같은 이메일로 Google 로그인 — email_verified:true인 Google ID
-  // 토큰이 이 이메일의 진짜 소유권 증거이므로, 새 계정을 만들지 않고
-  // 바로 이 기존 계정에 연결돼야 한다.
-  const idToken = signIdToken({ email, sub: 'sub-cross-method' });
-  const rGoogleLogin = await googleSignIn(idToken, undefined, { fetchJwks });
-  t('3) 같은 이메일로 Google 로그인하면 새 계정을 만들지 않고 기존 계정에 연결됨', rGoogleLogin.ok === true && rGoogleLogin.isNew === false);
-  t('3) 정확히 같은 accountId로 이어짐(로그인 방식 무관)', rGoogleLogin.accountId === emailAccountId);
+  // 3-a) 공격 재현 — 소유확인 없이 같은 이메일·새 sub로 Google 로그인
+  // 시도하면 반드시 거절돼야 한다(예전 코드는 여기서 그냥 성공했음).
+  const attackToken = signIdToken({ email, sub: 'sub-attacker-unverified', hd: undefined });
+  const rAttack = await googleSignIn(attackToken, undefined, { fetchJwks });
+  t('3-a) 소유확인 없이 기존 계정과 같은 이메일로 Google 로그인하면 거절됨(계정 탈취 재현 차단)', rAttack.ok === false && rAttack.reason === 'ownership-verification-required');
+  t('3-a) 거절 상태코드는 충돌(409)', rAttack.status === 409);
+  const stillMarker = db.prepare('SELECT plan FROM accounts WHERE id = ?').get(emailAccountId);
+  t('3-a) 거절된 시도는 기존 계정 상태를 전혀 건드리지 않음', stillMarker.plan === marker);
+  const notLinked = db.prepare('SELECT sub FROM google_identities WHERE sub = ?').get('sub-attacker-unverified');
+  t('3-a) 거절된 sub는 연결 표에도 남지 않음', !notLinked);
 
-  const afterGoogleLogin = db.prepare('SELECT plan FROM accounts WHERE id = ?').get(emailAccountId);
-  t('3) 계정별 상태(무료체험/이용권 등)가 로그인 방식이 바뀌어도 그대로 유지됨', afterGoogleLogin.plan === marker);
+  // 3-b) 소유확인(기존 세션) 제공 — 이메일 코드 로그인 때 받은 세션
+  // 토큰을 같이 보내면, 그 세션이 진짜 이 계정 소유자임을 증명하므로
+  // 새 계정을 만들지 않고 정확히 이 계정에 연결돼야 한다.
+  const idTokenWithSession = signIdToken({ email, sub: 'sub-owner-via-session' });
+  const rWithSession = await googleSignIn(idTokenWithSession, undefined, { fetchJwks, sessionToken: rEmailLogin.token });
+  t('3-b) 기존 로그인 세션으로 소유확인하면 새 계정 없이 기존 계정에 연결됨', rWithSession.ok === true && rWithSession.isNew === false && rWithSession.accountId === emailAccountId);
+
+  const afterSessionLink = db.prepare('SELECT plan FROM accounts WHERE id = ?').get(emailAccountId);
+  t('3-b) 계정별 상태(무료체험/이용권 등)가 로그인 방식이 바뀌어도 그대로 유지됨', afterSessionLink.plan === marker);
+
+  // 3-c) 같은 sub로 다시 로그인하면(이미 연결됨) 추가 확인 없이 바로
+  // 통과해야 한다 — "최초 연결 때만 확인, 그 뒤엔 반복 요구 금지".
+  const idTokenAgain = signIdToken({ email, sub: 'sub-owner-via-session' });
+  const rAgain = await googleSignIn(idTokenAgain, undefined, { fetchJwks });
+  t('3-c) 이미 연결된 sub는 소유확인 없이 바로 로그인됨(반복 인증 요구 안 함)', rAgain.ok === true && rAgain.accountId === emailAccountId);
+
+  // 3-d) 소유확인(이메일 코드) 제공 — 다른 계정에서, 세션 대신 방금
+  // 받은 이메일 로그인 코드로도 소유확인이 되는지 확인한다.
+  const email2 = 'owner2@example.com';
+  await requestLoginCode(email2, '127.0.0.2');
+  const sent2a = sentEmailsForTest.filter((e) => e.to === email2).pop();
+  const code2a = sent2a.body.match(/(\d{6})/)[1];
+  const rEmailLogin2 = verifyLoginCode(email2, code2a);
+  const email2AccountId = rEmailLogin2.accountId;
+
+  // 소유확인용 두 번째 코드 — requestLoginCode를 또 부르면 방금 막
+  // 쓴 쿨다운(loginCodeCooldownSeconds)에 걸리므로, 실제 발송 경로가
+  // 아니라 코드 검증 로직 자체만 확인하려는 이 테스트에서는 코드 행을
+  // 직접 심는다(쿨다운은 requestLoginCode 자체의 별도 테스트에서 이미
+  // 다룸 — 여기서 다시 검증하지 않음).
+  const code2b = '918273';
+  db.prepare('INSERT INTO login_codes (email, code, created_at, expires_at, consumed) VALUES (?, ?, ?, ?, 0)')
+    .run(email2, code2b, nowIso(), new Date(Date.now() + 600000).toISOString());
+  const idTokenWithCode = signIdToken({ email: email2, sub: 'sub-owner2-via-emailcode' });
+  const rWithCode = await googleSignIn(idTokenWithCode, undefined, { fetchJwks, emailCode: code2b });
+  t('3-d) 이메일 로그인 코드로도 소유확인이 되어 기존 계정에 연결됨', rWithCode.ok === true && rWithCode.isNew === false && rWithCode.accountId === email2AccountId);
 }
 
 // =====================================================================

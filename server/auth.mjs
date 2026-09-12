@@ -99,6 +99,26 @@ export function loginOrCreateAccount(db, email, inviteCode) {
   return { ok: true, accountId: id, isNew: true };
 }
 
+// 2026-09-11 재검토(14차) 2절 — verifyLoginCode(이메일 코드 검증)와
+// googleSignIn(Google 계정 연결 소유확인)이 "유효한 로그인 코드 하나
+// 소모"라는 같은 동작을 필요로 해서 공통 부분만 뽑았다. 코드를
+// "쓴 것으로 표시"하는 시점은 호출부마다 다르므로(verifyLoginCode는
+// 초대코드 확인 뒤에 소모해야 함) 조회/소모를 분리한다.
+function findValidLoginCodeRow(db, email, code) {
+  if (isLocked(db, email)) return { ok: false, reason: 'locked' };
+  const row = db.prepare(
+    'SELECT rowid, expires_at, consumed FROM login_codes WHERE email = ? AND code = ? ORDER BY rowid DESC LIMIT 1',
+  ).get(email, String(code || ''));
+  if (!row) { recordFailure(db, email); return { ok: false, reason: 'invalid-code' }; }
+  if (row.consumed) { recordFailure(db, email); return { ok: false, reason: 'code-already-used' }; }
+  if (new Date(row.expires_at).getTime() < Date.now()) { recordFailure(db, email); return { ok: false, reason: 'code-expired' }; }
+  return { ok: true, rowid: row.rowid };
+}
+function consumeLoginCodeRow(db, email, rowid) {
+  db.prepare('UPDATE login_codes SET consumed = 1 WHERE rowid = ?').run(rowid);
+  clearFailures(db, email);
+}
+
 function isLocked(db, email) {
   const row = db.prepare('SELECT locked_until FROM login_attempts WHERE email = ?').get(email);
   if (!row || !row.locked_until) return false;
@@ -130,14 +150,8 @@ function createSession(db, accountId) {
 export function verifyLoginCode(email, code, inviteCode) {
   const normalized = String(email || '').trim().toLowerCase();
   const db = openDb();
-  if (isLocked(db, normalized)) return { ok: false, reason: 'locked' };
-
-  const row = db.prepare(
-    'SELECT rowid, expires_at, consumed FROM login_codes WHERE email = ? AND code = ? ORDER BY rowid DESC LIMIT 1',
-  ).get(normalized, String(code || ''));
-  if (!row) { recordFailure(db, normalized); return { ok: false, reason: 'invalid-code' }; }
-  if (row.consumed) { recordFailure(db, normalized); return { ok: false, reason: 'code-already-used' }; }
-  if (new Date(row.expires_at).getTime() < Date.now()) { recordFailure(db, normalized); return { ok: false, reason: 'code-expired' }; }
+  const found = findValidLoginCodeRow(db, normalized, code);
+  if (!found.ok) return found;
 
   // 2026-09-11 재검토(9차) 6-4절 — 초대 코드가 잘못됐다고 해서 방금 이메일로
   // 받은(다시 요청하려면 쿨다운을 또 기다려야 하는) 로그인 코드까지 태워
@@ -149,8 +163,7 @@ export function verifyLoginCode(email, code, inviteCode) {
     if (!check.ok) return { ok: false, reason: check.reason };
   }
 
-  db.prepare('UPDATE login_codes SET consumed = 1 WHERE rowid = ?').run(row.rowid);
-  clearFailures(db, normalized);
+  consumeLoginCodeRow(db, normalized, found.rowid);
   const accountResult = loginOrCreateAccount(db, normalized, inviteCode);
   if (!accountResult.ok) return { ok: false, reason: accountResult.reason };
   const accountId = accountResult.accountId;
@@ -158,22 +171,86 @@ export function verifyLoginCode(email, code, inviteCode) {
   return { ok: true, token, accountId, isNew: accountResult.isNew };
 }
 
-/* 2026-09-11 재검토(13차) 2절 — Google 로그인. "이메일 문자열만 보고
-   계정을 합치지 않는다"를 실제로 지키는 지점은 verifyGoogleIdToken이다
-   — 거기서 Google 서명을 직접 검증하고 email_verified:true까지
-   확인해야만 이 함수가 그 이메일을 "소유권이 증명된" 값으로 받는다.
-   그 이후로는 이메일 코드 로그인과 완전히 같은 loginOrCreateAccount·
-   createSession을 재사용해, 같은 이메일이면 반드시 같은 계정(→같은
-   무료체험/이용권 상태)으로 이어지게 한다. */
-export async function googleSignIn(idToken, inviteCode, verifyOpts) {
+function linkGoogleIdentity(db, verified, accountId) {
+  const now = nowIso();
+  db.prepare('INSERT INTO google_identities (sub, account_id, email, hd, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(verified.sub, accountId, verified.email, verified.hd || null, now, now);
+}
+
+// 2026-09-11 재검토(14차) 2절 — ChatGPT 재현: owner@example.com 계정이
+// 이미 있는 상태에서, 같은 이메일에 email_verified:true·hd 없음인
+// "새로운"(한 번도 못 본 sub) Google 토큰을 보내면 예전 코드는 추가
+// 확인 없이 그 계정에 그대로 로그인시켰다(계정 탈취 경로). Google
+// 공식 가이드(https://developers.google.com/identity/gsi/web/guides/
+// verify-google-id-token)도 이메일이 아니라 sub를 식별자로 쓰라고
+// 못박는다 — Gmail·제대로 구성된 Workspace 도메인은 주소가 재사용되지
+// 않지만, 외부에서 호스팅되는 이메일 주소는 그 보장이 없다(나중에
+// 다른 사람이 그 메일함을 손에 넣고 새 Google 계정으로 "검증된"
+// 토큰을 받을 수 있음). 두 조건을 안전하게 구분해서 신뢰도를 다르게
+// 주는 대신, 더 단순하고 보수적으로 "어느 쪽이든 기존의 다른 계정에
+// 새로 합칠 때는 항상 소유확인을 요구"한다 — hd는 그래도 계정 화면
+// 표시·추후 감사용으로 같이 저장한다(위 linkGoogleIdentity).
+function verifyOwnershipOfExistingAccount(db, accountId, email, opts) {
+  if (opts.sessionToken) {
+    const row = db.prepare('SELECT account_id, expires_at FROM sessions WHERE token = ?').get(opts.sessionToken);
+    if (row && row.account_id === accountId && new Date(row.expires_at).getTime() >= Date.now()) {
+      return { ok: true };
+    }
+    return { ok: false, reason: 'ownership-verification-required' };
+  }
+  if (opts.emailCode) {
+    const found = findValidLoginCodeRow(db, email, opts.emailCode);
+    if (!found.ok) return { ok: false, reason: 'ownership-verification-required' };
+    consumeLoginCodeRow(db, email, found.rowid);
+    return { ok: true };
+  }
+  return { ok: false, reason: 'ownership-verification-required' };
+}
+
+/* 2026-09-11 재검토(14차) 2절 — Google 로그인 재설계. 계정 연결의
+   기본 키는 이제 이메일이 아니라 Google의 sub(google_identities 표,
+   db.mjs 참고)다:
+   1) 이미 연결된 sub → 그 계정으로 바로 로그인(반복 확인 불필요,
+      이메일/hd만 최신화).
+   2) 아직 연결 안 된 sub인데 그 이메일을 쓰는 계정이 아예 없음 →
+      새 계정을 만들어 즉시 연결(합치는 게 아니라 새로 생기는 것이라
+      안전).
+   3) 아직 연결 안 된 sub인데 그 이메일로 이미 "다른" 계정이 있음 →
+      그 계정에 무조건 합치지 않고 소유확인을 요구한다(opts.sessionToken
+      또는 opts.emailCode). 확인 안 되면 로그인 자체를 거절한다.
+   계정 id 자체는 로그인 방식이 바뀌어도 그대로이므로, 이용권·무료체험
+   상태(계정 id 기준으로 저장됨)는 이 연결 과정에서 절대 리셋되지
+   않는다. */
+export async function googleSignIn(idToken, inviteCode, opts) {
+  opts = opts || {};
   if (config.services.googleAuth !== 'real') return { ok: false, status: 503, reason: 'google-auth-unavailable' };
-  const verified = await verifyGoogleIdToken(idToken, verifyOpts);
+  const verified = await verifyGoogleIdToken(idToken, opts);
   if (!verified.ok) return { ok: false, status: 401, reason: verified.reason };
   const db = openDb();
-  const accountResult = loginOrCreateAccount(db, verified.email, inviteCode);
-  if (!accountResult.ok) return { ok: false, status: 400, reason: accountResult.reason };
-  const token = createSession(db, accountResult.accountId);
-  return { ok: true, status: 200, token, accountId: accountResult.accountId, isNew: accountResult.isNew, email: verified.email };
+
+  const linked = db.prepare('SELECT account_id FROM google_identities WHERE sub = ?').get(verified.sub);
+  if (linked) {
+    db.prepare('UPDATE google_identities SET email = ?, hd = ?, updated_at = ? WHERE sub = ?')
+      .run(verified.email, verified.hd || null, nowIso(), verified.sub);
+    const token = createSession(db, linked.account_id);
+    return { ok: true, status: 200, token, accountId: linked.account_id, isNew: false, email: verified.email };
+  }
+
+  const existingAccount = db.prepare('SELECT id FROM accounts WHERE email = ?').get(verified.email);
+  if (!existingAccount) {
+    const accountResult = loginOrCreateAccount(db, verified.email, inviteCode);
+    if (!accountResult.ok) return { ok: false, status: 400, reason: accountResult.reason };
+    linkGoogleIdentity(db, verified, accountResult.accountId);
+    const token = createSession(db, accountResult.accountId);
+    return { ok: true, status: 200, token, accountId: accountResult.accountId, isNew: accountResult.isNew, email: verified.email };
+  }
+
+  const ownership = verifyOwnershipOfExistingAccount(db, existingAccount.id, verified.email, opts);
+  if (!ownership.ok) return { ok: false, status: 409, reason: ownership.reason };
+
+  linkGoogleIdentity(db, verified, existingAccount.id);
+  const token = createSession(db, existingAccount.id);
+  return { ok: true, status: 200, token, accountId: existingAccount.id, isNew: false, email: verified.email };
 }
 
 export function accountForToken(token) {
