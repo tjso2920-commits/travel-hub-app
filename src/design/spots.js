@@ -2396,6 +2396,20 @@ function renderTestLocationBanner() {
   el.hidden = !loc;
   if (loc) $('#testLocationBannerText').textContent = `🧪 테스트 위치 사용 중: ${loc.label} · 실제 위치 아님(수동 지정)`;
 }
+/* 2026-09-12 재검토(15차, 3차 후속) 2절 — "개발용 테스트 어댑터가
+   외부 베타에서 실제 서비스처럼 동작하지 않게 하세요." 서버가 실키
+   없이(development, 어댑터 전부 test) 떠 있으면 로그인 코드·장소
+   조회·결제가 전부 가짜인데, 지금까지는 화면에 그걸 알리는 표시가
+   전혀 없었다 — 베타 참가자가 "코드 받기"를 눌러도 실제 메일이
+   영원히 안 와서 그냥 멈춘 것처럼 보일 수 있었다. 앱을 열 때 한 번
+   서버 상태를 확인해, 서버 전체가 테스트 모드(`GET /api/health`의
+   testMode)면 화면 위에 계속 보이는 배너로 정직하게 알린다 — 위
+   "테스트 위치" 배너와는 다른 관심사라 별도 배너를 쓴다. */
+async function renderServiceTestModeBanner() {
+  const el = $('#serviceTestModeBanner'); if (!el) return;
+  const r = await A.api('/api/health');
+  el.hidden = !(r.ok && r.json && r.json.testMode);
+}
 /* 6-4절 — "불편함 보내기". 로그인 없이도 보낼 수 있다(아직 로그인
    못 한 상태에서 겪은 문제도 알려야 한다). 화면 스크린샷 첨부는 이번
    라운드에서 지원하지 않는다 — 개인정보(저장한 장소가 화면에 그대로
@@ -3097,4 +3111,5 @@ if ($('#testLocationBannerClear')) {
 
 updateCity();
 renderTestLocationBanner();
+renderServiceTestModeBanner();
 daResumeAfterTossRedirect();
