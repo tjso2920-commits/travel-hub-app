@@ -1764,13 +1764,17 @@ async function daTryRenderGoogleButton(onSuccess) {
       callback: async (resp) => {
         if (!resp || !resp.credential) { daGoogleAuthFailMsg(); return; }
         slot.style.opacity = '0.6'; slot.style.pointerEvents = 'none';
-        const r = await A.api('/api/auth/google', { method: 'POST', body: { idToken: resp.credential } });
-        if (!r.ok || !r.json || !r.json.token) {
-          slot.style.opacity = '1'; slot.style.pointerEvents = '';
-          daGoogleAuthFailMsg();
-          return;
-        }
-        await daFinishLogin(r.json.token, r.json.email, r.json.isNew, onSuccess);
+        // 2026-09-11 재검토(15차) 2절 — "초대코드가 필요한 베타 구성에서도
+        // Google 가입 흐름이 완료되는지 확인하라": 예전엔 이 요청에
+        // inviteCode를 아예 안 실었다 — requireInviteCodeForSignup이
+        // 켜진 상태에서 그 이메일로 처음 Google 가입을 시도하면 무조건
+        // 실패했고, 왜 실패했는지 안내도 없었다(다른 이유의 실패와
+        // 똑같이 "Google 로그인 실패"만 뜸). 클릭 시점에 입력칸 값을
+        // 읽어 같이 보낸다(버튼이 그려진 뒤 입력했을 수도 있으므로
+        // 버튼을 그릴 때가 아니라 지금 읽는다).
+        const inviteCodeEl = document.getElementById('loginInviteCode');
+        const inviteCode = inviteCodeEl ? inviteCodeEl.value.trim() : '';
+        await daHandleGoogleCredential(resp.credential, inviteCode, onSuccess, slot);
       },
     });
     window.google.accounts.id.renderButton(slot, { theme: 'outline', size: 'large', width: 280, text: 'continue_with', locale: 'ko' });
@@ -1786,9 +1790,127 @@ async function daTryRenderGoogleButton(onSuccess) {
     // 대안으로 자연스럽게 넘어간다"가 사용자에게 더 유용하다).
   }
 }
-function daGoogleAuthFailMsg() {
+// 2026-09-11 재검토(15차) 2절 — 초대코드 관련 실패는 email-code
+// 흐름(showLoginCodeSheet)이 이미 쓰는 것과 같은 문구를 그대로
+// 재사용한다(사유 자체가 서버에서 완전히 같은 checkInviteCodeForNewAccount/
+// isRecruitmentPaused 코드를 타므로 문구도 같아야 사용자가 헷갈리지
+// 않는다). 그 밖의 실패(서명 검증 실패·네트워크 오류 등)는 그대로
+// 일반 안내로 폴백한다.
+function daGoogleAuthFailMsg(reason) {
   const el = document.getElementById('loginMsg');
-  if (el) { el.textContent = 'Google 로그인에 실패했어요. 아래 이메일로 계속해 주세요.'; el.hidden = false; }
+  if (!el) return;
+  const reasonMsg = {
+    'invite-code-required': '지금은 초대 코드가 있어야 새로 가입할 수 있어요. 위 초대 코드 칸에 안내받은 코드를 입력한 뒤 Google로 다시 시도해 주세요.',
+    'invite-code-invalid': '초대 코드가 올바르지 않아요. 다시 확인한 뒤 시도해 주세요.',
+    'invite-code-expired': '이 초대 코드는 기간이 지났어요. 새 코드를 요청해 주세요.',
+    'invite-code-exhausted': '이 초대 코드는 이미 정원이 다 찼어요. 새 코드를 요청해 주세요.',
+    'recruitment-cap-reached': '지금은 신청 가능한 인원이 다 찼어요. 나중에 다시 시도해 주세요.',
+    'recruitment-paused': '지금은 잠시 신규 가입을 받지 않고 있어요. 나중에 다시 시도해 주세요.',
+  }[reason];
+  el.textContent = reasonMsg || 'Google 로그인에 실패했어요. 아래 이메일로 계속해 주세요.';
+  el.hidden = false;
+}
+
+/* 2026-09-11 재검토(15차) 2절 — 서버 googleSignIn(14차에서 sub 기준으로
+   재설계됨)이 다른 방식으로 이미 가입된 계정과 같은 이메일·처음 보는
+   sub인 로그인을 무조건 합치지 않고(계정 탈취 방지) ownership-
+   verification-required(409)를 돌려주는데, 예전엔 이 화면이 그
+   응답을 다른 실패와 똑같이 취급해 "Google 로그인 실패"로만 안내하고
+   끝났다 — 서버가 준비해 둔 소유확인 절차(이메일 인증 코드)를
+   소비자가 실제로 완료할 화면이 없었다. 이 함수가 그 갈림길이다 —
+   정상 로그인·새 계정 생성은 그대로 두고, 소유확인이 필요한 경우만
+   별도 화면으로 넘긴다.
+   Google idToken은 이 함수부터 아래 두 화면까지 자바스크립트 지역
+   변수(클로저)로만 전달되고, localStorage·foodMap 등 어디에도 저장
+   하지 않는다 — 시트를 닫거나 새로고침·다른 화면으로 이동하면 그냥
+   메모리에서 사라진다(다시 시도하려면 Google 버튼을 새로 눌러 새
+   토큰을 받아야 한다 — 의도된 동작). */
+async function daHandleGoogleCredential(idToken, inviteCode, onSuccess, slot) {
+  // 이미 유효한 세션이 있으면(흔치 않지만, 예: 세션이 아직 안 끊긴
+  // 상태에서 이 화면에 다시 온 경우) 함께 보내 세션 증거로 자동
+  // 통과시킨다 — 그 경우 아래 이메일 코드 화면 자체가 필요 없어진다.
+  const currentToken = A.sessionToken(foodMap);
+  const r = await A.api('/api/auth/google', { method: 'POST', body: { idToken, inviteCode: inviteCode || undefined }, token: currentToken || undefined });
+  if (r.ok && r.json && r.json.token) {
+    await daFinishLogin(r.json.token, r.json.email, r.json.isNew, onSuccess);
+    return;
+  }
+  if (r.status === 409 && r.json && r.json.reason === 'ownership-verification-required') {
+    showGoogleOwnershipSheet(idToken, (r.json && r.json.email) || '', onSuccess);
+    return;
+  }
+  if (slot) { slot.style.opacity = '1'; slot.style.pointerEvents = ''; }
+  daGoogleAuthFailMsg(r.json && r.json.reason);
+}
+
+/* 이미 이 이메일로(다른 로그인 방식으로) 만들어진 계정이 있을 때,
+   Google 신원을 그 계정에 이어 붙이기 전에 소유확인을 받는 화면 —
+   이메일로 받은 인증 코드로 확인한다(서버가 인정하는 나머지 한 증거인
+   기존 세션은 위 daHandleGoogleCredential에서 이미 자동으로 시도됐고
+   실패했으니 여기까지 왔다는 뜻). */
+function showGoogleOwnershipSheet(idToken, email, onSuccess) {
+  open('계정 확인', `<div class="detail"><h2>이미 가입된 계정이 있어요</h2>` +
+    `<p>${A.esc(email)}로 이미 가입한 계정이 있어요. 안전하게 Google 계정을 그 계정에 연결하려면, 이 이메일로 보내는 인증 코드로 본인 확인이 필요해요.</p>` +
+    `<button class="primary" id="googleOwnershipSendBtn">인증 코드 받기</button>` +
+    `<button class="text-button" id="googleOwnershipCancelBtn" style="margin-top:8px">다른 방법으로 로그인</button>` +
+    `<p class="inline-note" id="googleOwnershipMsg" hidden></p></div>`);
+  const msg = (t2) => { const el = $('#googleOwnershipMsg'); if (el) { el.textContent = t2; el.hidden = false; } };
+  // "다른 방법으로 로그인" — 여기서 idToken 참조를 놓는다(더 이상 아무
+  // 클로저도 이 값을 안 들고 있으면 곧 가비지 컬렉션됨 — 영구 저장을
+  // 아예 안 했으므로 "지우는 절차"랄 게 따로 필요 없다).
+  $('#googleOwnershipCancelBtn').onclick = () => showLoginSheet(onSuccess);
+  $('#googleOwnershipSendBtn').onclick = async () => {
+    const btn = $('#googleOwnershipSendBtn');
+    btn.disabled = true; btn.textContent = '보내는 중…';
+    const r = await A.api('/api/auth/request-code', { method: 'POST', body: { email } });
+    btn.disabled = false; btn.textContent = '인증 코드 받기';
+    if (!r.ok) {
+      const reasonMsg = {
+        cooldown: '방금 코드를 보냈어요. 잠시 후 다시 시도해 주세요.',
+        'email-send-failed': '코드를 보내지 못했어요. 잠시 후 다시 시도해 주세요.',
+        'ip-rate-limited': '요청이 너무 잦아요. 잠시 후 다시 시도해 주세요.',
+      }[r.json && r.json.reason];
+      msg(reasonMsg || '코드를 보내지 못했어요. 다시 시도해 주세요.');
+      return;
+    }
+    showGoogleOwnershipCodeSheet(idToken, email, onSuccess);
+  };
+}
+function showGoogleOwnershipCodeSheet(idToken, email, onSuccess) {
+  open('인증 코드 확인', `<div class="detail"><h2>이메일로 받은 코드를 입력하세요</h2><p>${A.esc(email)}로 6자리 코드를 보냈어요. 이 코드로 기존 계정에 Google 로그인을 안전하게 연결해요.</p>` +
+    `<input class="xinput" id="googleOwnershipCode" inputmode="numeric" placeholder="6자리 코드" style="width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit">` +
+    `<button class="primary" id="googleOwnershipVerifyBtn" style="margin-top:10px">연결하기</button>` +
+    `<button class="text-button" id="googleOwnershipResendBtn" style="margin-top:8px">코드 다시 받기</button>` +
+    `<button class="text-button" id="googleOwnershipCancelBtn">다른 방법으로 로그인</button>` +
+    `<p class="inline-note" id="googleOwnershipMsg" hidden></p></div>`);
+  const msg = (t2) => { const el = $('#googleOwnershipMsg'); if (el) { el.textContent = t2; el.hidden = false; } };
+  $('#googleOwnershipCancelBtn').onclick = () => showLoginSheet(onSuccess);
+  $('#googleOwnershipResendBtn').onclick = () => showGoogleOwnershipSheet(idToken, email, onSuccess);
+  $('#googleOwnershipVerifyBtn').onclick = async () => {
+    const code = $('#googleOwnershipCode').value.trim();
+    if (!code) { msg('코드를 입력해 주세요.'); return; }
+    const btn = $('#googleOwnershipVerifyBtn');
+    btn.disabled = true; btn.textContent = '확인 중…';
+    const r = await A.api('/api/auth/google', { method: 'POST', body: { idToken, emailCode: code } });
+    if (r.ok && r.json && r.json.token) {
+      await daFinishLogin(r.json.token, r.json.email, r.json.isNew, onSuccess);
+      return;
+    }
+    btn.disabled = false; btn.textContent = '연결하기';
+    const reason = r.json && r.json.reason;
+    if (r.status === 401) {
+      // Google idToken 자체가 그 사이 만료됐거나(보통 발급 후 1시간
+      // 안팎) 더 이상 유효하지 않음 — 코드를 다시 넣어도 소용없다.
+      // 처음 화면으로 돌아가 Google 버튼을 다시 눌러 새 토큰을 받게
+      // 안내한다(가진 적 없는 값을 "갱신"할 방법은 없다 — 새로 받아야
+      // 한다).
+      msg('Google 로그인이 만료됐어요. 처음부터 다시 시도해 주세요.');
+      setTimeout(() => showLoginSheet(onSuccess), 1600);
+      return;
+    }
+    if (reason === 'locked') { msg('시도 횟수를 너무 많이 넘겨 잠시 후 다시 시도해 주세요.'); return; }
+    msg('코드가 맞지 않거나 만료됐어요. 다시 확인하거나 코드를 다시 받아보세요.');
+  };
 }
 
 /* 로그인 — Google로 계속하기(기본, 설정돼 있을 때) + 이메일 코드
@@ -1796,6 +1918,12 @@ function daGoogleAuthFailMsg() {
    하려던 동작을 로그인 때문에 처음부터 다시 누르게 하지 않는다). */
 function showLoginSheet(onSuccess) {
   open('로그인', `<div class="detail"><h2>계속하기</h2>` +
+    // 2026-09-11 재검토(15차) 2절 — 초대 코드는 이제 Google·이메일 두
+    // 경로가 공유하는 이 한 칸에서만 받는다(예전엔 이메일 경로의 코드
+    // 확인 화면에만 있어서, 초대 코드가 필요한 베타 구성에서 Google로
+    // 새로 가입하려는 사람은 입력할 방법 자체가 없었다). 평소(베타
+    // 아님)엔 서버가 그냥 무시하므로 비워 둬도 된다.
+    `<input class="xinput" id="loginInviteCode" placeholder="초대 코드(안내받은 경우에만)" style="width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit;margin-bottom:10px">` +
     `<div id="googleAuthSlot" style="min-height:0"></div>` +
     `<p class="inline-note" id="googleAuthDivider" hidden style="margin:14px 0;text-align:center">또는</p>` +
     `<h3 style="margin:0 0 4px">이메일로 계속하기</h3><p>비밀번호 없이, 이메일로 받은 코드로 로그인해요.</p>` +
@@ -1808,19 +1936,20 @@ function showLoginSheet(onSuccess) {
     if (!email) { msg('이메일을 입력해 주세요.'); return; }
     const r = await A.api('/api/auth/request-code', { method: 'POST', body: { email } });
     if (!r.ok) { msg('코드를 보내지 못했어요. 이메일 주소를 확인해 주세요.'); return; }
-    showLoginCodeSheet(email, onSuccess);
+    showLoginCodeSheet(email, onSuccess, $('#loginInviteCode').value.trim());
   };
   daTryRenderGoogleButton(onSuccess); // fire-and-forget 향상 — 실패해도 위 이메일 흐름은 이미 정상 동작.
 }
-function showLoginCodeSheet(email, onSuccess) {
+function showLoginCodeSheet(email, onSuccess, prefillInviteCode) {
   // 6-4절 — 초대 코드는 평소엔 아무 의미가 없다(서버가 요구하지 않는
   // 한 그냥 무시된다). 서버가 실제로 소규모 베타 모집을 켰을 때만
   // (config.requireInviteCodeForSignup) 신규 가입에서 필요해지고, 그때
   // 서버가 정확한 사유(invite-code-required 등)를 돌려주면 이 입력칸을
-  // 강조해서 다시 시도하게 안내한다.
+  // 강조해서 다시 시도하게 안내한다. 이전 화면(showLoginSheet)에서 이미
+  // 입력했으면 그대로 이어받아 다시 타이핑하지 않게 한다.
   open('코드 확인', `<div class="detail"><h2>이메일로 받은 코드를 입력하세요</h2><p>${A.esc(email)}로 6자리 코드를 보냈어요.</p>` +
     `<input class="xinput" id="loginCode" inputmode="numeric" placeholder="6자리 코드" style="width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit">` +
-    `<input class="xinput" id="loginInviteCode" placeholder="초대 코드(안내받은 경우에만)" style="margin-top:8px;width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit">` +
+    `<input class="xinput" id="loginInviteCode" placeholder="초대 코드(안내받은 경우에만)" value="${A.esc(prefillInviteCode || '')}" style="margin-top:8px;width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit">` +
     `<button class="primary" id="loginVerifyBtn" style="margin-top:10px">확인</button>` +
     `<p class="inline-note" id="loginMsg" hidden></p></div>`);
   const msg = (t2) => { const el = $('#loginMsg'); el.textContent = t2; el.hidden = false; };

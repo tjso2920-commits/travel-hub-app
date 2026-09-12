@@ -200,7 +200,13 @@ function verifyOwnershipOfExistingAccount(db, accountId, email, opts) {
   }
   if (opts.emailCode) {
     const found = findValidLoginCodeRow(db, email, opts.emailCode);
-    if (!found.ok) return { ok: false, reason: 'ownership-verification-required' };
+    // 2026-09-11 재검토(15차) 2절 — "locked"(연속 실패로 잠김)는 화면에서
+    // "코드가 틀렸다"와 다른 안내(잠시 후 재시도)가 필요하므로, 그
+    // 사유만은 그대로 알려준다. 그 밖의(코드 없음·이미 씀·만료) 실패는
+    // 전부 여전히 같은 사유(ownership-verification-required)로 뭉뚱그려
+    // 응답한다 — "어떤 코드를 넣어봐도 되는지" 힌트를 하나씩 흘려주면
+    // 그 자체가 무차별 대입에 쓰일 수 있어서다.
+    if (!found.ok) return { ok: false, reason: found.reason === 'locked' ? 'locked' : 'ownership-verification-required' };
     consumeLoginCodeRow(db, email, found.rowid);
     return { ok: true };
   }
@@ -246,7 +252,14 @@ export async function googleSignIn(idToken, inviteCode, opts) {
   }
 
   const ownership = verifyOwnershipOfExistingAccount(db, existingAccount.id, verified.email, opts);
-  if (!ownership.ok) return { ok: false, status: 409, reason: ownership.reason };
+  // 2026-09-11 재검토(15차) 2절 — ChatGPT 지적: 이 거절 응답에 이메일이
+  // 안 실려 있어서, 클라이언트가 "어느 주소로 소유확인 코드를 보내야
+  // 하는지" 스스로 알 방법이 없었다(Google ID 토큰을 다시 디코딩하게
+  // 만들면 중복 로직이 생긴다). 서버가 이미 검증해 알고 있는 이메일을
+  // 그대로 실어 보낸다 — 소유권 자체는 여전히 서버가 emailCode/
+  // sessionToken으로만 확인하므로 이 값 하나 노출이 보안에 영향을 주지
+  // 않는다(애초에 사용자가 Google 계정 선택 화면에서 직접 고른 이메일).
+  if (!ownership.ok) return { ok: false, status: 409, reason: ownership.reason, email: verified.email };
 
   linkGoogleIdentity(db, verified, existingAccount.id);
   const token = createSession(db, existingAccount.id);

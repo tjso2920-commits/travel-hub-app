@@ -17,6 +17,7 @@
 process.env.DB_PATH = ':memory:';
 process.env.APP_ENV = 'development';
 process.env.GOOGLE_CLIENT_ID = 'test-client-id-1234.apps.googleusercontent.com';
+process.env.LOGIN_MAX_VERIFY_ATTEMPTS = '1'; // 15차 3-e절 — 잠금(locked) 사유 전파를 재현하기 위해 낮춰 둠(1번 틀리면 그다음 시도부터 locked — isLocked는 "이번 시도 이전" 상태를 보므로 실패 자체는 이번 호출에서, locked 판정은 그다음 호출에서 나온다).
 
 import crypto from 'node:crypto';
 
@@ -162,6 +163,10 @@ function signIdToken(payloadOverrides, opts) {
   const rAttack = await googleSignIn(attackToken, undefined, { fetchJwks });
   t('3-a) 소유확인 없이 기존 계정과 같은 이메일로 Google 로그인하면 거절됨(계정 탈취 재현 차단)', rAttack.ok === false && rAttack.reason === 'ownership-verification-required');
   t('3-a) 거절 상태코드는 충돌(409)', rAttack.status === 409);
+  // 2026-09-11 재검토(15차) 2절 — 클라이언트가 "어느 이메일로 소유확인
+  // 코드를 보내야 하는지" 알 수 있어야 화면을 완성할 수 있으므로,
+  // 거절 응답에 서버가 이미 검증한 이메일이 실려 와야 한다.
+  t('3-a) 거절 응답에 소유확인 대상 이메일이 실려 옴(클라이언트가 어디로 코드를 보낼지 알 수 있음)', rAttack.email === email);
   const stillMarker = db.prepare('SELECT plan FROM accounts WHERE id = ?').get(emailAccountId);
   t('3-a) 거절된 시도는 기존 계정 상태를 전혀 건드리지 않음', stillMarker.plan === marker);
   const notLinked = db.prepare('SELECT sub FROM google_identities WHERE sub = ?').get('sub-attacker-unverified');
@@ -203,6 +208,27 @@ function signIdToken(payloadOverrides, opts) {
   const idTokenWithCode = signIdToken({ email: email2, sub: 'sub-owner2-via-emailcode' });
   const rWithCode = await googleSignIn(idTokenWithCode, undefined, { fetchJwks, emailCode: code2b });
   t('3-d) 이메일 로그인 코드로도 소유확인이 되어 기존 계정에 연결됨', rWithCode.ok === true && rWithCode.isNew === false && rWithCode.accountId === email2AccountId);
+
+  // 3-e) (15차 신규) 소유확인용 코드를 계속 틀리면 "코드가 틀림"과
+  // 구분되는 잠김(locked) 사유가 그대로 전파돼야 한다 — 화면이 "코드를
+  // 다시 확인하세요"가 아니라 "잠시 후 다시 시도하세요"로 정확히
+  // 안내할 수 있어야 한다(위에서 LOGIN_MAX_VERIFY_ATTEMPTS=2로 낮춰
+  // 둬서 시도 두 번 만에 재현된다).
+  const email3 = 'owner3@example.com';
+  await requestLoginCode(email3, '127.0.0.3');
+  const sent3 = sentEmailsForTest.filter((e) => e.to === email3).pop();
+  const code3 = sent3.body.match(/(\d{6})/)[1];
+  const rEmailLogin3 = verifyLoginCode(email3, code3);
+  const email3AccountId = rEmailLogin3.accountId;
+
+  const wrongIdToken1 = signIdToken({ email: email3, sub: 'sub-owner3-wrong-attempt-1' });
+  const rWrong1 = await googleSignIn(wrongIdToken1, undefined, { fetchJwks, emailCode: '000000' });
+  t('3-e) 첫 번째 오답은 일반 소유확인 실패로 응답함', rWrong1.ok === false && rWrong1.reason === 'ownership-verification-required');
+  const wrongIdToken2 = signIdToken({ email: email3, sub: 'sub-owner3-wrong-attempt-2' });
+  const rWrong2 = await googleSignIn(wrongIdToken2, undefined, { fetchJwks, emailCode: '111111' });
+  t('3-e) 시도 상한을 넘기면 locked 사유로 명확히 구분돼 응답함', rWrong2.ok === false && rWrong2.reason === 'locked');
+  const stillMarker3 = db.prepare('SELECT id FROM accounts WHERE id = ?').get(email3AccountId);
+  t('3-e) 잠긴 뒤에도 기존 계정 자체는 그대로 존재함(계정이 사라지거나 손상되지 않음)', !!stillMarker3);
 }
 
 // =====================================================================
