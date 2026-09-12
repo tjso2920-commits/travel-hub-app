@@ -26,9 +26,23 @@ const PORT = Number(process.env.PORT || 4173);
 const HOST = process.env.HOST || '127.0.0.1';
 const API_PROXY_TARGET = process.env.API_PROXY_TARGET || 'http://127.0.0.1:8787';
 
+/*
+ * 2026-09-12 재검토(15차) 2절 — ChatGPT가 실제 HTTP로 확인해 지적한
+ * 버그: '/'와 '/design'에서 design/index.html의 "내용"만 그대로
+ * 돌려줬는데, 그 HTML 안의 상대경로(`spots.css`, `spots.js` 등)는
+ * 브라우저가 "지금 주소 기준"으로 해석한다 — 주소가 '/'면
+ * `/spots.css`를 찾으러 가서 404가 난다(실제로 `/design/`에서 열면
+ * 같은 파일이 `/design/spots.css`로 정상 로딩됨). 파일 내용만 맞춰
+ * 돌려주는 방식으로는 못 고친다 — 브라우저 주소 자체를
+ * `/design/`으로 리다이렉트해서 상대경로 기준을 실제 파일 위치와
+ * 통일한다.
+ */
+const redirects = new Map([
+  ['/', '/design/'],
+  ['/design', '/design/']
+]);
+
 const aliases = new Map([
-  ['/', 'design/index.html'],
-  ['/design', 'design/index.html'],
   ['/design/', 'design/index.html']
 ]);
 
@@ -95,15 +109,22 @@ function serveStatic(request, response) {
 }
 
 const server = http.createServer((request, response) => {
-  if ((request.url || '/').startsWith('/api/')) {
+  const pathname = (request.url || '/').split('?')[0];
+  if (pathname.startsWith('/api/')) {
     proxyToApi(request, response);
+    return;
+  }
+  const redirectTo = redirects.get(pathname);
+  if (redirectTo) {
+    response.writeHead(302, { Location: redirectTo });
+    response.end();
     return;
   }
   serveStatic(request, response);
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`프런트(테스트용): http://${HOST}:${PORT}/`);
+  console.log(`프런트(테스트용): http://${HOST}:${PORT}/  (자동으로 /design/으로 이동합니다)`);
   console.log(`같은 주소의 /api/*는 ${API_PROXY_TARGET}(으)로 중계됩니다 — 먼저 그 주소에서 API 서버(node server/index.mjs)를 띄워 두세요.`);
   console.log('종료: Ctrl+C');
 });
