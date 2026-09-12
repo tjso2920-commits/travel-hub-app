@@ -16,8 +16,8 @@
  */
 import crypto from 'node:crypto';
 import { config } from '../config.mjs';
-import { classifyBatch } from '../adapters/ai-classify.mjs';
-import { chargeCost, describeCostFailure } from '../cost-ledger.mjs';
+import { classifyBatch, estimatePreCallCostMicros, actualCostMicrosFromUsage } from '../adapters/ai-classify.mjs';
+import { chargeCost, describeCostFailure, recordActualCost } from '../cost-ledger.mjs';
 import { currentPeriod, aiClassifyBudgetHeadroomMicros } from '../entitlement-usage.mjs';
 import { checkAndIncrement, dayWindow } from '../rate-limit.mjs';
 import { openDb, nowIso } from '../db.mjs';
@@ -191,8 +191,17 @@ export async function classifyBatchRoute(accountId, items) {
 
   const period = currentPeriod(accountId);
   const headroom = aiClassifyBudgetHeadroomMicros(accountId, period);
-  const unitMicros = config.aiClassify.placeholderPerItemMicros;
-  const maxAffordableNew = Math.max(0, Math.floor(headroom.headroomMicros / unitMicros));
+  // 2026-09-11 재검토(14차) 4절 — "자리표시자 단가(3원/건)가 아니라
+  // 실제로 보낼 항목 기준 견적"으로 몇 개까지 감당되는지를 계산한다.
+  // 배치 하나의 비용은 "고정 시스템 프롬프트 오버헤드 + 항목별 입력 +
+  // 배치 전체 출력 상한"이라 단순히 개수×단가로 나눌 수 없다 — 앞에서
+  // 부터 몇 개를 넣을지 하나씩 줄여 가며 실제 견적 함수로 다시 계산
+  // 한다(newHashes는 최대 maxItemsPerBatch개라 이 반복은 사실상 무비용).
+  let maxAffordableNew = 0;
+  for (let n = newHashes.length; n >= 0; n--) {
+    const candidateItems = newHashes.slice(0, n).map((hash) => itemsByHash.get(hash)[0]);
+    if (estimatePreCallCostMicros(candidateItems) <= headroom.headroomMicros) { maxAffordableNew = n; break; }
+  }
   if (maxAffordableNew === 0 && !inFlightHashes.length) {
     // 예산 전부가 남은 핵심 제공량(위치확인·코스생성) 몫으로 이미
     // 예약돼 있고, 마침 다른 요청이 대신 진행 중인 것도 없다 — AI는
@@ -218,16 +227,22 @@ export async function classifyBatchRoute(accountId, items) {
     // "실제로 새로 처리해야 하는 서로 다른 입력 수"만큼만 청구한다
     // (같은 해시를 공유하는 배치 내 중복·이미 다른 요청이 처리 중인
     // 항목은 여기서 빠진다 — "동일 작업을 합쳐 한 번만 처리" 지시).
-    const charge = chargeCost({ accountId, service: 'ai-classify', sku: 'ai-classify-batch', count: affordableNewHashes.length, periodId: period.periodId, periodCapMicros: headroomAdjustedCapMicros });
+    // 2026-09-11 재검토(14차) 4절 — 이 사전 견적(microsOverride)이
+    // "실제로 호출을 하기로 결정하는 순간 확정 기록"되는 값이다 —
+    // 응답이 돌아와 진짜 usage를 알면 아래에서 actual_cost_micros로
+    // 보정한다(사전 견적 자체는 안 지운다 — 실패해도 청구됐을 수
+    // 있으므로).
+    const representativeItems = affordableNewHashes.map((hash) => itemsByHash.get(hash)[0]);
+    const preCallMicros = estimatePreCallCostMicros(representativeItems);
+    const charge = chargeCost({ accountId, service: 'ai-classify', sku: 'ai-classify-batch', count: affordableNewHashes.length, periodId: period.periodId, periodCapMicros: headroomAdjustedCapMicros, microsOverride: preCallMicros });
     if (!charge.ok) {
       const described = describeCostFailure(charge.reason);
       return { ok: false, status: 200, reason: described.reason, detail: charge.reason, cachedResults: cachedResults.length ? cachedResults : undefined };
     }
 
-    const representativeItems = affordableNewHashes.map((hash) => itemsByHash.get(hash)[0]);
     const promise = (async () => {
       const r = await classifyBatch(representativeItems);
-      if (!r.ok) return { ok: false, reason: r.reason };
+      if (!r.ok) return { ok: false, reason: r.reason, usage: r.usage || null };
       const byHash = new Map();
       for (const res of r.results) {
         const hash = hashByLocalId.get(res.localId);
@@ -238,7 +253,7 @@ export async function classifyBatchRoute(accountId, items) {
         // false인 경로는 이 줄 자체를 절대 안 탄다.
         storeCachedResult(db, accountId, hash, version, res);
       }
-      return { ok: true, byHash };
+      return { ok: true, byHash, usage: r.usage || null };
     })();
     for (const hash of affordableNewHashes) aiClassifyInFlight.set(`${accountId}::${hash}::${version}`, promise);
     try {
@@ -248,6 +263,17 @@ export async function classifyBatchRoute(accountId, items) {
       // 남아 다음 재시도까지 막으면 안 된다("실패·재시도가 영구 잠금
       // 으로 이어지지 않게" 지시).
       for (const hash of affordableNewHashes) aiClassifyInFlight.delete(`${accountId}::${hash}::${version}`);
+    }
+    // 2026-09-11 재검토(14차) 4절 — 실제 usage를 알게 됐으면(성공이든
+    // 이 지점 이후 실패든, 공급자가 응답 자체는 준 경우 usage가 실려
+    // 있을 수 있다) 방금 그 사전 견적을 진짜 비용으로 보정한다. usage를
+    // 아예 못 받았으면(네트워크 오류·타임아웃 등) 보정하지 않고 사전
+    // 견적을 그대로 둔다 — "실패해도 청구됐을 수 있으니 0원 처리
+    // 금지"와 같은 이유로, 모르는 걸 0으로도 사전견적 그대로도 함부로
+    // 단정하지 않는 쪽이 usage를 아는 쪽보다 우선순위가 낮을 뿐이다.
+    if (classifyOutcome.usage && charge.ids && charge.ids[0]) {
+      const actualMicros = actualCostMicrosFromUsage(classifyOutcome.usage);
+      if (actualMicros != null) recordActualCost(charge.ids[0], actualMicros);
     }
   }
 

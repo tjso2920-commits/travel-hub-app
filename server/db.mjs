@@ -484,6 +484,7 @@ function migrate(d) {
   migrateLegacyCoursesIntoTrips(d);
   addAccountTestAccessColumn(d);
   addTripsFieldConflictsColumn(d);
+  addCostLedgerActualCostColumn(d);
 }
 
 /* 2026-09-11 재검토(11차) — ChatGPT가 실제 재현한 결함: trips는
@@ -512,6 +513,24 @@ function addAccountTestAccessColumn(d) {
   const cols = d.prepare("PRAGMA table_info(accounts)").all();
   if (!cols.some((c) => c.name === 'test_access')) {
     d.exec('ALTER TABLE accounts ADD COLUMN test_access INTEGER NOT NULL DEFAULT 0');
+  }
+}
+
+/* 2026-09-11 재검토(14차) 4절 — "자리표시자 단가가 아니라 공급자가
+   실제로 응답한 usage(입력/출력 토큰)로 정산하라." 기존 estimated_
+   cost_micros는 "호출을 하기로 결정한 순간의 보수적 사전 견적"이라는
+   본래 역할(예산 초과 방지)을 그대로 유지하고, 응답이 실제로 돌아와
+   진짜 토큰 사용량을 알게 된 뒤에만 actual_cost_micros를 채운다(null
+   이면 아직 확정 안 됨 또는 애초에 usage 기반 정산 대상이 아닌 SKU —
+   실패·타임아웃으로 usage를 못 받은 경우도 null로 남아 사전 견적이
+   그대로 "청구됐을 수도 있는 금액"으로 남는다, "타임아웃도 과금됐을
+   수 있으니 0원 처리 금지" 원칙과 동일). 예산 집계(cost-ledger.mjs의
+   sumSince/periodCostMicros)는 COALESCE(actual_cost_micros,
+   estimated_cost_micros)로 "알면 실제값, 모르면 보수적 견적"을 쓴다. */
+function addCostLedgerActualCostColumn(d) {
+  const cols = d.prepare("PRAGMA table_info(cost_ledger)").all();
+  if (!cols.some((c) => c.name === 'actual_cost_micros')) {
+    d.exec('ALTER TABLE cost_ledger ADD COLUMN actual_cost_micros INTEGER');
   }
 }
 

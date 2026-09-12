@@ -41,11 +41,17 @@ import { config } from './config.mjs';
 function dayStartIso(d) { return (d || new Date()).toISOString().slice(0, 10) + 'T00:00:00.000Z'; }
 function monthStartIso(d) { return (d || new Date()).toISOString().slice(0, 7) + '-01T00:00:00.000Z'; }
 
+// 2026-09-11 재검토(14차) 4절 — 실제 usage로 정산된 뒤(actual_cost_
+// micros가 채워진 뒤)에는 모든 예산 합계가 사전 견적이 아니라 진짜
+// 비용을 쓴다. 아직 모르면(null) 사전 견적이 그대로 "청구됐을 수도
+// 있는 보수적 금액"으로 남는다.
+const COST_COLUMN_EXPR = 'COALESCE(actual_cost_micros, estimated_cost_micros)';
+
 function sumSince(whereAccountId, sinceIso) {
   const db = openDb();
   const row = whereAccountId
-    ? db.prepare('SELECT COALESCE(SUM(estimated_cost_micros),0) AS total FROM cost_ledger WHERE account_id = ? AND created_at >= ?').get(whereAccountId, sinceIso)
-    : db.prepare('SELECT COALESCE(SUM(estimated_cost_micros),0) AS total FROM cost_ledger WHERE created_at >= ?').get(sinceIso);
+    ? db.prepare(`SELECT COALESCE(SUM(${COST_COLUMN_EXPR}),0) AS total FROM cost_ledger WHERE account_id = ? AND created_at >= ?`).get(whereAccountId, sinceIso)
+    : db.prepare(`SELECT COALESCE(SUM(${COST_COLUMN_EXPR}),0) AS total FROM cost_ledger WHERE created_at >= ?`).get(sinceIso);
   return row.total;
 }
 
@@ -56,7 +62,7 @@ function sumSince(whereAccountId, sinceIso) {
 export function periodCostMicros(accountId, periodId) {
   if (!accountId || !periodId) return 0;
   const db = openDb();
-  const row = db.prepare('SELECT COALESCE(SUM(estimated_cost_micros),0) AS total FROM cost_ledger WHERE account_id = ? AND period_id = ?').get(accountId, periodId);
+  const row = db.prepare(`SELECT COALESCE(SUM(${COST_COLUMN_EXPR}),0) AS total FROM cost_ledger WHERE account_id = ? AND period_id = ?`).get(accountId, periodId);
   return row.total;
 }
 
@@ -125,9 +131,15 @@ export function chargeCostBatch({ accountId, service, charges, periodId, periodC
   try {
     const now = new Date();
     let totalMicros = 0;
-    const rows = list.map(({ sku, count }) => {
+    // 2026-09-11 재검토(14차) 4절 — ai-classify처럼 고정 단가가 아니라
+    // 실제 입력 크기·출력 상한 기준으로 매번 다시 계산한 보수적 사전
+    // 견적을 쓰는 SKU를 위해, 호출부가 micros를 직접 넘기면(microsOverride)
+    // skuCostMicros(고정 단가표)를 건너뛰고 그 값을 그대로 쓴다. 기존
+    // 호출부(장소조회·경로)는 이 필드를 안 넘기므로 예전과 완전히 동일하게
+    // 동작한다.
+    const rows = list.map(({ sku, count, microsOverride }) => {
       const n = Math.max(1, Number(count) || 1);
-      const micros = skuCostMicros(sku) * n;
+      const micros = (microsOverride != null) ? Math.max(0, Math.round(microsOverride)) : skuCostMicros(sku) * n;
       totalMicros += micros;
       return { sku, n, micros };
     });
@@ -165,7 +177,7 @@ export function chargeCostBatch({ accountId, service, charges, periodId, periodC
       return fail('global-monthly-cost-budget-exceeded', globalMonthlyCap, globalMonthly);
     }
     if (accountId && periodId && periodCapMicros > 0) {
-      const periodUsed = db.prepare('SELECT COALESCE(SUM(estimated_cost_micros),0) AS total FROM cost_ledger WHERE account_id = ? AND period_id = ?').get(accountId, periodId).total;
+      const periodUsed = db.prepare(`SELECT COALESCE(SUM(${COST_COLUMN_EXPR}),0) AS total FROM cost_ledger WHERE account_id = ? AND period_id = ?`).get(accountId, periodId).total;
       if (periodUsed + totalMicros > periodCapMicros) {
         return fail('entitlement-period-cost-safety-cap-exceeded', periodCapMicros, periodUsed);
       }
@@ -189,8 +201,23 @@ export function chargeCostBatch({ accountId, service, charges, periodId, periodC
 
 /* 단일 건 편의 함수 — 내부적으로 chargeCostBatch를 그대로 쓴다(별도
    로직 중복 없음). */
-export function chargeCost({ accountId, service, sku, count, periodId, periodCapMicros }) {
-  return chargeCostBatch({ accountId, service, charges: [{ sku, count }], periodId, periodCapMicros });
+export function chargeCost({ accountId, service, sku, count, periodId, periodCapMicros, microsOverride }) {
+  return chargeCostBatch({ accountId, service, charges: [{ sku, count, microsOverride }], periodId, periodCapMicros });
+}
+
+/* 2026-09-11 재검토(14차) 4절 — 사전 견적(estimated_cost_micros, charge
+   시점에 이미 기록됨)은 그대로 두고, 공급자 응답이 실제로 돌아와 진짜
+   usage(입력/출력 토큰)를 알게 된 뒤에만 actual_cost_micros를 채운다.
+   실패·타임아웃 등으로 usage를 못 받으면 이 함수 자체를 호출하지 않는다
+   — actual이 null로 남아 사전 견적이 그대로 "청구됐을 수도 있는 금액"
+   으로 유지된다(0원 처리 금지 원칙과 동일). 사전 견적을 지우거나
+   덮어쓰지 않고 별도 컬럼에만 남기므로, "얼마로 예산을 확인했는지"와
+   "실제로 얼마였는지"를 항상 둘 다 추적할 수 있다. */
+export function recordActualCost(ledgerId, actualCostMicros) {
+  if (!ledgerId || !Number.isFinite(actualCostMicros)) return { ok: false, reason: 'invalid-actual-cost' };
+  const db = openDb();
+  db.prepare('UPDATE cost_ledger SET actual_cost_micros = ? WHERE id = ?').run(Math.max(0, Math.round(actualCostMicros)), ledgerId);
+  return { ok: true };
 }
 
 /* 2026-09-10 재검토(7차) 3절 — "이용권에 남은 사용량이 있는데 내부

@@ -29,6 +29,32 @@ function serviceModeDev(forceTest, keyPresent, adapterOverride) {
   return keyPresent ? 'real' : 'test';
 }
 
+/* 2026-09-11 재검토(14차) 4절 — "자리표시자(3원/건)가 아니라 실제 공급자
+   단가·응답 usage로 정산하라." Anthropic 공식 가격표(USD/100만 토큰)를
+   위 costUsdPerThousand와 같은 패턴(공식 USD 단가 → 계산용 환율(가정) →
+   마이크로원)으로 분리한다 — 실제 usage(입력/출력 토큰 수)는 응답이
+   와야 아는 값이라 여기서 단가만 정하고, 토큰수×단가는 호출 시점에
+   ai-classify.mjs가 계산한다. */
+function buildAnthropicPriceMicros(env) {
+  const fx = Number(env.COST_FX_KRW_PER_USD || 1400);
+  const usdPerMillionTokens = {
+    // Claude Haiku 4.5 공식 단가(adapters/ai-classify.mjs 상단 근거 주석
+    // 참고 — 이 세션은 anthropic.com 공식 가격 페이지 직접 열람이
+    // 네트워크 정책상 막혀 검색 결과 교차 확인으로 대체했다).
+    classifyInput: Number(env.AI_CLASSIFY_INPUT_USD_PER_1M_TOKENS || 1),
+    classifyOutput: Number(env.AI_CLASSIFY_OUTPUT_USD_PER_1M_TOKENS || 5),
+  };
+  const fromUsdPerMillionTokens = (usdPerMillion) => Math.round((usdPerMillion / 1_000_000) * fx * 1_000_000);
+  return {
+    classifyInputMicrosPerToken: env.AI_CLASSIFY_INPUT_KRW_MICROS_PER_TOKEN != null
+      ? Number(env.AI_CLASSIFY_INPUT_KRW_MICROS_PER_TOKEN)
+      : fromUsdPerMillionTokens(usdPerMillionTokens.classifyInput),
+    classifyOutputMicrosPerToken: env.AI_CLASSIFY_OUTPUT_KRW_MICROS_PER_TOKEN != null
+      ? Number(env.AI_CLASSIFY_OUTPUT_KRW_MICROS_PER_TOKEN)
+      : fromUsdPerMillionTokens(usdPerMillionTokens.classifyOutput),
+  };
+}
+
 /* USD/1,000회 단가 → 계산용 환율(가정) → 마이크로원 단가로 변환한다.
    *_KRW_MICROS 환경변수를 직접 주면(고급 사용 — 실제 계약 후 정확한
    원화 단가를 알게 됐을 때) 그 값을 그대로 쓰고, 아니면 위 USD 단가·
@@ -487,6 +513,22 @@ export function buildConfig(env) {
       apiVersion: env.ANTHROPIC_API_VERSION || '2023-06-01',
       classifyModel: env.AI_CLASSIFY_MODEL || 'claude-haiku-4-5',
       timeoutMs: Number(env.AI_CLASSIFY_PROVIDER_TIMEOUT_MS || 20000),
+      // 2026-09-11 재검토(14차) 4절 — 실제 단가(usage 정산의 근거).
+      ...buildAnthropicPriceMicros(env),
+      // 사전 견적(호출 전, 실제 토큰수를 아직 모를 때)에만 곱하는 안전
+      // 여유 — 확정 비용(usage 응답 후 실제 토큰수×단가)에는 안 곱한다.
+      // 추정이 실제보다 낮게 나올 위험(글자수→토큰수 환산 오차, 응답이
+      // 예상보다 길어짐)을 예산 확인 단계에서 보수적으로 흡수한다.
+      preCallCostSafetyMargin: Number(env.AI_CLASSIFY_PRECALL_SAFETY_MARGIN || 1.3),
+      // 사전 견적에서 "입력 글자수 → 토큰수"로 바꿀 때 쓰는 보수적
+      // 비율(토큰당 글자 수). 실제 토크나이저 없이 미리 추정해야 하므로,
+      // 한국어·일본어처럼 토큰당 글자 수가 영어보다 적게 나오는 경우까지
+      // 감안해 낮게(=토큰수를 과대추정하는 쪽으로) 잡는다.
+      preCallEstimateCharsPerInputToken: Number(env.AI_CLASSIFY_ESTIMATE_CHARS_PER_TOKEN || 1.5),
+      // 고정 시스템 프롬프트(CLASSIFY_SYSTEM_PROMPT)의 보수적 토큰
+      // 추정치 — 실측 근사(약 250토큰, 어댑터 상단 원가 산정 주석 참고)
+      // 에 여유를 더했다.
+      systemPromptTokenEstimate: Number(env.AI_CLASSIFY_SYSTEM_PROMPT_TOKEN_ESTIMATE || 300),
     },
     // 2026-09-11 재검토(13차) 3절 — Google Maps 장소 링크 붙여넣기로
     // 추가. 링크에서 이름·좌표 힌트만 뽑아낼 뿐 Places API를 안 부르므로

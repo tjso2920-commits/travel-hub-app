@@ -42,6 +42,16 @@ const { openDb, uuid, nowIso } = await import('../db.mjs');
 const { classifyBatchRoute } = await import('../routes/ai-classify.mjs');
 const { currentPeriod, reservePlaceLookupSlot, finalizePlaceLookupResult, aiClassifyBudgetHeadroomMicros } = await import('../entitlement-usage.mjs');
 const { periodCostMicros, chargeCost } = await import('../cost-ledger.mjs');
+const { estimatePreCallCostMicros } = await import('../adapters/ai-classify.mjs');
+// 2026-09-11 재검토(14차) 4절 — 비용이 더 이상 고정 자리표시자
+// (placeholderPerItemMicros × 건수)가 아니라 실제로 보낼 항목의
+// 입력 크기·출력 상한 기준 사전 견적이므로, "몇 건 늘었는지"를 확인할
+// 때도 그 실제 견적 함수로 기대값을 계산해야 한다. classifyBatchRoute의
+// sanitizeItem이 만드는 모양과 똑같이 맞춰야 문자수(=추정 토큰수)가
+// 실제 호출과 정확히 일치한다.
+function sanitizedLike(item) {
+  return { localId: item.localId, name: item.name || '', address: item.address || '', confirmedTypes: item.confirmedTypes || [] };
+}
 const { peek, dayWindow } = await import('../rate-limit.mjs');
 
 let fail = 0; const t = (n, c) => { console.log((c ? 'PASS ' : 'FAIL ') + n); if (!c) fail++; };
@@ -168,11 +178,14 @@ function accountWithHeadroom(email) {
     classifyBatchRoute(acc, [itemY]),
   ]);
   const costAfter = periodCostMicros(acc, period0.periodId);
-  const unitMicros = config.aiClassify.placeholderPerItemMicros;
+  // X가 먼저 in-flight를 등록하므로(Promise.all의 인자 평가 순서 —
+  // 첫 번째 호출이 첫 await까지 동기 실행된 뒤에야 두 번째가 시작됨)
+  // 실제로 과금되는 대표 항목은 X다.
+  const expectedSingleMicros = estimatePreCallCostMicros([sanitizedLike(itemX)]);
 
   t('6) 두 동시 요청 모두 성공함', rX.ok === true && rY.ok === true);
   t('6) 각자 자기 localId로 정확한 결과를 받음', rX.results[0].localId === 'concurrent-X' && rY.results[0].localId === 'concurrent-Y');
-  t('6) 실제 비용은 딱 한 건 분(합쳐서 한 번만 처리)만 늘어남 — 예전 버그는 2배였음', costAfter - costBefore === unitMicros);
+  t('6) 실제 비용은 딱 한 건 분(합쳐서 한 번만 처리)만 늘어남 — 예전 버그는 2배였음', costAfter - costBefore === expectedSingleMicros);
   // processedCount 합계도 실제로 처리된 고유 입력 수(1)를 반영해야
   // 한다 — 두 요청 각각 자기 localId 몫 1건씩만 "처리됨"으로 셈해도
   // 되지만, 핵심은 실제 분류 호출·과금이 한 번만 일어났다는 사실이다.
@@ -189,7 +202,10 @@ function accountWithHeadroom(email) {
   ];
   const rDup = await classifyBatchRoute(accBatch, dupItems);
   const costAfter2 = periodCostMicros(accBatch, period1.periodId);
-  t('6) 한 배치 안의 동일 입력 3개도 실제로는 한 번만 과금됨', costAfter2 - costBefore2 === unitMicros);
+  // 같은 해시를 공유하는 배치 내 중복은 대표 항목(맨 처음 것) 하나로만
+  // 견적·과금된다.
+  const expectedDupMicros = estimatePreCallCostMicros([sanitizedLike(dupItems[0])]);
+  t('6) 한 배치 안의 동일 입력 3개도 실제로는 한 번만 과금됨', costAfter2 - costBefore2 === expectedDupMicros);
   const dupIds = new Set(rDup.results.map((r) => r.localId));
   t('6) 그래도 3개 localId 모두 각자 결과를 받음', dupIds.has('dup-1') && dupIds.has('dup-2') && dupIds.has('dup-3'));
 }
@@ -220,7 +236,6 @@ function accountWithHeadroom(email) {
     classifyBatchRoute(acc, [itemShared, itemOther]),
   ]);
   const costAfter = periodCostMicros(acc, period0.periodId);
-  const unitMicros = config.aiClassify.placeholderPerItemMicros;
 
   t('7) 준비 확인 — 두 요청 모두 ok:true로 응답함(실패로 위장 안 됨)', r1.ok === true && r2.ok === true);
   t('7) 첫 번째 요청(shared 단독)은 자기 항목 결과를 정상적으로 받음', r1.results.some((x) => x.localId === 'shared-item'));
@@ -232,8 +247,12 @@ function accountWithHeadroom(email) {
   t('7) 두 번째 요청이 어떤 항목도 "말없이 누락"으로 처리하지 않음(unresolvedCount=0)', r2.unresolvedCount === 0);
   t('7) 첫 번째 요청도 마찬가지로 누락 없음', r1.unresolvedCount === 0);
   // 같은 해시(shared)는 실제로는 딱 한 번만 처리·과금돼야 한다(동일
-  // 작업 병합) — shared 1건 + other 1건 = 총 2단위만 늘어야 한다.
-  t('7) 실제 비용은 shared 1건 + other 1건, 총 2단위만 늘어남(중복 과금 없음)', costAfter - costBefore === unitMicros * 2);
+  // 작업 병합) — r1이 shared를 먼저 in-flight로 등록하므로(Promise.all
+  // 인자 평가 순서) r1이 shared 1건을 단독으로 과금하고, r2는 shared가
+  // 이미 진행 중임을 보고 other 1건만 별도로 과금한다 — 각각 단일
+  // 항목 배치라 두 견적을 그대로 더한 값이 정확한 기대값이다.
+  const expectedTwoMicros = estimatePreCallCostMicros([sanitizedLike(itemShared)]) + estimatePreCallCostMicros([sanitizedLike(itemOther)]);
+  t('7) 실제 비용은 shared 1건 + other 1건, 총 2단위만 늘어남(중복 과금 없음)', costAfter - costBefore === expectedTwoMicros);
 
   // "재시도가 영구 잠금으로 이어지지 않는지" — 위 동시 요청이 완전히
   // 끝난 뒤, shared 항목을 다시(이번엔 단독으로) 요청하면 남은
