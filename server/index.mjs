@@ -34,6 +34,7 @@ import { classifyBatchRoute } from './routes/ai-classify.mjs';
 import { recordEvent } from './routes/events.mjs';
 import { joinWaitlist } from './routes/waitlist.mjs';
 import { generateCourseRoute } from './routes/course-generation.mjs';
+import { bikePortsStatusRoute, nearbyBikePortsRoute, bikeGuideRoute } from './routes/bike-ports.mjs';
 import { getPlaces, syncPlaces, getCourses, syncCourses } from './routes/account-data.mjs';
 import { getTags, syncTags } from './routes/tags.mjs';
 import { paymentConfigRoute, createOrderRoute, confirmOrderRoute, cancelOrderRoute } from './routes/payment.mjs';
@@ -213,6 +214,25 @@ async function handle(req, res) {
       const accountId = requireAccount(req, res); if (!accountId) return;
       const body = JSON.parse((await readBody(req)) || '{}');
       const result = await generateCourseRoute(accountId, body);
+      return sendJson(res, result.status || (result.ok ? 200 : 400), result);
+    }
+
+    // 자전거 공유 반납 포트 안내(차리차리 등, 2026-09-15 신규) — 활성
+    // 지역 목록·근접 포트 조회는 무료(API 0회), 안내 생성만 유료.
+    if (req.method === 'GET' && pathname === '/api/bike-ports/status') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      const result = bikePortsStatusRoute();
+      return sendJson(res, result.status, result);
+    }
+    if (req.method === 'GET' && pathname === '/api/bike-ports/nearby') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      const result = nearbyBikePortsRoute(Object.fromEntries(url.searchParams));
+      return sendJson(res, result.status || (result.ok ? 200 : 400), result);
+    }
+    if (req.method === 'POST' && pathname === '/api/bike-ports/guide') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const result = await bikeGuideRoute(accountId, body);
       return sendJson(res, result.status || (result.ok ? 200 : 400), result);
     }
 

@@ -544,6 +544,30 @@ Claude Haiku 4.5) 연결 코드가 추가됐다 — 선정 근거는 그 파일 
 - `COST_GLOBAL_MONTHLY_KRW_MICROS` 등 나머지 비용 한도는
   `docs/BUSINESS_DECISIONS.md` 3-4절 참고.
 
+### 1-8. 자전거 공유 반납 포트 데이터 가져오기(16차 신규, 운영자 로컬 전용)
+
+"차리차리" 등 자전거 공유 반납 포트 안내 기능은 실제 포트 위치 데이터가
+있어야 동작한다. **이 데이터는 저장소·전달 코드 ZIP·정적 배포 자산 어디에도
+포함돼 있지 않다** — 상업적 재사용 조건이 아직 불확실하므로, 운영자가
+스냅샷 파일을 로컬에 직접 두고 아래 스크립트를 실행해야만 서버 DB에
+들어간다:
+
+```bash
+BIKE_PORTS_SNAPSHOT_PATH=/path/to/snapshot.json \
+BIKE_PORTS_PROVIDER_ID=charichari \
+DB_PATH=/data/travelhub.db \
+node scripts/import-bike-ports.mjs
+```
+
+- 지역 코드(`regionCode`)는 스냅샷 파일 안에 들어 있어야 한다.
+- 식별자 중복·필수값(제목/주소) 누락·좌표 이상이 하나라도 있으면
+  트랜잭션 전체를 취소하고 종료코드 1 — 부분 반영 없음.
+- 같은 공급자·지역으로 다시 실행하면 그 지역 데이터를 통째로 교체한다.
+- 새 지역을 활성화하려면 `server/bike-share-providers.mjs`에도
+  등록해야 화면에 노출된다(하드코딩 지역명 확산 방지).
+- 외부 베타 참가자에게는 실제 포트 데이터를 절대 노출하지 않는다 —
+  포트를 찾지 못하는 지역/상황이면 화면은 공식 지도 링크만 보여준다.
+
 ---
 
 ## 2. 서버 시작

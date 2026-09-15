@@ -483,6 +483,40 @@ function migrate(d) {
       updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status);
+    /* 2026-09-15 신규 — 자전거 공유 반납 포트 안내(차리차리 등).
+       실제 포트 데이터는 이 서버의 DB에만 들어간다 — 코드 저장소·ZIP
+       에는 절대 포함하지 않는다(scripts/import-bike-ports.mjs로
+       운영자가 로컬에서 직접 넣는다). provider_id+region_code+port_id
+       를 기본키로 둬 같은 스냅샷을 다시 가져와도(재수집) 그대로
+       덮어써지고 중복이 안 생긴다. capacity는 수용 대수일 뿐 실시간
+       가용 자전거 수가 아니다 — 화면에 그렇게 보이지 않게 하는 책임은
+       클라이언트 쪽에 있다(bike-ports.js 참고). */
+    CREATE TABLE IF NOT EXISTS bike_share_ports (
+      provider_id TEXT NOT NULL,
+      region_code TEXT NOT NULL,
+      port_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      address TEXT NOT NULL,
+      capacity INTEGER,
+      lat REAL NOT NULL,
+      lng REAL NOT NULL,
+      imported_at TEXT NOT NULL,
+      PRIMARY KEY (provider_id, region_code, port_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_bike_share_ports_region ON bike_share_ports(provider_id, region_code);
+    -- 데이터 기준 시각·출처를 화면에 정직하게 보여주기 위한 메타(7절
+    -- "지역별 공식 지도 주소·데이터 출처·조회 시각·사용 가능 여부·이용
+    -- 조건 확인 상태를 관리"). 스냅샷을 다시 가져오면 이 행도 갱신된다.
+    CREATE TABLE IF NOT EXISTS bike_share_import_meta (
+      provider_id TEXT NOT NULL,
+      region_code TEXT NOT NULL,
+      source_url TEXT,
+      endpoint TEXT,
+      retrieved_at TEXT,
+      port_count INTEGER NOT NULL DEFAULT 0,
+      imported_at TEXT NOT NULL,
+      PRIMARY KEY (provider_id, region_code)
+    );
   `);
 
   migrateLegacyCoursesIntoTrips(d);

@@ -65,22 +65,36 @@ function daLocationBasis() {
   if (avg) return { lat: avg.lat, lng: avg.lng, source: 'average', label: A.t('location.average') };
   return null;
 }
+/* 2026-09-15 신규 — 자전거 반납 포트 안내(bike-ports.js) 전용 출발지
+   판정. daLocationBasis()와 우선순위는 같지만(테스트 위치 > GPS >
+   직접 입력) "평균 위치" 대체는 절대 안 쓴다 — 실제 출발점이 아닌
+   값으로 자전거 경로를 계산·과금하면 안 되기 때문이다(3절 지시).
+   bike-ports.js는 이 파일의 비공개 상태(_myGpsLocation 등)를 직접
+   못 읽으므로, 이 함수를 통해서만 좌표를 건네준다. */
+function daBikeOriginResolver() {
+  const testLoc = A.testModeAllowed() ? A.getTestLocation() : null;
+  if (testLoc) return { lat: testLoc.lat, lng: testLoc.lng };
+  if (_myGpsLocation) return { lat: _myGpsLocation.lat, lng: _myGpsLocation.lng };
+  if (_myManualLocation) return { lat: _myManualLocation.lat, lng: _myManualLocation.lng };
+  return null;
+}
 /* 2026-09-11 재검토(11차) 5절 — "거리순 옆에서 '내 위치 기준'을
    선택하면 그때 GPS 권한을 요청해. 앱 시작부터 위치 팝업을 띄우지
    마." 이 함수는 사용자가 버튼을 직접 눌렀을 때만 호출된다(자동
    실행 없음). 테스트 위치가 이미 켜져 있으면 그게 우선이므로 굳이
    실제 GPS를 부르지 않는다(daLocationBasis와 같은 우선순위를 존중). */
-function daRequestMyLocation() {
-  if (A.testModeAllowed() && A.getTestLocation()) { daToast('테스트 위치가 켜져 있어 그 값을 그대로 씁니다.'); return; }
-  if (!navigator.geolocation) { manualLocationSheet(); return; }
+function daRequestMyLocation(onReady) {
+  if (A.testModeAllowed() && A.getTestLocation()) { daToast('테스트 위치가 켜져 있어 그 값을 그대로 씁니다.'); if (onReady) onReady(); return; }
+  if (!navigator.geolocation) { manualLocationSheet(onReady); return; }
   daToast('위치 확인 중…');
   navigator.geolocation.getCurrentPosition(
     (pos) => {
       _myGpsLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
       render();
       daToast('내 위치를 기준으로 정렬했어요.');
+      if (onReady) onReady();
     },
-    () => { manualLocationSheet(); },
+    () => { manualLocationSheet(onReady); },
     { enableHighAccuracy: true, timeout: 10000 },
   );
 }
@@ -88,7 +102,7 @@ function daRequestMyLocation() {
    (예: 숙소 좌표를 지도에서 확인해 붙여넣기). 서버에는 전혀 안
    보내고 이 세션(메모리)에만 둔다 — 테스트 위치와 달리 관리자 승인이
    필요 없는 일반 사용자용 대안이다. */
-function manualLocationSheet() {
+function manualLocationSheet(onReady) {
   open('직접 위치 입력', `<div class="detail"><h2>위치 확인을 못 받았어요</h2><p>좌표를 알고 있으면(예: 숙소 위치) 직접 입력해서 거리순 기준으로 쓸 수 있어요. 입력한 좌표는 이 기기의 지금 화면에서만 쓰이고 저장·전송되지 않아요.</p>` +
     `<label class="xsmall" style="display:block;margin:10px 0 6px">위도<input class="xinput" id="manualLocLat" placeholder="예: 33.5904" style="margin-top:6px;width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit"></label>` +
     `<label class="xsmall" style="display:block;margin:10px 0 6px">경도<input class="xinput" id="manualLocLng" placeholder="예: 130.4207" style="margin-top:6px;width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit"></label>` +
@@ -101,6 +115,7 @@ function manualLocationSheet() {
     render();
     sheet.close();
     daToast('직접 입력한 위치를 기준으로 정렬했어요.');
+    if (onReady) onReady();
   };
 }
 
@@ -810,6 +825,11 @@ async function daLogout() {
   delete foodMap.visits;
   delete foodMap.currentTripByCity;
   delete foodMap.deletedPlaceIds;
+  // 2026-09-15 신규 — 자전거 공유 반납 포트 안내 진행 상태(목적지·고른
+  // 포트·단계)도 계정별 데이터다. 로그아웃 후 다음 계정 화면에 이전
+  // 계정이 보던 목적지·포트가 그대로 남으면 안 된다(3절 "계정 전환 시
+  // 다른 계정 데이터 미노출").
+  delete foodMap.bikeGuide;
   // 2026-09-11 재검토(11차) 5절 — 실제 GPS·직접 입력 위치는 세션
   // 메모리에만 있어 애초에 저장소에 안 남지만(로그아웃해도 자동으로
   // 안전), 같은 탭에서 로그아웃 없이 다른 계정으로 곧장 들어오는
@@ -1001,9 +1021,17 @@ function detail(id) {
   const cityInfo = (cities || []).find((c) => c.name === p.city);
   const phraseBlock = (typeof daIsJapanCity === 'function' && daIsJapanCity(p.city, cityInfo && cityInfo.country))
     ? `<button class="text-button" data-open-phrasebook style="padding:6px 0">🇯🇵 여기서 쓸 말</button>` : '';
-  open(usingSample ? '샘플 장소' : '내 장소', `<div class="detail">${photoHTML(p, 'detail-photo')}<h2>${A.esc(p.name)}</h2><span class="category">${A.esc(p.category)}${!usingSample && !p.catConfirmed ? '(짐작)' : ''}</span>${catBlock}${!usingSample ? ` <span class="category">${A.esc(p.city)}${p.cityKnown && !p.cityConfirmed ? '(짐작)' : ''}</span>` : ''}${tagsBlock}<p>${A.esc(p.area) || '위치 정보 없음'}</p>${p.memo ? `<p>“${A.esc(p.memo)}”</p>` : ''}<button class="primary" data-detail-pick="${id}">${selected.has(id) ? '선택에서 빼기' : '오늘 갈 곳으로 선택'}</button>${mapHref ? `<a target="_blank" rel="noopener noreferrer" href="${mapHref}">${mapLabel}</a>` : ''}${phraseBlock}${visitBlockHTML(id)}${cityBlock}${notes.map((n) => `<small>${n}</small>`).join('')}</div>`);
+  // 2026-09-15 신규 — 자전거 공유 반납 포트 안내(차리차리 등). 좌표가
+  // 확정되지 않은 장소·샘플 장소·활성 지역이 아닌 도시에서는 버튼
+  // 자체를 안 보여준다(bike-ports.js의 daBikeEntryButtonHTML 참고).
+  const bikeBlock = (!usingSample && typeof BikePorts !== 'undefined') ? BikePorts.entryButtonHTML(p) : '';
+  open(usingSample ? '샘플 장소' : '내 장소', `<div class="detail">${photoHTML(p, 'detail-photo')}<h2>${A.esc(p.name)}</h2><span class="category">${A.esc(p.category)}${!usingSample && !p.catConfirmed ? '(짐작)' : ''}</span>${catBlock}${!usingSample ? ` <span class="category">${A.esc(p.city)}${p.cityKnown && !p.cityConfirmed ? '(짐작)' : ''}</span>` : ''}${tagsBlock}<p>${A.esc(p.area) || '위치 정보 없음'}</p>${p.memo ? `<p>“${A.esc(p.memo)}”</p>` : ''}<button class="primary" data-detail-pick="${id}">${selected.has(id) ? '선택에서 빼기' : '오늘 갈 곳으로 선택'}</button>${mapHref ? `<a target="_blank" rel="noopener noreferrer" href="${mapHref}">${mapLabel}</a>` : ''}${phraseBlock}${bikeBlock}${visitBlockHTML(id)}${cityBlock}${notes.map((n) => `<small>${n}</small>`).join('')}</div>`);
   const phraseBtn = document.getElementById('sheetContent').querySelector('[data-open-phrasebook]');
   if (phraseBtn) phraseBtn.onclick = () => phrasebookSheet();
+  const bikeBtn = document.getElementById('sheetContent').querySelector('[data-open-bike-guide]');
+  if (bikeBtn) bikeBtn.onclick = () => BikePorts.open(p, {
+    foodMap, saveFoodMap: () => A.saveFoodMap(foodMap), resolveOrigin: daBikeOriginResolver, token: A.sessionToken(foodMap),
+  });
 }
 /* 유형 지정 시트 — 확인된 유형(실제 데이터에 있던 분류)을 이름 기반 추정
    보다 우선하지만, 추정이 틀렸으면 사용자가 여기서 직접 고칠 수 있다.
@@ -1716,6 +1744,11 @@ async function daFinishLogin(token, email, isNew, onSuccess) {
   A.refreshTestAccess(token);
   refreshFromStorage();
   updateCity();
+  // 2026-09-15 신규 — 부팅 시점엔 아직 로그인 전이라 자전거 포트
+  // 활성 지역 조회가 401로 실패했을 수 있다(캐시 안 됨, 재시도
+  // 가능하게 설계됨). 로그인이 막 끝난 지금 다시 확인해 둬야 첫
+  // 장소 상세 화면부터 "자전거로 가기" 버튼이 정상적으로 보인다.
+  if (typeof BikePorts !== 'undefined') BikePorts.loadStatus(token);
   onSuccess();
 }
 
@@ -2766,7 +2799,7 @@ if ($('#sortSelect')) {
   $('#sortSelect').value = sortMode;
   $('#sortSelect').addEventListener('change', (e) => { sortMode = e.target.value; render(); });
 }
-if ($('#useMyLocationBtn')) $('#useMyLocationBtn').onclick = daRequestMyLocation;
+if ($('#useMyLocationBtn')) $('#useMyLocationBtn').onclick = () => daRequestMyLocation();
 $('.filters').onclick = (e) => { const b = e.target.closest('[data-filter]'); if (!b) return; filter = b.dataset.filter; document.querySelectorAll('[data-filter]').forEach((x) => { x.classList.toggle('active', x === b); x.setAttribute('aria-pressed', x === b); }); render(); };
 if ($('#tagFilters')) {
   // 6-2절 — 태그 칩은 단일 선택(filter)과 달리 여러 개를 동시에 켤 수
@@ -3112,4 +3145,9 @@ if ($('#testLocationBannerClear')) {
 updateCity();
 renderTestLocationBanner();
 renderServiceTestModeBanner();
+// 로그인 전(토큰 없음)이면 /api/bike-ports/status가 401만 반환할 뿐이라
+// 아예 부르지 않는다(불필요한 401 콘솔 오류 방지) — 로그인 완료 시점에
+// daFinishLogin에서 토큰을 들고 다시 부른다. 새로고침처럼 이미 세션이
+// 남아있는 경우엔 여기서 바로 조회된다.
+if (typeof BikePorts !== 'undefined' && A.sessionToken(foodMap)) BikePorts.loadStatus(A.sessionToken(foodMap));
 daResumeAfterTossRedirect();

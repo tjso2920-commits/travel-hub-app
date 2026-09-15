@@ -61,6 +61,8 @@ function haversineMeters(a, b) {
    순서를 정한다. 정거장이 많지 않은(여행 코스 특성상 보통 한 자리
    숫자~십수 개) 상황을 가정한 단순 구현이다. 전역 최적해가 아니라는
    점을 호출부(course-generation.mjs)가 화면 문구에도 반영해야 한다. */
+export { haversineMeters };
+
 export function orderByNearestNeighbor(origin, places) {
   const remaining = places.slice();
   const ordered = [];
@@ -121,13 +123,13 @@ function simulateTestRoute(origin, ordered) {
    하나를 한 번의 computeRoutes 요청으로 처리한다. WALK 모드 응답이
    말이 안 되게 빠르면(자동차 프로필 오응답 의심 등) 이 세그먼트 전체를
    실제 경로로 인정하지 않는다. */
-async function callGoogleRoutesSegment(segmentPoints) {
+async function callGoogleRoutesSegment(segmentPoints, travelMode) {
   const waypoints = segmentPoints.map((p) => ({ location: { latLng: { latitude: p.lat, longitude: p.lng } } }));
   const body = {
     origin: waypoints[0],
     destination: waypoints[waypoints.length - 1],
     intermediates: waypoints.slice(1, -1),
-    travelMode: 'WALK',
+    travelMode: travelMode || 'WALK',
     optimizeWaypointOrder: false,
   };
   const res = await fetchWithTimeout(`${config.google.routesApiBase}/directions/v2:computeRoutes`, {
@@ -233,4 +235,68 @@ export async function computeWalkingRoute(origin, places, accountId) {
   if (!result.ok) return estimateFallback(origin, ordered, result.reason);
   markVerified('routing');
   return { ok: true, routedReal: true, ordered, legs: result.legs };
+}
+
+/* 2026-09-15 신규 — 자전거 공유 반납 포트 안내(차리차리 등)의
+ * 출발지→포트 구간. 위 도보 어댑터와 근본적으로 다른 원칙 하나:
+ * **지원되지 않거나 실패하면 추정 시간을 절대 만들지 않는다.**
+ * (00_READ_FIRST_CLAUDE.md 4절 — "지원되지 않으면 시간을 생성하거나
+ * 도보 경로를 자전거 경로로 바꾸지 말고 외부 지도 확인으로 대체".)
+ * 그래서 estimateFallback과 달리 이 함수는 실패 시 legs 필드 자체를
+ * 안 준다 — 화면이 숫자를 보여줄 방법이 구조적으로 없다("외부
+ * 지도에서 확인" 링크만 보여줄 수 있다).
+ *
+ * 이 세션은 outbound 네트워크가 막혀 있어 Google Routes의 BICYCLE
+ * travelMode가 실제로 이 지역에서 응답을 주는지 검증하지 못했다 —
+ * 실제 키로 반드시 확인이 필요하다(그 전까지는 이 경로가 항상
+ * routedReal:false로 떨어져도 정상 — "미지원"과 "이 세션이 확인 못
+ * 함"을 구분해 문서에 남긴다).
+ */
+const BICYCLE_MIN_PLAUSIBLE_MPS = 1.5; // 시속 5.4km 미만은 자전거로 보기 어려움
+const BICYCLE_MAX_PLAUSIBLE_MPS = 12; // 시속 43km 초과는 다른 교통수단 프로필 오응답 의심
+
+function legsAreBicyclePlausible(legs) {
+  return legs.every((l) => {
+    const seconds = parseDurationSeconds(l.duration);
+    if (!seconds || seconds <= 0) return false;
+    const mps = l.distanceMeters / seconds;
+    return mps >= BICYCLE_MIN_PLAUSIBLE_MPS && mps <= BICYCLE_MAX_PLAUSIBLE_MPS;
+  });
+}
+
+/* 장소조회·도보 테스트 어댑터와 같은 원칙 — 좌표 해시로 결정론적
+   성공/실패를 재현해 두 코드 경로(실제 성공, 미지원/실패→숫자 없음)를
+   서버 테스트에서 안정적으로 검증할 수 있게 한다. */
+function simulateTestBicycleRoute(origin, destination) {
+  let hash = 0;
+  [origin, destination].forEach((p) => { hash = (hash * 31 + Math.round((p.lat + p.lng) * 10000)) | 0; });
+  const simulateSuccess = config.routingTestForce === 'success' ? true
+    : config.routingTestForce === 'failure' ? false
+    : Math.abs(hash) % 5 !== 0;
+  if (!simulateSuccess) return { ok: true, routedReal: false, reason: 'test-adapter-simulated-failure' };
+  const meters = haversineMeters(origin, destination);
+  const seconds = meters / 4.2; // 테스트 전용 결정론적 자전거 속도 가정(실제 API 응답 아님)
+  return { ok: true, routedReal: true, distanceMeters: meters, seconds };
+}
+
+export async function computeBicycleRoute(origin, destination, accountId) {
+  if (config.services.routing === 'test') return simulateTestBicycleRoute(origin, destination);
+  if (config.services.routing !== 'real') return { ok: true, routedReal: false, reason: 'routing-service-unavailable' };
+
+  const plan = [{ sku: skuForSegment([origin, destination]) }];
+  const period = accountId ? currentPeriod(accountId) : null;
+  const charge = chargeCostBatch({ accountId, service: 'routes', charges: plan, periodId: period && period.periodId, periodCapMicros: period && period.costCapMicros });
+  if (!charge.ok) return { ok: true, routedReal: false, reason: 'cost-budget-exceeded' };
+
+  let result;
+  try {
+    result = await callGoogleRoutesSegment([origin, destination], 'BICYCLE');
+  } catch (e) {
+    return { ok: true, routedReal: false, reason: 'network-error' };
+  }
+  if (!result.ok) return { ok: true, routedReal: false, reason: result.reason };
+  if (!legsAreBicyclePlausible(result.legs)) return { ok: true, routedReal: false, reason: 'implausible-speed' };
+  markVerified('routing');
+  const leg = result.legs[0];
+  return { ok: true, routedReal: true, distanceMeters: leg.distanceMeters, seconds: parseDurationSeconds(leg.duration) };
 }
