@@ -28,38 +28,41 @@
  * 새어나가지 않게).
  *
  * 2026-09-17(3차 재검토) — epoch만으로는 "같은 계정 안에서 사용자가
- * 이미 다른 목적지를 열었거나 시트를 닫았다"는 상황을 못 잡는다(계정은
- * 안 바뀌었으니까). 그래서 이 파일 안에서만 쓰는 _bikeInteractionToken
- * (모듈 하단)을 추가로 둔다 — 후보 목록 조회(daBikeShowCandidates)와
- * 안내 생성(daBikeRequestGuide) 둘 다 자기 시작 시점의 값을 기억해 뒀다가,
- * 응답이 돌아온 뒤 값이 그대로인지, 그리고 시트가 여전히 열려 있는지
- * (sheet.open) 함께 확인한다. 시트의 네이티브 close 이벤트는 일부러 안
- * 쓴다 — 스펙상 close()는 close 이벤트를 비동기(큐에 넣어)로 내보내는데,
- * 이 화면은 "출발지 없음 안내 → 직접 입력 시트를 close()로 닫고 →
- * 같은 흐름을 즉시 이어감(다시 open)"처럼 **하나의 연속된 상호작용
- * 안에서** 중간 화면을 close()로 넘기는 패턴을 쓴다. close 이벤트를
- * 그대로 신뢰하면, 이 중간 close()가 나중에(다음 화면이 이미 열리고
- * 그 요청도 이미 나간 뒤에) 비동기로 발화해 방금 정상적으로 이어진
- * 다음 화면 요청까지 "무효"로 잘못 판정해 버린다(실제로 재현·수정한
- * 버그). sheet.open은 동기 속성이라 이런 경합이 없다 — 응답이 돌아온
- * 시점에 시트가 실제로 닫혀 있으면(그리고 그 사이 아무것도 다시 안
- * 열었으면) 그릴 필요가 없다는 뜻이고, 이미 다른 화면으로 이어졌다면
- * 시트는 계속 열려 있으므로 이 검사에 안 걸린다(그 경우는 interaction
- * token 쪽에서 걸러진다). */
+ * 이미 다른 화면을 열었다"는 상황을 못 잡는다(계정은 안 바뀌었으니까).
+ * 처음엔 이 파일 안에서만 쓰는 별도 카운터를 이 화면 전용으로 뒀는데,
+ * ChatGPT가 실제로 재현한 구멍이 있었다: 그 카운터는 자전거 관련
+ * 화면에서만 올라가서, 사용자가 **자전거와 무관한** 일반 장소 상세나
+ * 프로필 화면으로 넘어가면(둘 다 spots.js의 공통 open()을 그대로
+ * 쓴다) 전혀 안 올라 늦게 온 자전거 응답이 그 화면을 덮어썼다.
+ *
+ * 2026-09-18(4차 재검토) — 그래서 spots.js가 실제로 모든 화면 전환의
+ * 공통 관문인 open() 안에서 직접 올리는 _screenVersion(그 파일 최상위
+ * let, 이 파일과 로드 순서 무관하게 이름으로 공유된다 — sheet와 같은
+ * 전제)을 그대로 쓴다. daBikeShowCandidates·daBikeRequestGuide·
+ * daOpenBikeGuide 셋 다 자기 시작 시점(또는 자기 로딩 화면을 그린
+ * 직후) 값을 기억해 뒀다가, await가 끝난 뒤 값이 그대로인지 확인한다
+ * — 자전거 화면이든 일반 화면이든 그 사이 무엇이 열렸어도 값이
+ * 달라지므로 전부 걸러진다.
+ *
+ * daBikeShowCandidates·daBikeRequestGuide는 **자기 로딩 화면을 그린
+ * 뒤에** 값을 기억하므로, 그 시점엔 sheet.open이 항상 true다 — 그래서
+ * 시트가 완전히 닫히기만 하고 아무것도 다시 안 열린 경우(버전은
+ * 그대로지만 sheet.open만 false)까지 동기 속성인 sheet.open으로
+ * 추가로 잡아낸다(daBikeScreenStale). 반대로 daOpenBikeGuide의 status
+ * 대기는 **자기 화면을 하나도 그리기 전에** 시작하므로, "출발지 없음
+ * 안내 → 직접 입력 시트를 close()로 닫고 → 그 콜백이 곧장 다시
+ * daOpenBikeGuide를 부르는" 정상 흐름에서는 이 시점의 sheet.open이
+ * (아직 아무것도 다시 안 열었을 뿐인데) 일시적으로 false일 수 있다 —
+ * `async` 함수는 캐시 적중이라도 최소 한 번은 마이크로태스크를 거치므로
+ * await 뒤에는 항상 이 함수 밖(예: close() 직후)의 동기 코드가 이미
+ * 끝난 다음이다. 이 경로에서 sheet.open까지 같이 보면 정상 흐름을
+ * 오탐 처리한다(실제로 재현·수정한 버그) — 그래서 daOpenBikeGuide는
+ * 버전(그리고 계정 epoch)만 본다(daBikeVersionStale). */
 let _bikeStatusCache = null; // 서버가 실제로 활성화한 지역 목록(성공 응답만 캐시)
 
-/* 2026-09-17(3차 재검토) 2절 — "후보 목록·상태 조회에도 계정/sessionEpoch
-   검증을 적용." 이 값은 자전거 안내 관련 화면 하나가 시작될 때마다
-   올라가는 "이 화면(요청)이 아직 유효한가"의 기준이다. epoch(spots.js의
-   sessionEpoch)가 "계정이 바뀌었는가"만 본다면, 이 값은 같은 계정
-   안에서도 "사용자가 이미 다른 목적지를 열었는가"를 본다 — 둘은 서로
-   다른 축이라 둘 다 확인해야 한다. daBikeShowCandidates·
-   daBikeRequestGuide가 각자 시작 시점에 이 값을 읽어 두고, await가
-   끝난 뒤 값이 그대로인지 다시 확인한다. */
-let _bikeInteractionToken = 0;
-function daBikeBumpInteractionToken() { return (_bikeInteractionToken += 1); }
-function daBikeSheetStale(myToken) {
-  if (myToken !== _bikeInteractionToken) return true;
+function daBikeVersionStale(myVersion) { return myVersion !== _screenVersion; }
+function daBikeScreenStale(myVersion) {
+  if (daBikeVersionStale(myVersion)) return true;
   if (typeof sheet !== 'undefined' && sheet && sheet.open === false) return true;
   return false;
 }
@@ -163,15 +166,15 @@ function daBikeSameSignature(a, b) {
    포트로 변경할 때 추가 생성 1회가 사용될 수 있음을 실행 전에 명확히
    안내." */
 async function daBikeShowCandidates(place, region, origin, ctx, isRecalc) {
-  const myToken = daBikeBumpInteractionToken();
   const epochAtStart = ctx.epoch ? ctx.epoch() : null;
   open('반납 포트 고르기', `<div class="detail"><h2>불러오는 중…</h2></div>`);
+  const myVersion = _screenVersion;
   const r = await A.api(`/api/bike-ports/nearby?providerId=${encodeURIComponent(region.providerId)}&regionCode=${encodeURIComponent(region.regionCode)}&lat=${place.lat}&lng=${place.lng}&limit=3`, { token: ctx.token });
-  // 2026-09-17(3차 재검토) 2절 — 계정이 바뀌었거나(epoch), 그 사이
-  // 사용자가 다른 목적지를 열거나 시트를 닫아 이 응답이 더는 지금
-  // 화면과 무관해졌으면(interaction token 불일치) 아무것도 그리지
-  // 않고 조용히 버린다.
-  if ((ctx.epoch && ctx.epoch() !== epochAtStart) || daBikeSheetStale(myToken)) return;
+  // 2026-09-17(3차 재검토) 2절, 2026-09-18(4차 재검토)로 보강 — 계정이
+  // 바뀌었거나(epoch), 그 사이 사용자가 다른 화면(자전거와 무관한
+  // 일반 화면 포함)을 열거나 시트를 닫아 이 응답이 더는 지금 화면과
+  // 무관해졌으면 아무것도 그리지 않고 조용히 버린다.
+  if ((ctx.epoch && ctx.epoch() !== epochAtStart) || daBikeScreenStale(myVersion)) return;
   if (!r.ok || !r.json || r.json.ok === false || !r.json.ports.length) {
     // 5절 — 일반 계정은 서버가 항상 빈 목록을 준다(실 데이터는 승인된
     // 테스트 계정에만 보인다). 그 경우도 포함해 여기서 공식 웹지도
@@ -243,9 +246,9 @@ async function daBikeRequestGuide(place, region, origin, portId, portSummary, ct
     return;
   }
 
-  const myToken = daBikeBumpInteractionToken();
   const epochAtStart = ctx.epoch ? ctx.epoch() : null;
   open(isRecalc ? '다시 계산하는 중' : '안내 만드는 중', `<div class="detail"><h2>${isRecalc ? '다른 포트로 다시 계산하고 있어요…' : '안내를 만들고 있어요…'}</h2></div>`);
+  const myVersion = _screenVersion;
   const r = await A.api('/api/bike-ports/guide', {
     method: 'POST', token: ctx.token,
     body: { idempotencyKey: requestKey, ...signature },
@@ -253,15 +256,15 @@ async function daBikeRequestGuide(place, region, origin, portId, portSummary, ct
 
   // 2026-09-16 재검토 4절 — "요청 중 로그아웃·계정 전환 후 늦게 도착한
   // 응답이 다른 계정 화면이나 저장소에 반영되지 않게 보호." +
-  // 2026-09-17(3차 재검토) 2절 — 같은 계정이라도 그 사이 사용자가 다른
-  // 목적지를 열었거나 시트를 닫았으면(interaction token 불일치) 이
-  // 응답은 더는 지금 화면과 무관하다. spots.js가 로그아웃/재로그인
-  // 때마다 sessionEpoch를 올리고, 이 파일은 새 자전거 화면을 열 때마다
-  // interaction token을 올린다 — 요청을 보낸 시점과 값이 다르면 그
-  // 사이 상황이 바뀐 것이므로 응답을 조용히 버린다(단, 서버에는 이미
-  // 성공이 기록돼 있으므로 나중에 같은 목적지·포트로 다시 열면
-  // requestKey가 재사용돼 재조회만 된다 — 재차감되지 않는다).
-  if ((ctx.epoch && ctx.epoch() !== epochAtStart) || daBikeSheetStale(myToken)) return;
+  // 2026-09-17/18(3·4차 재검토) — 같은 계정이라도 그 사이 사용자가 다른
+  // 화면(자전거와 무관한 일반 화면 포함)을 열었으면 이 응답은 더는
+  // 지금 화면과 무관하다. spots.js가 로그아웃/재로그인 때마다
+  // sessionEpoch를, open()을 부를 때마다 _screenVersion을 올린다 —
+  // 요청을 보낸 시점과 값이 다르면 그 사이 상황이 바뀐 것이므로 응답을
+  // 조용히 버린다(단, 서버에는 이미 성공이 기록돼 있으므로 나중에 같은
+  // 목적지·포트로 다시 열면 requestKey가 재사용돼 재조회만 된다 —
+  // 재차감되지 않는다).
+  if ((ctx.epoch && ctx.epoch() !== epochAtStart) || daBikeScreenStale(myVersion)) return;
 
   if (!r.ok || !r.json || r.json.ok === false) {
     const reason = r.json && r.json.reason;
@@ -370,7 +373,21 @@ function daBikeRenderGuideScreen(place, ctx, justRecalculated) {
    ctx = { foodMap, saveFoodMap, resolveOrigin, token, epoch }(spots.js가
    그대로 넘겨준다). */
 async function daOpenBikeGuide(place, ctx) {
+  // 2026-09-18(4차 재검토) — "daOpenBikeGuide도 status 조회 await
+  // 이후 계정·화면 유효성을 재확인." status가 이미 캐시돼 있으면 이
+  // await는 즉시 끝나 사실상 검사할 게 없지만(흔한 경로), 캐시가 비어
+  // 실제로 네트워크를 타는 경우엔 그 사이 로그아웃하거나 다른 화면을
+  // 열었을 수 있다 — 그 경우 아래 어떤 화면도(출발지 필요 안내든
+  // 후보 조회든) 새로 그리지 않는다. daBikeVersionStale(버전만 확인,
+  // sheet.open은 안 봄)을 쓴다 — 이 함수는 아직 자기 화면을 하나도
+  // 그리지 않은 채 대기 중이라, "출발지 없음 → 직접 입력을 close()로
+  // 넘기고 곧장 다시 이 함수를 부르는" 정상 흐름에서 sheet.open이
+  // 일시적으로 false일 수 있다(파일 상단 설명 참고 — 실제로 재현한
+  // 오탐이었다).
+  const epochAtStart = ctx.epoch ? ctx.epoch() : null;
+  const versionAtStart = _screenVersion;
   await daBikePortsLoadStatus(ctx.token, ctx.epoch);
+  if ((ctx.epoch && ctx.epoch() !== epochAtStart) || daBikeVersionStale(versionAtStart)) return;
   const region = daBikePortsRegionForCity(place.city);
   if (!region) { daToast('이 목적지는 아직 지원하지 않아요.'); return; }
 

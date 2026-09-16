@@ -139,6 +139,15 @@ let activeTags = new Set();
 const APP_BUILD = 'r9-12';
 let currentScreenLabel = '내 스팟';
 let lastErrorCode = '';
+// 2026-09-18(4차 재검토) — "일반 화면 전환·닫기·재열기를 포함하는
+// 공통 화면 버전"으로 오래된 비동기 응답을 걸러내기 위한 값. open()이
+// 호출될 때마다(장소 상세·프로필·자전거 안내 등 시트에 뭔가를 그리는
+// 모든 경로가 반드시 open()을 거친다) 올라간다. bike-ports.js처럼
+// 응답이 늦게 돌아올 수 있는 화면이, 응답을 반영하기 직전에 이 값이
+// 자기가 시작할 때 봤던 값과 같은지 확인하면 — 그 사이 사용자가 아예
+// 다른 화면(자전거와 무관한 일반 장소 상세·프로필 포함)을 열었는지
+// 정확히 알 수 있다(계정 전환은 sessionEpoch가 따로 담당).
+let _screenVersion = 0;
 function daDeviceTypeBucket() {
   const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
   if (/iPhone|iPad|iPod/.test(ua)) return 'iOS';
@@ -955,7 +964,7 @@ function render() {
 }
 function resetSearch() { $('#search').value = ''; filter = '전체'; activeTags.clear(); document.querySelectorAll('[data-filter]').forEach((x) => { x.classList.toggle('active', x.dataset.filter === '전체'); x.setAttribute('aria-pressed', x.dataset.filter === '전체'); }); render(); }
 function toggle(id) { selected.has(id) ? selected.delete(id) : selected.add(id); render(); }
-function open(title, html) { currentScreenLabel = title; $('#sheetLabel').textContent = title; $('#sheetContent').innerHTML = html; if (!sheet.open) sheet.showModal(); }
+function open(title, html) { _screenVersion++; currentScreenLabel = title; $('#sheetLabel').textContent = title; $('#sheetContent').innerHTML = html; if (!sheet.open) sheet.showModal(); }
 
 /* 상세 시트. 바뀐 것:
    - "샘플" 문구는 usingSample 일 때만

@@ -511,6 +511,150 @@ await page.unroute('**/api/bike-ports/status');
   t('16) 로그아웃 중 지연된 status 응답이 캐시를 다시 채우지 않음', !region);
 }
 
+// --- 17) 2026-09-18(4차 재검토) 독립 재현 ① — 후보 조회가 나가 있는
+// 사이 자전거와 무관한 일반 장소 상세를 열어도, 지연된 후보 응답이
+// 그 화면을 덮으면 안 된다 ---
+await loginViaUi('bike-e2e-stale-detail@example.com');
+setTestAccessByEmail('bike-e2e-stale-detail@example.com', true);
+await page.evaluate(() => {
+  foodMap.places.push(
+    { id: 'destC', name: '후보요청중 목적지 C', lat: 33.592, lng: 130.403, cat: '카페·디저트', catConfirmed: true, city: '후쿠오카', cityConfirmed: true, sourceLists: [] },
+    { id: 'destPlain', name: '평범한 장소(자전거 무관)', lat: 33.600, lng: 130.410, cat: '카페·디저트', catConfirmed: true, city: '후쿠오카', cityConfirmed: true, sourceLists: [] },
+  );
+  A.saveFoodMap(foodMap);
+  refreshFromStorage();
+});
+await page.waitForFunction(() => window.BikePorts && window.BikePorts.regionForCity('후쿠오카'), { timeout: 5000 });
+await openDetail('destC');
+await page.click('[data-open-bike-guide]');
+await page.waitForTimeout(150);
+await page.click('[data-bike-origin-manual]');
+await page.waitForTimeout(150);
+await page.fill('#manualLocLat', '33.5905');
+await page.fill('#manualLocLng', '130.4015');
+await page.route('**/api/bike-ports/nearby*', async (route) => {
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  await route.continue();
+});
+await page.click('#manualLocApplyBtn'); // C의 후보 조회 시작(응답은 700ms 뒤)
+await page.waitForTimeout(150);
+await openDetail('destPlain'); // 시트를 닫지 않고 곧장 자전거와 무관한 장소 상세로 이동(공통 open() 경유)
+await page.waitForTimeout(1000); // C의 응답이 도착할 시간을 준다
+await page.unroute('**/api/bike-ports/nearby*');
+{
+  const label = await page.evaluate(() => document.getElementById('sheetLabel').textContent);
+  const html = await page.evaluate(() => document.getElementById('sheetContent').innerHTML);
+  t('17) 후보 조회 중 일반 장소 상세로 이동해도 지연된 응답이 화면을 안 덮음', label === '내 장소');
+  t('17) 화면에는 계속 destPlain 상세가 보이고 자전거 후보 목록이 아님', html.includes('평범한 장소') && !html.includes('반납 포트 고르기') && !html.includes('직선거리'));
+}
+await page.evaluate(() => document.getElementById('close').click());
+await page.evaluate(() => daLogout());
+await page.waitForTimeout(200);
+
+// --- 18) 독립 재현 ② — 후보 조회 중 프로필 화면을 열어도 마찬가지 ---
+await loginViaUi('bike-e2e-stale-profile@example.com');
+setTestAccessByEmail('bike-e2e-stale-profile@example.com', true);
+await page.evaluate(() => {
+  foodMap.places.push({ id: 'destD', name: '후보요청중 목적지 D', lat: 33.592, lng: 130.403, cat: '카페·디저트', catConfirmed: true, city: '후쿠오카', cityConfirmed: true, sourceLists: [] });
+  A.saveFoodMap(foodMap);
+  refreshFromStorage();
+});
+await page.waitForFunction(() => window.BikePorts && window.BikePorts.regionForCity('후쿠오카'), { timeout: 5000 });
+await openDetail('destD');
+await page.click('[data-open-bike-guide]');
+await page.waitForTimeout(150);
+await page.click('[data-bike-origin-manual]');
+await page.waitForTimeout(150);
+await page.fill('#manualLocLat', '33.5905');
+await page.fill('#manualLocLng', '130.4015');
+await page.route('**/api/bike-ports/nearby*', async (route) => {
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  await route.continue();
+});
+await page.click('#manualLocApplyBtn');
+await page.waitForTimeout(150);
+await page.evaluate(() => profile()); // 프로필로 이동(자전거와 완전히 무관한 화면) — 모달이 떠 있어 배경 버튼 클릭이 막히므로 함수 직접 호출
+await page.waitForTimeout(1000);
+await page.unroute('**/api/bike-ports/nearby*');
+{
+  const label = await page.evaluate(() => document.getElementById('sheetLabel').textContent);
+  const html = await page.evaluate(() => document.getElementById('sheetContent').innerHTML);
+  t('18) 후보 조회 중 프로필을 열어도 지연된 응답이 화면을 안 덮음', label === '내 프로필');
+  t('18) 화면에는 계속 프로필이 보이고 자전거 후보 목록이 아님', !html.includes('반납 포트 고르기') && !html.includes('직선거리'));
+}
+await page.evaluate(() => document.getElementById('close').click());
+await page.evaluate(() => daLogout());
+await page.waitForTimeout(200);
+
+// --- 19) 독립 재현 ③ — 시트를 완전히 닫은 뒤 다른 화면을 열고
+// 나서야 이전 응답이 도착해도 그 화면을 덮지 않아야 한다 ---
+await loginViaUi('bike-e2e-stale-afterclose@example.com');
+setTestAccessByEmail('bike-e2e-stale-afterclose@example.com', true);
+await page.evaluate(() => {
+  foodMap.places.push({ id: 'destE', name: '후보요청중 목적지 E', lat: 33.592, lng: 130.403, cat: '카페·디저트', catConfirmed: true, city: '후쿠오카', cityConfirmed: true, sourceLists: [] });
+  A.saveFoodMap(foodMap);
+  refreshFromStorage();
+});
+await page.waitForFunction(() => window.BikePorts && window.BikePorts.regionForCity('후쿠오카'), { timeout: 5000 });
+await openDetail('destE');
+await page.click('[data-open-bike-guide]');
+await page.waitForTimeout(150);
+await page.click('[data-bike-origin-manual]');
+await page.waitForTimeout(150);
+await page.fill('#manualLocLat', '33.5905');
+await page.fill('#manualLocLng', '130.4015');
+await page.route('**/api/bike-ports/nearby*', async (route) => {
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  await route.continue();
+});
+await page.click('#manualLocApplyBtn');
+await page.waitForTimeout(150);
+await page.evaluate(() => document.getElementById('close').click()); // 완전히 닫는다
+await page.waitForTimeout(150);
+await page.evaluate(() => profile()); // 닫힌 뒤 다른 화면을 새로 연다
+await page.waitForTimeout(1000);
+await page.unroute('**/api/bike-ports/nearby*');
+{
+  const label = await page.evaluate(() => document.getElementById('sheetLabel').textContent);
+  t('19) 닫은 뒤 다른 화면을 열면 이전 응답이 그 화면을 안 덮음', label === '내 프로필');
+}
+await page.evaluate(() => document.getElementById('close').click());
+await page.evaluate(() => daLogout());
+await page.waitForTimeout(200);
+
+// --- 20) 독립 재현 ④ — daOpenBikeGuide가 status 조회를 기다리는
+// 동안 다른 화면으로 이동해도, status가 뒤늦게 와서 자전거 화면(출발지
+// 안내 등)을 새로 열면 안 된다 ---
+await loginViaUi('bike-e2e-stale-openguide@example.com');
+setTestAccessByEmail('bike-e2e-stale-openguide@example.com', true);
+await page.evaluate(() => {
+  foodMap.places.push({ id: 'destF', name: '상태조회중 목적지 F', lat: 33.592, lng: 130.403, cat: '카페·디저트', catConfirmed: true, city: '후쿠오카', cityConfirmed: true, sourceLists: [] });
+  A.saveFoodMap(foodMap);
+  refreshFromStorage();
+  if (typeof BikePorts !== 'undefined') BikePorts.resetStatusCache(); // 캐시를 비워 daOpenBikeGuide의 loadStatus가 실제로 네트워크를 타게 한다
+});
+await page.route('**/api/bike-ports/status', async (route) => {
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  await route.continue();
+});
+await openDetail('destF');
+// 이 시점엔 상태 캐시가 비어 있어 "자전거로 가기" 버튼 자체가 아직 안
+// 보일 수 있다(정상 — 서버가 활성 지역이라고 확인해 줘야 보인다). 버튼
+// 유무와 무관하게, daOpenBikeGuide를 직접 트리거해 그 안의 status
+// await 경합을 재현한다.
+await page.evaluate((pid) => { if (typeof BikePorts !== 'undefined') { const p = foodMap.places.find((x) => x.id === pid); BikePorts.open(p, { foodMap, saveFoodMap: () => A.saveFoodMap(foodMap), resolveOrigin: daBikeOriginResolver, token: A.sessionToken(foodMap), epoch: () => sessionEpoch }); } }, 'destF');
+await page.waitForTimeout(150);
+await page.evaluate(() => profile()); // status가 오기 전에 다른 화면으로 이동 — 모달이 떠 있어 배경 버튼 클릭이 막히므로 함수 직접 호출
+await page.waitForTimeout(1000);
+await page.unroute('**/api/bike-ports/status');
+{
+  const label = await page.evaluate(() => document.getElementById('sheetLabel').textContent);
+  t('20) status 조회 중 다른 화면으로 이동하면 뒤늦은 status가 자전거 화면을 새로 안 엶', label === '내 프로필');
+}
+await page.evaluate(() => document.getElementById('close').click());
+await page.evaluate(() => daLogout());
+await page.waitForTimeout(200);
+
 // 8·9·12절에서 일부러 만든 실패(무료체험 소진 후 402, 응답 유실을
 // 흉내 낸 net::ERR_FAILED, 로그아웃 경합으로 지연된 요청이 뒤늦게
 // 401을 받는 것)는 브라우저가 네트워크 계층에서 자동으로 콘솔에
