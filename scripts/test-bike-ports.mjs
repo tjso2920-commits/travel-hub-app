@@ -244,14 +244,14 @@ await page.route('**/api/bike-ports/guide', async (route) => {
 });
 await page.click('[data-bike-pick-port="T-NEAR"]');
 await page.waitForTimeout(400);
-const keyAfterFailure = await page.evaluate(() => foodMap.bikeGuide && foodMap.bikeGuide.pendingKey);
+const keyAfterFailure = await page.evaluate(() => foodMap.bikeGuide && foodMap.bikeGuide.requestKey);
 t('9) 응답 유실 후에도 크래시 없이 실패 안내로 이어짐', !!(await page.$('[data-dismiss]')));
 t('9) 실패해도 재시도용 요청 키가 저장돼 있음', typeof keyAfterFailure === 'string' && keyAfterFailure.length > 0);
 await page.evaluate(() => document.getElementById('close').click());
 await openDetail('dest3');
-await page.click('[data-open-bike-guide]'); // 재시도 — daOpenBikeGuide가 기존 pendingSignature를 다시 candidates로 안내
+await page.click('[data-open-bike-guide]'); // 재시도 — daOpenBikeGuide가 기존 requestSignature를 다시 candidates로 안내
 await page.waitForTimeout(300);
-await page.click('[data-bike-pick-port="T-NEAR"]'); // 같은 포트를 다시 고름 — 같은 서명이라 pendingKey가 재사용돼야 함
+await page.click('[data-bike-pick-port="T-NEAR"]'); // 같은 포트를 다시 고름 — 같은 서명이라 requestKey가 재사용돼야 함
 await page.waitForTimeout(500);
 await page.unroute('**/api/bike-ports/guide');
 {
@@ -294,38 +294,11 @@ await page.evaluate(() => document.getElementById('close').click());
 await page.evaluate(() => daLogout());
 await page.waitForTimeout(200);
 
-// --- 11) 2026-09-16 재검토 4절 — 저장 실패 시에도 성공을 감추지
-// 않고(정직하게 알림) 이미 만든 결과는 화면에 그대로 보여줌 ---
-await loginViaUi('bike-e2e-savefail@example.com');
-setTestAccessByEmail('bike-e2e-savefail@example.com', true);
-await page.evaluate(() => {
-  foodMap.places.push({ id: 'dest5', name: '저장실패 테스트 목적지', lat: 33.592, lng: 130.403, cat: '카페·디저트', catConfirmed: true, city: '후쿠오카', cityConfirmed: true, sourceLists: [] });
-  A.saveFoodMap(foodMap);
-  refreshFromStorage();
-});
-await page.waitForFunction(() => window.BikePorts && window.BikePorts.regionForCity('후쿠오카'), { timeout: 5000 });
-await openDetail('dest5');
-await page.click('[data-open-bike-guide]');
-await page.waitForTimeout(150);
-await page.click('[data-bike-origin-manual]');
-await page.waitForTimeout(150);
-await page.fill('#manualLocLat', '33.5905');
-await page.fill('#manualLocLng', '130.4015');
-await page.click('#manualLocApplyBtn');
-await page.waitForTimeout(400);
-await page.evaluate(() => { window.__origSaveFoodMap = A.saveFoodMap; A.saveFoodMap = () => false; }); // 저장 실패를 흉내
-await page.click('[data-bike-pick-port="T-NEAR"]');
-await page.waitForTimeout(500);
-{
-  const html = await page.evaluate(() => document.getElementById('sheetContent').innerHTML);
-  t('11) 로컬 저장이 실패해도 방금 만든 안내는 그대로 화면에 보임(성공한 척 숨기지 않되 낭비하지도 않음)', html.includes('반납했어요'));
-  const toastText = await page.evaluate(() => document.getElementById('toast').textContent);
-  t('11) 저장 실패를 정직하게 알리는 안내가 뜸', toastText.includes('저장하지 못했'));
-}
-await page.evaluate(() => { A.saveFoodMap = window.__origSaveFoodMap; });
-await page.evaluate(() => document.getElementById('close').click());
-await page.evaluate(() => daLogout());
-await page.waitForTimeout(200);
+// (예전 11절 — "저장 실패 시에도 결과를 화면에 보여줌"은 2026-09-17
+// 3차 재검토로 요청 전 저장 실패를 아예 별도로 막게 되면서(13절), 그
+// 시나리오와 검증 방식이 겹치고 일부는 모순돼 13·14절로 대체했다:
+// 13절은 "요청 전 저장 실패 → 요청 자체를 안 보냄", 14절은 "요청 전
+// 저장은 성공, 결과 저장만 실패 → 새로고침 후 같은 키로 복구"다.
 
 // --- 12) 2026-09-16 재검토 4절 — 요청 중 로그아웃하면, 나중에 도착한
 // 응답이 다음 계정/손님 상태의 저장소에 반영되면 안 됨 ---
@@ -358,6 +331,184 @@ await page.unroute('**/api/bike-ports/guide');
 {
   const leaked = await page.evaluate(() => foodMap.bikeGuide !== undefined);
   t('12) 요청 중 로그아웃해도 늦게 온 응답이 다음 화면 저장소를 오염시키지 않음', !leaked);
+}
+
+// --- 13) 2026-09-17(3차 재검토) 1절 — 요청 전 저장이 실패하면 비용이
+// 발생하는 공급자 요청을 아예 보내지 않아야 한다 ---
+await loginViaUi('bike-e2e-presave@example.com');
+setTestAccessByEmail('bike-e2e-presave@example.com', true);
+await page.evaluate(() => {
+  foodMap.places.push({ id: 'dest7', name: '요청전저장실패 테스트 목적지', lat: 33.592, lng: 130.403, cat: '카페·디저트', catConfirmed: true, city: '후쿠오카', cityConfirmed: true, sourceLists: [] });
+  A.saveFoodMap(foodMap);
+  refreshFromStorage();
+});
+await page.waitForFunction(() => window.BikePorts && window.BikePorts.regionForCity('후쿠오카'), { timeout: 5000 });
+await openDetail('dest7');
+await page.click('[data-open-bike-guide]');
+await page.waitForTimeout(150);
+await page.click('[data-bike-origin-manual]');
+await page.waitForTimeout(150);
+await page.fill('#manualLocLat', '33.5905');
+await page.fill('#manualLocLng', '130.4015');
+await page.click('#manualLocApplyBtn');
+await page.waitForTimeout(400);
+let guideCallsDuringPresaveFailure = 0;
+await page.route('**/api/bike-ports/guide', async (route) => { guideCallsDuringPresaveFailure++; await route.continue(); });
+await page.evaluate(() => { window.__origSaveFoodMap = A.saveFoodMap; A.saveFoodMap = () => false; }); // 요청 전 저장부터 계속 실패
+await page.click('[data-bike-pick-port="T-NEAR"]');
+await page.waitForTimeout(400);
+await page.unroute('**/api/bike-ports/guide');
+{
+  const html = await page.evaluate(() => document.getElementById('sheetContent').innerHTML);
+  t('13) 요청 전 저장이 실패하면 저장 문제를 안내하고 비용 발생 요청을 보내지 않음', html.includes('지금 이 기기에 저장할 수 없어요'));
+  t('13) 실제로 공급자(서버 안내 생성) 호출이 한 번도 안 나감', guideCallsDuringPresaveFailure === 0);
+}
+await page.evaluate(() => { A.saveFoodMap = window.__origSaveFoodMap; });
+await page.evaluate(() => document.getElementById('close').click());
+await page.evaluate(() => daLogout());
+await page.waitForTimeout(200);
+
+// --- 14) 2026-09-17(3차 재검토) 1절 — 요청 전 저장은 성공했지만 결과
+// 저장(응답 후)이 실패한 경우: 새로고침으로 메모리가 초기화돼도 같은
+// requestKey로 서버 결과를 재조회해 복구하고, 재차감·재계산이 없어야
+// 한다 ---
+await loginViaUi('bike-e2e-postsave@example.com');
+setTestAccessByEmail('bike-e2e-postsave@example.com', true);
+await page.evaluate(() => {
+  foodMap.places.push({ id: 'dest8', name: '결과저장실패 테스트 목적지', lat: 33.592, lng: 130.403, cat: '카페·디저트', catConfirmed: true, city: '후쿠오카', cityConfirmed: true, sourceLists: [] });
+  A.saveFoodMap(foodMap);
+  refreshFromStorage();
+});
+await page.waitForFunction(() => window.BikePorts && window.BikePorts.regionForCity('후쿠오카'), { timeout: 5000 });
+await openDetail('dest8');
+await page.click('[data-open-bike-guide]');
+await page.waitForTimeout(150);
+await page.click('[data-bike-origin-manual]');
+await page.waitForTimeout(150);
+await page.fill('#manualLocLat', '33.5905');
+await page.fill('#manualLocLng', '130.4015');
+await page.click('#manualLocApplyBtn');
+await page.waitForTimeout(400);
+// 첫 저장(요청 전)만 진짜로 성공시키고, 그 다음(응답 후) 저장부터는
+// 계속 실패시킨다 — 실제 localStorage에는 "요청 전" 상태만 남는다.
+await page.evaluate(() => {
+  window.__origSaveFoodMap = A.saveFoodMap;
+  let n = 0;
+  A.saveFoodMap = (fm) => { n++; return n === 1 ? window.__origSaveFoodMap(fm) : false; };
+});
+const firstAttemptBodies = [];
+await page.route('**/api/bike-ports/guide', async (route) => { firstAttemptBodies.push(route.request().postDataJSON()); await route.continue(); });
+await page.click('[data-bike-pick-port="T-NEAR"]');
+await page.waitForTimeout(500);
+await page.unroute('**/api/bike-ports/guide');
+{
+  const html = await page.evaluate(() => document.getElementById('sheetContent').innerHTML);
+  t('14) 결과 저장이 실패해도 방금 만든 안내는 화면에 그대로 보임', html.includes('반납했어요'));
+}
+await page.evaluate(() => { A.saveFoodMap = window.__origSaveFoodMap; }); // 새로고침 전에 원래 구현으로 복구(실제 앱과 동일 조건)
+await page.evaluate(() => document.getElementById('close').click());
+const usageBeforeReload = await (await fetch(`${apiBase}/api/account/usage`, { headers: { Authorization: `Bearer ${await page.evaluate(() => foodMap.session.token)}` } })).json();
+await page.reload();
+await page.waitForTimeout(400);
+await page.waitForFunction(() => !!(foodMap.session && foodMap.session.token), { timeout: 5000 });
+{
+  // 결과 저장은 실패했지만 요청 전 저장은 성공했으므로, 새로고침 후에도
+  // requestKey/requestSignature는 로컬에 남아 있어야 한다(guide 자체는 없음).
+  const stateAfterReload = await page.evaluate(() => foodMap.bikeGuide);
+  t('14) 새로고침 후에도 요청 전에 저장해 둔 요청 키가 남아 있음(결과만 유실)', stateAfterReload && typeof stateAfterReload.requestKey === 'string' && !stateAfterReload.guide);
+}
+await openDetail('dest8');
+await page.click('[data-open-bike-guide]'); // 출발지 정보는 새로고침으로 소실 — 같은 좌표로 다시 입력해야 같은 서명이 됨
+await page.waitForTimeout(150);
+await page.click('[data-bike-origin-manual]');
+await page.waitForTimeout(150);
+await page.fill('#manualLocLat', '33.5905');
+await page.fill('#manualLocLng', '130.4015');
+await page.click('#manualLocApplyBtn');
+await page.waitForTimeout(400);
+const recoveryBodies = [];
+await page.route('**/api/bike-ports/guide', async (route) => { recoveryBodies.push(route.request().postDataJSON()); await route.continue(); });
+await page.click('[data-bike-pick-port="T-NEAR"]'); // 같은 포트 — 같은 서명이라 같은 requestKey로 복구돼야 함
+await page.waitForTimeout(500);
+await page.unroute('**/api/bike-ports/guide');
+{
+  const html = await page.evaluate(() => document.getElementById('sheetContent').innerHTML);
+  t('14) 새로고침 후 같은 요청으로 다시 열면 정상 안내 화면으로 복구됨', html.includes('반납했어요'));
+  t('14) 복구 요청이 실제로 같은 idempotencyKey를 재사용함(재계산이 아니라 재조회)', recoveryBodies.length === 1 && firstAttemptBodies.length === 1 && recoveryBodies[0].idempotencyKey === firstAttemptBodies[0].idempotencyKey);
+  const token = await page.evaluate(() => foodMap.session.token);
+  const usageAfter = await (await fetch(`${apiBase}/api/account/usage`, { headers: { Authorization: `Bearer ${token}` } })).json();
+  t('14) 복구 전후 이용 횟수가 늘지 않음(재차감 없음)', usageAfter.courseGenerations.used === 1 && usageBeforeReload.courseGenerations.used === 1);
+}
+await page.evaluate(() => document.getElementById('close').click());
+await page.evaluate(() => daLogout());
+await page.waitForTimeout(200);
+
+// --- 15) 2026-09-17(3차 재검토) 2절 — 목적지 A의 후보 조회가 늦게
+// 응답해도, 그 사이 목적지 B를 열었으면 A의 응답이 B 화면을 덮지
+// 않아야 한다 ---
+await loginViaUi('bike-e2e-stalecand@example.com');
+setTestAccessByEmail('bike-e2e-stalecand@example.com', true);
+await page.evaluate(() => {
+  foodMap.places.push(
+    { id: 'destA', name: '먼저 연 목적지 A', lat: 33.592, lng: 130.403, cat: '카페·디저트', catConfirmed: true, city: '후쿠오카', cityConfirmed: true, sourceLists: [] },
+    { id: 'destB', name: '나중에 연 목적지 B', lat: 33.593, lng: 130.404, cat: '카페·디저트', catConfirmed: true, city: '후쿠오카', cityConfirmed: true, sourceLists: [] },
+  );
+  A.saveFoodMap(foodMap);
+  refreshFromStorage();
+});
+await page.waitForFunction(() => window.BikePorts && window.BikePorts.regionForCity('후쿠오카'), { timeout: 5000 });
+await openDetail('destA');
+await page.click('[data-open-bike-guide]');
+await page.waitForTimeout(150);
+await page.click('[data-bike-origin-manual]');
+await page.waitForTimeout(150);
+await page.fill('#manualLocLat', '33.5905');
+await page.fill('#manualLocLng', '130.4015');
+// A의 후보 조회 응답을 일부러 늦춘다 — 그 사이 B를 연다.
+await page.route('**/api/bike-ports/nearby*', async (route) => {
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  await route.continue();
+});
+await page.click('#manualLocApplyBtn'); // A의 후보 조회 시작(응답은 700ms 뒤)
+await page.waitForTimeout(150);
+await page.evaluate(() => document.getElementById('close').click()); // A 화면을 닫고
+await openDetail('destB');
+// A 단계에서 이미 출발지(직접 입력)를 적용해 세션에 남아 있으므로(같은
+// 로그인 세션 동안 유지) B는 출발지를 다시 물어보지 않고 바로 후보
+// 조회로 들어간다 — 같은 nearby 라우트를 다시 탄다.
+await page.click('[data-open-bike-guide]');
+await page.waitForTimeout(1000); // A·B 응답이 전부 도착할 시간을 준다
+await page.unroute('**/api/bike-ports/nearby*');
+{
+  const label = await page.evaluate(() => document.getElementById('sheetLabel').textContent);
+  const html = await page.evaluate(() => document.getElementById('sheetContent').innerHTML);
+  t('15) A의 지연된 응답이 나중에 열린 B 화면을 덮지 않음(여전히 후보 목록 화면)', label === '반납 포트 고르기');
+  t('15) 화면에 A가 아닌 B(나중에 연 목적지) 관련 후보가 정상적으로 보임', html.includes('T-NEAR') || html.includes('합성'));
+}
+await page.evaluate(() => document.getElementById('close').click());
+await page.evaluate(() => daLogout());
+await page.waitForTimeout(200);
+
+// --- 16) 2026-09-17(3차 재검토) 2절 — 활성 지역 상태 조회가 나가 있는
+// 사이 로그아웃하면, 늦게 온 응답이 캐시를 오염시키지 않아야 한다 ---
+await loginViaUi('bike-e2e-stalestatus@example.com');
+setTestAccessByEmail('bike-e2e-stalestatus@example.com', true);
+await page.evaluate(() => { if (typeof BikePorts !== 'undefined') BikePorts.resetStatusCache(); }); // 캐시를 비워 다음 호출이 실제로 새 요청을 내게 한다
+await page.route('**/api/bike-ports/status', async (route) => {
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  await route.continue();
+});
+await page.evaluate(() => { BikePorts.loadStatus(foodMap.session.token, () => sessionEpoch); });
+await page.waitForTimeout(150);
+await page.evaluate(() => daLogout()); // 응답이 오기 전에 로그아웃 — sessionEpoch가 올라감
+await page.waitForTimeout(900);
+await page.unroute('**/api/bike-ports/status');
+{
+  // resetStatusCache가 로그아웃 시 이미 캐시를 비웠고, 늦게 온 응답도
+  // (epoch 검사로) 캐시를 다시 채우지 못했어야 한다 — regionForCity가
+  // 계속 null이어야 한다.
+  const region = await page.evaluate(() => window.BikePorts.regionForCity('후쿠오카'));
+  t('16) 로그아웃 중 지연된 status 응답이 캐시를 다시 채우지 않음', !region);
 }
 
 // 8·9·12절에서 일부러 만든 실패(무료체험 소진 후 402, 응답 유실을

@@ -1,7 +1,7 @@
 'use strict';
 /**
  * 자전거 공유 반납 포트 안내(차리차리 등) — 2026-09-15 신규,
- * 2026-09-16 ChatGPT 재검토 반영.
+ * 2026-09-16·2026-09-17 ChatGPT 재검토 반영.
  *
  * 00_READ_FIRST_CLAUDE.md 1절 — "챠리챠리 앱을 복제하지 않고, 사용자가
  * 저장한 목적지에 도착하는 앞뒤의 번거로움을 줄인다." 대여·잠금 해제·
@@ -26,19 +26,58 @@
  * 요청을 보내기 전 값과 응답이 돌아온 뒤의 값이 다르면 — 그 사이 계정이
  * 바뀐 것이므로 — 응답을 조용히 버린다(다른 계정 화면·저장소에
  * 새어나가지 않게).
- */
-
+ *
+ * 2026-09-17(3차 재검토) — epoch만으로는 "같은 계정 안에서 사용자가
+ * 이미 다른 목적지를 열었거나 시트를 닫았다"는 상황을 못 잡는다(계정은
+ * 안 바뀌었으니까). 그래서 이 파일 안에서만 쓰는 _bikeInteractionToken
+ * (모듈 하단)을 추가로 둔다 — 후보 목록 조회(daBikeShowCandidates)와
+ * 안내 생성(daBikeRequestGuide) 둘 다 자기 시작 시점의 값을 기억해 뒀다가,
+ * 응답이 돌아온 뒤 값이 그대로인지, 그리고 시트가 여전히 열려 있는지
+ * (sheet.open) 함께 확인한다. 시트의 네이티브 close 이벤트는 일부러 안
+ * 쓴다 — 스펙상 close()는 close 이벤트를 비동기(큐에 넣어)로 내보내는데,
+ * 이 화면은 "출발지 없음 안내 → 직접 입력 시트를 close()로 닫고 →
+ * 같은 흐름을 즉시 이어감(다시 open)"처럼 **하나의 연속된 상호작용
+ * 안에서** 중간 화면을 close()로 넘기는 패턴을 쓴다. close 이벤트를
+ * 그대로 신뢰하면, 이 중간 close()가 나중에(다음 화면이 이미 열리고
+ * 그 요청도 이미 나간 뒤에) 비동기로 발화해 방금 정상적으로 이어진
+ * 다음 화면 요청까지 "무효"로 잘못 판정해 버린다(실제로 재현·수정한
+ * 버그). sheet.open은 동기 속성이라 이런 경합이 없다 — 응답이 돌아온
+ * 시점에 시트가 실제로 닫혀 있으면(그리고 그 사이 아무것도 다시 안
+ * 열었으면) 그릴 필요가 없다는 뜻이고, 이미 다른 화면으로 이어졌다면
+ * 시트는 계속 열려 있으므로 이 검사에 안 걸린다(그 경우는 interaction
+ * token 쪽에서 걸러진다). */
 let _bikeStatusCache = null; // 서버가 실제로 활성화한 지역 목록(성공 응답만 캐시)
+
+/* 2026-09-17(3차 재검토) 2절 — "후보 목록·상태 조회에도 계정/sessionEpoch
+   검증을 적용." 이 값은 자전거 안내 관련 화면 하나가 시작될 때마다
+   올라가는 "이 화면(요청)이 아직 유효한가"의 기준이다. epoch(spots.js의
+   sessionEpoch)가 "계정이 바뀌었는가"만 본다면, 이 값은 같은 계정
+   안에서도 "사용자가 이미 다른 목적지를 열었는가"를 본다 — 둘은 서로
+   다른 축이라 둘 다 확인해야 한다. daBikeShowCandidates·
+   daBikeRequestGuide가 각자 시작 시점에 이 값을 읽어 두고, await가
+   끝난 뒤 값이 그대로인지 다시 확인한다. */
+let _bikeInteractionToken = 0;
+function daBikeBumpInteractionToken() { return (_bikeInteractionToken += 1); }
+function daBikeSheetStale(myToken) {
+  if (myToken !== _bikeInteractionToken) return true;
+  if (typeof sheet !== 'undefined' && sheet && sheet.open === false) return true;
+  return false;
+}
 
 /* token을 명시적으로 받는다 — 이 파일은 spots.js의 foodMap을 직접
    읽지 않는다(파일 상단 설명 참고). 로그인 전(토큰 없음)에 호출되면
    401을 받을 뿐인데, 그 실패는 캐시하지 않는다 — 로그인 후 다시
    부르면 정상적으로 다시 시도된다(부팅 시점엔 아직 로그인 전일 수
    있고, daOpenBikeGuide가 열릴 때는 이미 로그인 상태이므로 그때 다시
-   확인된다). */
-async function daBikePortsLoadStatus(token) {
+   확인된다). epoch도 함께 받는다 — 요청이 나가 있는 사이 로그아웃/
+   재로그인(계정 전환)이 일어나면, 뒤늦게 돌아온 응답을 캐시에 쓰지
+   않는다(다른 계정의 활성 지역·실데이터 접근 정보가 새 계정 화면에
+   섞여 들어가는 것을 방지 — 2026-09-17 3차 재검토 2절). */
+async function daBikePortsLoadStatus(token, epoch) {
   if (_bikeStatusCache) return _bikeStatusCache;
+  const epochAtStart = epoch ? epoch() : null;
   const r = await A.api('/api/bike-ports/status', { token });
+  if (epoch && epoch() !== epochAtStart) return _bikeStatusCache || [];
   if (r.ok && r.json && r.json.ok) { _bikeStatusCache = r.json.regions || []; return _bikeStatusCache; }
   return [];
 }
@@ -124,8 +163,15 @@ function daBikeSameSignature(a, b) {
    포트로 변경할 때 추가 생성 1회가 사용될 수 있음을 실행 전에 명확히
    안내." */
 async function daBikeShowCandidates(place, region, origin, ctx, isRecalc) {
+  const myToken = daBikeBumpInteractionToken();
+  const epochAtStart = ctx.epoch ? ctx.epoch() : null;
   open('반납 포트 고르기', `<div class="detail"><h2>불러오는 중…</h2></div>`);
   const r = await A.api(`/api/bike-ports/nearby?providerId=${encodeURIComponent(region.providerId)}&regionCode=${encodeURIComponent(region.regionCode)}&lat=${place.lat}&lng=${place.lng}&limit=3`, { token: ctx.token });
+  // 2026-09-17(3차 재검토) 2절 — 계정이 바뀌었거나(epoch), 그 사이
+  // 사용자가 다른 목적지를 열거나 시트를 닫아 이 응답이 더는 지금
+  // 화면과 무관해졌으면(interaction token 불일치) 아무것도 그리지
+  // 않고 조용히 버린다.
+  if ((ctx.epoch && ctx.epoch() !== epochAtStart) || daBikeSheetStale(myToken)) return;
   if (!r.ok || !r.json || r.json.ok === false || !r.json.ports.length) {
     // 5절 — 일반 계정은 서버가 항상 빈 목록을 준다(실 데이터는 승인된
     // 테스트 계정에만 보인다). 그 경우도 포함해 여기서 공식 웹지도
@@ -156,46 +202,66 @@ async function daBikeShowCandidates(place, region, origin, ctx, isRecalc) {
 
 /* 안내 생성(유료, 이용권 차감) — 선택한 포트 하나에 대해서만 계산한다.
    2026-09-16 재검토 4절 — "동일 작업의 응답 유실·재시도에는 같은 요청
-   키와 본문을 재사용, 실제로 바뀐 경우에만 새 작업으로 구분." 요청을
-   보내기 전에 서명(providerId/regionCode/portId/origin/destination)과
-   idempotencyKey를 ctx.foodMap.bikeGuide.pendingRequest에 먼저
-   저장해 둔다 — 그래야 응답이 오기 전에 네트워크가 끊기거나 페이지가
-   새로고침돼도, 다음 시도가 같은 키를 재사용해 서버가 재생(replay)만
-   하고 다시 차감하지 않는다. */
+   키와 본문을 재사용, 실제로 바뀐 경우에만 새 작업으로 구분."
+   2026-09-17(3차 재검토) 1절 — 위 설계에 구멍이 있었다: 요청 전에
+   저장하는 코드는 있었지만 **저장 실패(ctx.saveFoodMap()의 반환값)를
+   확인하지 않고 그냥 유료 요청을 계속 보냈다.** 이 저장이 실제로
+   실패하면, 새로고침처럼 메모리가 초기화된 뒤에는 이 시도의
+   requestKey를 어디서도 다시 찾을 수 없어 재시도가 완전히 새
+   idempotencyKey로 나가고, 서버는 이를 새 작업으로 처리해 다시
+   차감한다("이미 성공이 카운트돼 있어 재차감되지 않는다"는 예전
+   주석은 이 경로에서는 사실이 아니었다 — 재시도의 키 자체가 달라지는
+   경우의 이야기다). 그래서 이제 **이 저장이 실제로 성공했을 때만
+   유료 공급자 요청을 보낸다** — 저장이 안 되면 요청 자체를 아예
+   하지 않고 저장 문제를 정직하게 안내한다. (참고: `pendingKey`/
+   `pendingSignature`라는 예전 이름은 "성공하면 지운다"는 뜻처럼
+   읽혀 오해를 샀다 — 지금은 성공해도 지우지 않고 계속 들고 있으므로
+   `requestKey`/`requestSignature`로 바꿨다.) */
 async function daBikeRequestGuide(place, region, origin, portId, portSummary, ctx) {
   const destination = { lat: place.lat, lng: place.lng };
   const signature = { providerId: region.providerId, regionCode: region.regionCode, portId, origin, destination };
   const existing = ctx.foodMap.bikeGuide;
-  const reuseKey = (existing && existing.destinationId === place.id && daBikeSameSignature(existing.pendingSignature, signature))
-    ? existing.pendingKey : null;
-  const idempotencyKey = reuseKey || daBikeUuid();
+  const reuseKey = (existing && existing.destinationId === place.id && daBikeSameSignature(existing.requestSignature, signature))
+    ? existing.requestKey : null;
+  const requestKey = reuseKey || daBikeUuid();
   const isRecalc = !!(existing && existing.destinationId === place.id && existing.guide);
 
-  // 요청 직전에 먼저 저장한다 — 이 저장 자체가 실패해도(드묾) 지금
-  // 시도의 idempotencyKey 변수는 이 함수 안에서는 그대로 유효하다.
+  // 요청 직전에 먼저 저장한다 — 그리고 반드시 성공 여부를 확인한다.
   ctx.foodMap.bikeGuide = {
     ...(existing && existing.destinationId === place.id ? existing : {}),
     destinationId: place.id, destinationCoord: destination,
     providerId: region.providerId, regionCode: region.regionCode, officialMapUrl: region.officialMapUrl,
     origin, portId,
-    pendingKey: idempotencyKey, pendingSignature: signature,
+    requestKey, requestSignature: signature,
     step: 'requesting',
     updatedAt: new Date().toISOString(),
   };
-  ctx.saveFoodMap();
+  if (!ctx.saveFoodMap()) {
+    open('안내를 시작할 수 없어요', `<div class="detail"><h2>지금 이 기기에 저장할 수 없어요.</h2>` +
+      `<p class="inline-note">이 요청을 나중에 같은 요청으로 알아볼 방법이 저장되지 않으면, 재시도가 새 요청으로 처리돼 비용이 이중으로 청구될 수 있어요 — 그래서 저장이 안 되는 동안은 비용이 발생하는 요청을 아예 보내지 않아요. 저장 공간(개인정보 보호 모드 등)을 확인하고 다시 시도해 주세요.</p>` +
+      `<button class="primary" data-dismiss style="margin-top:10px">닫기</button></div>`);
+    return;
+  }
 
+  const myToken = daBikeBumpInteractionToken();
   const epochAtStart = ctx.epoch ? ctx.epoch() : null;
   open(isRecalc ? '다시 계산하는 중' : '안내 만드는 중', `<div class="detail"><h2>${isRecalc ? '다른 포트로 다시 계산하고 있어요…' : '안내를 만들고 있어요…'}</h2></div>`);
   const r = await A.api('/api/bike-ports/guide', {
     method: 'POST', token: ctx.token,
-    body: { idempotencyKey, ...signature },
+    body: { idempotencyKey: requestKey, ...signature },
   });
 
   // 2026-09-16 재검토 4절 — "요청 중 로그아웃·계정 전환 후 늦게 도착한
-  // 응답이 다른 계정 화면이나 저장소에 반영되지 않게 보호." spots.js가
-  // 로그아웃/재로그인 때마다 sessionEpoch를 올린다 — 요청을 보낸 시점과
-  // 값이 다르면 그 사이 계정이 바뀐 것이므로 응답을 조용히 버린다.
-  if (ctx.epoch && ctx.epoch() !== epochAtStart) return;
+  // 응답이 다른 계정 화면이나 저장소에 반영되지 않게 보호." +
+  // 2026-09-17(3차 재검토) 2절 — 같은 계정이라도 그 사이 사용자가 다른
+  // 목적지를 열었거나 시트를 닫았으면(interaction token 불일치) 이
+  // 응답은 더는 지금 화면과 무관하다. spots.js가 로그아웃/재로그인
+  // 때마다 sessionEpoch를 올리고, 이 파일은 새 자전거 화면을 열 때마다
+  // interaction token을 올린다 — 요청을 보낸 시점과 값이 다르면 그
+  // 사이 상황이 바뀐 것이므로 응답을 조용히 버린다(단, 서버에는 이미
+  // 성공이 기록돼 있으므로 나중에 같은 목적지·포트로 다시 열면
+  // requestKey가 재사용돼 재조회만 된다 — 재차감되지 않는다).
+  if ((ctx.epoch && ctx.epoch() !== epochAtStart) || daBikeSheetStale(myToken)) return;
 
   if (!r.ok || !r.json || r.json.ok === false) {
     const reason = r.json && r.json.reason;
@@ -212,21 +278,27 @@ async function daBikeRequestGuide(place, region, origin, portId, portSummary, ct
     return;
   }
 
+  // 2026-09-17(3차 재검토) 1절 — requestKey/requestSignature를 성공
+  // 후에도 지우지 않고 그대로 들고 있는다. 그래야 바로 아래 저장이
+  // 이번엔 실패해도(가능함 — 요청 전 저장과 응답 후 저장은 서로 다른
+  // 시도다), 다음에 새로고침 후 같은 목적지·포트·출발지로 다시 열면
+  // "이미 성공이 카운트돼 있다"는 말을 실제로 지킬 수 있다 — 클라이언트가
+  // 같은 requestKey를 재사용해 서버에 다시 보내면, 서버는 이걸 새 작업이
+  // 아니라 재생(replay)으로 처리해 저장된 결과를 그대로 돌려줄 뿐
+  // 다시 차감하지 않는다(server/routes/bike-ports.mjs의 findStoredResult).
   ctx.foodMap.bikeGuide = {
     destinationId: place.id, destinationCoord: destination,
     providerId: region.providerId, regionCode: region.regionCode, officialMapUrl: region.officialMapUrl,
-    origin, portId, pendingKey: null, pendingSignature: null,
+    origin, portId, requestKey, requestSignature: signature,
     step: 'guide', guide: r.json.guide, updatedAt: new Date().toISOString(),
   };
-  // 2026-09-16 재검토 4절 — "saveFoodMap 반환값을 검사하고 저장 실패를
-  // 성공처럼 표시하지 않기 / 저장 실패 시에도 이미 생성한 결과를 다시
-  // 과금하지 않고 복구할 수 있게 하기." 저장이 실패해도 성공을 감추지
-  // 않되(정직하게 알림), 방금 만든 결과는 메모리에 이미 있으므로 지금
-  // 화면에는 그대로 보여준다 — 다음에 이 destinationId를 다시 열었을
-  // 때 로컬에 남아 있지 않으면, pendingKey도 함께 사라졌으므로 재시도는
-  // 새 작업이 되지만 그 재시도는 idempotencyKey가 달라도 서버 쪽에서
-  // 이미 이 계정의 이번 이용권 성공이 처리돼 있어 다시 결제를 요구하지
-  // 않는다(무료체험은 소진, 유료는 이번 성공이 이미 카운트됨).
+  // "saveFoodMap 반환값을 검사하고 저장 실패를 성공처럼 표시하지
+  // 않기." 저장이 실패해도 성공을 감추지 않되(정직하게 알림), 방금
+  // 만든 결과는 메모리에 이미 있으므로 지금 화면에는 그대로 보여준다
+  // (낭비하지 않는다) — 다음에 이 기기에서 다시 열면 저장이 안 된
+  // 탓에 이 결과 자체는 못 보겠지만, 위 requestKey/requestSignature
+  // 저장(요청 전)이 성공했었다면 같은 포트를 다시 고르는 순간 서버가
+  // 재생으로 응답해 재차감 없이 복구된다.
   const saved = ctx.saveFoodMap();
   if (!saved) daToast('안내를 만들었지만 이 기기에 저장하지 못했어요. 화면을 벗어나면 다시 찾아야 할 수 있어요.');
   daBikeRenderGuideScreen(place, ctx, isRecalc);
@@ -254,7 +326,14 @@ function daBikeRenderGuideScreen(place, ctx, justRecalculated) {
       `<p class="inline-note">실시간 반납 가능 여부와 실제 이용 종료는 공식 앱에서 확인해 주세요.</p>` +
       `<button class="text-button" data-bike-restart style="padding:6px 0">처음부터 다시 고르기</button>` +
       `<button class="primary" data-dismiss>닫기</button></div>`);
-    document.getElementById('sheetContent').querySelector('[data-bike-restart]').onclick = () => { delete ctx.foodMap.bikeGuide; ctx.saveFoodMap(); daOpenBikeGuide(place, ctx); };
+    document.getElementById('sheetContent').querySelector('[data-bike-restart]').onclick = () => {
+      delete ctx.foodMap.bikeGuide;
+      // 2026-09-17(3차 재검토) 1절 — 상태 저장 실패를 성공처럼 감추지
+      // 않는다. 초기화 자체(메모리상 delete)는 이미 일어났으니 화면
+      // 전환은 그대로 진행하되, 이 기기에 못 지운 것을 정직하게 알린다.
+      if (!ctx.saveFoodMap()) daToast('처음부터 다시 고르는 상태를 이 기기에 저장하지 못했어요.');
+      daOpenBikeGuide(place, ctx);
+    };
     return;
   }
 
@@ -273,7 +352,12 @@ function daBikeRenderGuideScreen(place, ctx, justRecalculated) {
   const content = document.getElementById('sheetContent');
   content.querySelector('[data-bike-returned]').onclick = () => {
     ctx.foodMap.bikeGuide.step = 'returned';
-    ctx.saveFoodMap();
+    // 2026-09-17(3차 재검토) 1절 — "반납 완료 등 상태 저장의 실패도
+    // 확인하고 성공처럼 감추지 않기." 반납 표시 자체는 무료·로컬
+    // 동작이라 저장이 실패해도 화면 전환은 막지 않지만(사용자가 실제로
+    // 반납했다는 사실은 바뀌지 않는다), 이 기기에 남지 않을 수 있다는
+    // 점은 정직하게 알린다.
+    if (!ctx.saveFoodMap()) daToast('반납 표시를 이 기기에 저장하지 못했어요. 새로고침하면 되돌아갈 수 있어요.');
     daBikeRenderGuideScreen(place, ctx, false);
   };
   content.querySelector('[data-bike-other-port]').onclick = () => {
@@ -286,7 +370,7 @@ function daBikeRenderGuideScreen(place, ctx, justRecalculated) {
    ctx = { foodMap, saveFoodMap, resolveOrigin, token, epoch }(spots.js가
    그대로 넘겨준다). */
 async function daOpenBikeGuide(place, ctx) {
-  await daBikePortsLoadStatus(ctx.token);
+  await daBikePortsLoadStatus(ctx.token, ctx.epoch);
   const region = daBikePortsRegionForCity(place.city);
   if (!region) { daToast('이 목적지는 아직 지원하지 않아요.'); return; }
 

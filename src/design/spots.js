@@ -1757,7 +1757,10 @@ async function daFinishLogin(token, email, isNew, onSuccess) {
   // 활성 지역 조회가 401로 실패했을 수 있다(캐시 안 됨, 재시도
   // 가능하게 설계됨). 로그인이 막 끝난 지금 다시 확인해 둬야 첫
   // 장소 상세 화면부터 "자전거로 가기" 버튼이 정상적으로 보인다.
-  if (typeof BikePorts !== 'undefined') BikePorts.loadStatus(token);
+  // 2026-09-17(3차 재검토) — epoch도 함께 넘겨, 이 조회가 나가 있는
+  // 사이 다시 로그아웃/재로그인이 일어나도 늦게 온 응답이 캐시를
+  // 오염시키지 않게 한다.
+  if (typeof BikePorts !== 'undefined') BikePorts.loadStatus(token, () => sessionEpoch);
   onSuccess();
 }
 
@@ -3158,5 +3161,5 @@ renderServiceTestModeBanner();
 // 아예 부르지 않는다(불필요한 401 콘솔 오류 방지) — 로그인 완료 시점에
 // daFinishLogin에서 토큰을 들고 다시 부른다. 새로고침처럼 이미 세션이
 // 남아있는 경우엔 여기서 바로 조회된다.
-if (typeof BikePorts !== 'undefined' && A.sessionToken(foodMap)) BikePorts.loadStatus(A.sessionToken(foodMap));
+if (typeof BikePorts !== 'undefined' && A.sessionToken(foodMap)) BikePorts.loadStatus(A.sessionToken(foodMap), () => sessionEpoch);
 daResumeAfterTossRedirect();
