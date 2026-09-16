@@ -16,6 +16,7 @@ process.env.ROUTING_TEST_FORCE = 'failure';
 const { createServer } = await import('../index.mjs');
 const { sentEmailsForTest } = await import('../adapters/email.mjs');
 const { openDb, nowIso } = await import('../db.mjs');
+const { setTestAccessByEmail } = await import('../routes/entitlement.mjs');
 
 let fail = 0; const t = (n, c) => { console.log((c ? 'PASS ' : 'FAIL ') + n); if (!c) fail++; };
 
@@ -48,6 +49,7 @@ async function login(email) {
 }
 
 const acc = await login('bike-fallback@example.com');
+setTestAccessByEmail('bike-fallback@example.com', true);
 const origin = { lat: 33.5905, lng: 130.4015 };
 const destination = { lat: 33.592, lng: 130.403 };
 const r = await api('POST', '/api/bike-ports/guide', { token: acc.token, body: {
@@ -62,6 +64,27 @@ t('실패 사유가 문자열로 함께 옴(화면이 "외부 지도에서 확�
 t('도보 구간은 기존 원칙대로 정직한 추정치가 표시됨(real:false여도 숫자는 있음)', r.json.guide.walkLeg.real === false && typeof r.json.guide.walkLeg.distanceMeters === 'number');
 t('공식 지도 링크는 항상 함께 내려옴(딥링크 아닌 지역 공식 웹지도)', typeof r.json.guide.officialMapUrl === 'string' && r.json.guide.officialMapUrl.includes('charichari.bike'));
 t('도보 구간도 추정(routedReal=false)이라 무료체험은 차감되지 않음(기존 실패 시 미차감 원칙)', r.json.trialConsumed === false);
+
+// --- 2026-09-16 ChatGPT 재검토 2·6절 — "완전한 성공은 두 구간 모두
+// 실제 성공으로 정의하고, 자전거 실패+도보 성공처럼 일부만 성공한
+// 경우는 미차감." ROUTING_TEST_FORCE가 파일 전체에 고정돼 있어(위에서
+// 'failure') 두 구간이 항상 같은 방향으로만 실패/성공했는데,
+// 전용 값(bike-fail-walk-success)으로 이 경계 상황만 따로 재현한다. */
+{
+  const acc2 = await login('bike-fallback-divergent@example.com');
+  setTestAccessByEmail('bike-fallback-divergent@example.com', true);
+  const { config } = await import('../config.mjs');
+  config.routingTestForce = 'bike-fail-walk-success';
+  const r2 = await api('POST', '/api/bike-ports/guide', { token: acc2.token, body: {
+    idempotencyKey: 'divergent-1', providerId: 'charichari', regionCode: 'FUK', portId: 'TEST-A', origin, destination,
+  } });
+  t('자전거 실패+도보 성공 — 자전거는 real:false', r2.json.guide.bikeLeg.real === false);
+  t('자전거 실패+도보 성공 — 도보는 real:true', r2.json.guide.walkLeg.real === true);
+  t('둘 중 하나라도 실패면 "완전한 성공"이 아니므로 무료체험 미차감', r2.json.trialConsumed === false);
+  const usage2 = await api('GET', '/api/account/usage', { token: acc2.token });
+  t('미차감이므로 코스 성공 카운트도 그대로 0', usage2.json.courseGenerations.used === 0);
+  config.routingTestForce = 'failure'; // 이 파일의 나머지 동작에 영향 없게 원복
+}
 
 console.log(fail === 0 ? '\n전체 통과' : `\n${fail}개 실패`);
 process.exit(fail === 0 ? 0 : 1);

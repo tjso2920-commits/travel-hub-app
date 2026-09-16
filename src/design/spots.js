@@ -830,6 +830,11 @@ async function daLogout() {
   // 계정이 보던 목적지·포트가 그대로 남으면 안 된다(3절 "계정 전환 시
   // 다른 계정 데이터 미노출").
   delete foodMap.bikeGuide;
+  // 2026-09-16 재검토 5절 — "상태 캐시는 계정과 권한 변경 시 초기화."
+  // 승인된(test_access) 계정으로 실제 포트 데이터를 본 뒤 같은 탭에서
+  // 로그아웃하고 승인 안 된 계정으로 들어와도, 캐시된 이전 응답이 그대로
+  // 재사용되지 않게 한다.
+  if (typeof BikePorts !== 'undefined') BikePorts.resetStatusCache();
   // 2026-09-11 재검토(11차) 5절 — 실제 GPS·직접 입력 위치는 세션
   // 메모리에만 있어 애초에 저장소에 안 남지만(로그아웃해도 자동으로
   // 안전), 같은 탭에서 로그아웃 없이 다른 계정으로 곧장 들어오는
@@ -1031,6 +1036,10 @@ function detail(id) {
   const bikeBtn = document.getElementById('sheetContent').querySelector('[data-open-bike-guide]');
   if (bikeBtn) bikeBtn.onclick = () => BikePorts.open(p, {
     foodMap, saveFoodMap: () => A.saveFoodMap(foodMap), resolveOrigin: daBikeOriginResolver, token: A.sessionToken(foodMap),
+    // 2026-09-16 신규 — 요청 중 로그아웃/계정 전환이 일어나면 이 값이
+    // 바뀐다(daLogout·daFinishLogin이 sessionEpoch를 올린다). bike-ports.js가
+    // 응답을 적용하기 전에 이 값을 다시 확인해 다른 계정에 새어나가지 않게 한다.
+    epoch: () => sessionEpoch,
   });
 }
 /* 유형 지정 시트 — 확인된 유형(실제 데이터에 있던 분류)을 이름 기반 추정

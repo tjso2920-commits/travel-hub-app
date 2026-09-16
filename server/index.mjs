@@ -221,12 +221,12 @@ async function handle(req, res) {
     // 지역 목록·근접 포트 조회는 무료(API 0회), 안내 생성만 유료.
     if (req.method === 'GET' && pathname === '/api/bike-ports/status') {
       const accountId = requireAccount(req, res); if (!accountId) return;
-      const result = bikePortsStatusRoute();
+      const result = bikePortsStatusRoute(accountId);
       return sendJson(res, result.status, result);
     }
     if (req.method === 'GET' && pathname === '/api/bike-ports/nearby') {
       const accountId = requireAccount(req, res); if (!accountId) return;
-      const result = nearbyBikePortsRoute(Object.fromEntries(url.searchParams));
+      const result = nearbyBikePortsRoute(accountId, Object.fromEntries(url.searchParams));
       return sendJson(res, result.status || (result.ok ? 200 : 400), result);
     }
     if (req.method === 'POST' && pathname === '/api/bike-ports/guide') {

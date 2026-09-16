@@ -20,6 +20,7 @@ process.env.ROUTING_TEST_FORCE = 'success';
 const { createServer } = await import('../index.mjs');
 const { sentEmailsForTest } = await import('../adapters/email.mjs');
 const { openDb, nowIso } = await import('../db.mjs');
+const { setTestAccessByEmail } = await import('../routes/entitlement.mjs');
 
 let fail = 0; const t = (n, c) => { console.log((c ? 'PASS ' : 'FAIL ') + n); if (!c) fail++; };
 
@@ -60,12 +61,38 @@ seedSyntheticPorts();
 
 const acc = await login('bike-guide@example.com');
 
+// --- 0) 2026-09-16 재검토 5절 — 승인 안 된 일반 계정은 활성 지역이
+// 있어도(officialMapUrl은 보이되) 실제 포트 데이터를 하나도 못 봄.
+// 상업적 재사용 조건이 확인되기 전까지는 기본값이 "외부 공개 비활성"
+// 이어야 하고, 인증된 API를 직접 호출해도(우회 시도) 서버가 막아야 한다.
+{
+  const status = await api('GET', '/api/bike-ports/status', { token: acc.token });
+  const region = status.json.regions.find((x) => x.regionCode === 'FUK');
+  t('0) 일반 계정은 시딩된 실제 건수를 못 봄(0으로 가려짐)', region.portCount === 0 && region.realDataAccess === false);
+  t('0) 일반 계정도 공식 지도 주소는 그대로 봄(대체 안내용)', typeof region.officialMapUrl === 'string' && region.officialMapUrl.includes('charichari.bike'));
+
+  const nearby = await api('GET', `/api/bike-ports/nearby?providerId=charichari&regionCode=FUK&lat=33.5905&lng=130.4015`, { token: acc.token });
+  t('0) 일반 계정은 지역이 활성이라 200은 오지만 포트 목록은 빔(직접 호출 우회 불가)', nearby.status === 200 && nearby.json.ports.length === 0 && nearby.json.realDataAccess === false);
+  t('0) 빈 목록이어도 공식 지도 링크는 옴(화면이 기존 "후보 없음" 대체 화면으로 자연스럽게 이어짐)', typeof nearby.json.officialMapUrl === 'string');
+
+  const guide = await api('POST', '/api/bike-ports/guide', { token: acc.token, body: {
+    idempotencyKey: 'guide-blocked-1', providerId: 'charichari', regionCode: 'FUK', portId: 'TEST-A',
+    origin: { lat: 33.5905, lng: 130.4015 }, destination: { lat: 33.592, lng: 130.403 },
+  } });
+  t('0) 일반 계정은 안내 생성 자체가 403으로 막힘', guide.status === 403 && guide.json.reason === 'real-data-access-required');
+  t('0) 막힌 응답에도 공식 지도 링크는 옴', typeof guide.json.officialMapUrl === 'string');
+}
+
+// 이제부터는 운영자가 이 계정을 실제 데이터 확인용으로 승인했다고
+// 가정한다(기존 test_access 재사용 — 새 승인 플래그를 안 만든다).
+setTestAccessByEmail('bike-guide@example.com', true);
+
 // --- 1) 활성 지역 상태 ---
 {
   const r = await api('GET', '/api/bike-ports/status', { token: acc.token });
   t('1) 활성 지역 목록에 charichari/FUK가 실제로 보임', r.status === 200 && r.json.regions.some((x) => x.providerId === 'charichari' && x.regionCode === 'FUK'));
   const region = r.json.regions.find((x) => x.regionCode === 'FUK');
-  t('1) 시딩한 합성 포트 3곳이 그대로 카운트됨', region.portCount === 3);
+  t('1) 승인된 계정은 시딩한 합성 포트 3곳이 그대로 카운트됨', region.portCount === 3 && region.realDataAccess === true);
   t('1) 공식 지도 주소가 함께 내려옴', typeof region.officialMapUrl === 'string' && region.officialMapUrl.includes('charichari.bike'));
 }
 
@@ -113,6 +140,7 @@ const acc = await login('bike-guide@example.com');
 // (재계산 자체는 화면 문구 책임 — 서버는 그냥 새 요청으로 처리) ---
 {
   const acc2 = await login('bike-guide-recalc@example.com');
+  setTestAccessByEmail('bike-guide-recalc@example.com', true);
   const origin = { lat: 33.5905, lng: 130.4015 };
   const destination = { lat: 33.592, lng: 130.403 };
   const first = await api('POST', '/api/bike-ports/guide', { token: acc2.token, body: {
@@ -128,10 +156,26 @@ const acc = await login('bike-guide@example.com');
 // --- 5) 존재하지 않는 포트 ---
 {
   const acc3 = await login('bike-guide-3@example.com');
+  setTestAccessByEmail('bike-guide-3@example.com', true);
   const r = await api('POST', '/api/bike-ports/guide', { token: acc3.token, body: {
     idempotencyKey: 'guide-3', providerId: 'charichari', regionCode: 'FUK', portId: 'NOPE', origin: { lat: 33.59, lng: 130.40 }, destination: { lat: 33.6, lng: 130.41 },
   } });
   t('5) 없는 포트 id는 404', r.status === 404 && r.json.reason === 'port-not-found');
+}
+
+// --- 5b) 2026-09-16 재검토 5절 — "저장 결과 재조회도 같은 권한 검사
+// 적용." 승인이 나중에 거둬지면, 예전에 이미 성공해 저장된
+// idempotencyKey를 재생(replay) 요청해도 더는 볼 수 없어야 한다(승인이
+// 있을 때 만든 guide-1을 재사용). ---
+{
+  setTestAccessByEmail('bike-guide@example.com', false);
+  const origin = { lat: 33.5905, lng: 130.4015 };
+  const destination = { lat: 33.592, lng: 130.403 };
+  const replayAfterRevoke = await api('POST', '/api/bike-ports/guide', { token: acc.token, body: {
+    idempotencyKey: 'guide-1', providerId: 'charichari', regionCode: 'FUK', portId: 'TEST-A', origin, destination,
+  } });
+  t('5b) 승인이 거둬지면 예전에 저장된 재생 결과도 다시 못 봄', replayAfterRevoke.status === 403 && replayAfterRevoke.json.reason === 'real-data-access-required');
+  setTestAccessByEmail('bike-guide@example.com', true); // 이후 계정 사용량 확인(usage 3절)에 영향 없게 원복
 }
 
 // --- 6) 인증 없이 접근 차단 ---

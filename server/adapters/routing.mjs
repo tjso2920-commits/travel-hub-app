@@ -100,7 +100,7 @@ function estimateLegs(origin, ordered) {
 function simulateTestRoute(origin, ordered) {
   const legs = estimateLegs(origin, ordered);
   let simulateSuccess;
-  if (config.routingTestForce === 'success') simulateSuccess = true;
+  if (config.routingTestForce === 'success' || config.routingTestForce === 'bike-fail-walk-success') simulateSuccess = true;
   else if (config.routingTestForce === 'failure') simulateSuccess = false;
   else {
     let hash = 0;
@@ -251,6 +251,11 @@ export async function computeWalkingRoute(origin, places, accountId) {
  * 실제 키로 반드시 확인이 필요하다(그 전까지는 이 경로가 항상
  * routedReal:false로 떨어져도 정상 — "미지원"과 "이 세션이 확인 못
  * 함"을 구분해 문서에 남긴다).
+ *
+ * 2026-09-16 ChatGPT 재검토 — 자전거 구간과 도보 구간을 각자
+ * chargeCostBatch로 검사하던 것을 아래 computeBikeGuideRoutes로
+ * 합쳤다(3절 지시). 개별 computeBicycleRoute는 더 안 쓴다 — 유일한
+ * 호출부(routes/bike-ports.mjs)가 이 합쳐진 함수로 옮겨갔다.
  */
 const BICYCLE_MIN_PLAUSIBLE_MPS = 1.5; // 시속 5.4km 미만은 자전거로 보기 어려움
 const BICYCLE_MAX_PLAUSIBLE_MPS = 12; // 시속 43km 초과는 다른 교통수단 프로필 오응답 의심
@@ -267,7 +272,14 @@ function legsAreBicyclePlausible(legs) {
 /* 장소조회·도보 테스트 어댑터와 같은 원칙 — 좌표 해시로 결정론적
    성공/실패를 재현해 두 코드 경로(실제 성공, 미지원/실패→숫자 없음)를
    서버 테스트에서 안정적으로 검증할 수 있게 한다. */
+/* 'bike-fail-walk-success' — 2026-09-16 ChatGPT 재검토 6절이 요구한
+   "자전거 실패+도보 성공" 경계 시나리오를 서버 테스트에서 결정론적으로
+   재현하기 위한 값. 'success'/'failure'는 두 시뮬레이터가 항상 같은
+   방향으로 답해(이용권 차감 판정이 두 구간 다 같은 값이라 divergence를
+   테스트할 수 없었다) — 이 값은 자전거만 실패, 도보만 성공으로
+   고정한다. */
 function simulateTestBicycleRoute(origin, destination) {
+  if (config.routingTestForce === 'bike-fail-walk-success') return { ok: true, routedReal: false, reason: 'test-adapter-simulated-failure' };
   let hash = 0;
   [origin, destination].forEach((p) => { hash = (hash * 31 + Math.round((p.lat + p.lng) * 10000)) | 0; });
   const simulateSuccess = config.routingTestForce === 'success' ? true
@@ -279,24 +291,86 @@ function simulateTestBicycleRoute(origin, destination) {
   return { ok: true, routedReal: true, distanceMeters: meters, seconds };
 }
 
-export async function computeBicycleRoute(origin, destination, accountId) {
-  if (config.services.routing === 'test') return simulateTestBicycleRoute(origin, destination);
-  if (config.services.routing !== 'real') return { ok: true, routedReal: false, reason: 'routing-service-unavailable' };
+function walkLegFromEstimate(portCoord, destination, fallbackReason) {
+  const est = estimateLegs(portCoord, [destination])[0];
+  return { routedReal: false, distanceMeters: est.distanceMeters, seconds: est.seconds, fallbackReason };
+}
 
-  const plan = [{ sku: skuForSegment([origin, destination]) }];
+/* 2026-09-16 ChatGPT 재검토 3절 — "두 구간(자전거+도보)의 전체 요청
+   계획을 먼저 만들고 계정·이용권·서비스 전체 예산을 함께 검사·예약할
+   것. 부족하면 첫 공급자 호출부터 실행하지 않을 것." 예전 버전은
+   computeBicycleRoute와 computeWalkingRoute가 각자 chargeCostBatch를
+   따로 불러, 자전거 구간만 예산을 통과해 실제로 호출되고 도보 구간에서
+   비로소 예산이 모자란 경우 "자전거는 이미 돈을 썼는데 도보는 안
+   써봄" 같은 절반짜리 상태가 생길 수 있었다(그리고 두 호출이 같은
+   트랜잭션이 아니라 동시 요청 사이의 순간적인 예산 초과도 막지
+   못했다). 이제 두 구간의 세그먼트 계획을 먼저 다 세운 뒤
+   chargeCostBatch 한 번(하나의 DB 트랜잭션)으로 "전부 확인 → 전부
+   기록"한다 — 하나라도 모자라면 자전거·도보 어느 쪽도 실제 호출을
+   한 번도 하지 않는다. */
+export async function computeBikeGuideRoutes({ origin, portCoord, destination, accountId }) {
+  if (config.services.routing === 'test') {
+    const bikeLeg = simulateTestBicycleRoute(origin, portCoord);
+    const walkSim = simulateTestRoute(portCoord, [destination]);
+    const walkLeg = walkSim.routedReal
+      ? { routedReal: true, distanceMeters: walkSim.legs[0].distanceMeters, seconds: walkSim.legs[0].seconds }
+      : { routedReal: false, distanceMeters: walkSim.legs[0].distanceMeters, seconds: walkSim.legs[0].seconds, fallbackReason: walkSim.fallbackReason };
+    return { bikeLeg, walkLeg };
+  }
+  if (config.services.routing !== 'real') {
+    return {
+      bikeLeg: { ok: true, routedReal: false, reason: 'routing-service-unavailable' },
+      walkLeg: walkLegFromEstimate(portCoord, destination, 'routing-service-unavailable'),
+    };
+  }
+
+  const bikeSeg = [origin, portCoord];
+  const walkPoints = [portCoord, destination];
+  const walkSegments = splitIntoSegments(walkPoints);
+  const plan = [{ sku: skuForSegment(bikeSeg) }, ...walkSegments.map((seg) => ({ sku: skuForSegment(seg) }))];
   const period = accountId ? currentPeriod(accountId) : null;
   const charge = chargeCostBatch({ accountId, service: 'routes', charges: plan, periodId: period && period.periodId, periodCapMicros: period && period.costCapMicros });
-  if (!charge.ok) return { ok: true, routedReal: false, reason: 'cost-budget-exceeded' };
-
-  let result;
-  try {
-    result = await callGoogleRoutesSegment([origin, destination], 'BICYCLE');
-  } catch (e) {
-    return { ok: true, routedReal: false, reason: 'network-error' };
+  if (!charge.ok) {
+    return {
+      bikeLeg: { ok: true, routedReal: false, reason: 'cost-budget-exceeded' },
+      walkLeg: walkLegFromEstimate(portCoord, destination, 'cost-budget-exceeded'),
+    };
   }
-  if (!result.ok) return { ok: true, routedReal: false, reason: result.reason };
-  if (!legsAreBicyclePlausible(result.legs)) return { ok: true, routedReal: false, reason: 'implausible-speed' };
-  markVerified('routing');
-  const leg = result.legs[0];
-  return { ok: true, routedReal: true, distanceMeters: leg.distanceMeters, seconds: parseDurationSeconds(leg.duration) };
+
+  // 예산 확인을 전부 통과했으니 지금부터는 이미 "쓰기로 확정"된
+  // 비용이다 — 아래 호출이 네트워크 오류로 실패해도 위 chargeCostBatch
+  // 기록은 그대로 남는다("타임아웃도 과금됐을 수 있으니 0원 처리
+  // 금지" 원칙, callGoogleRoutesAll과 동일).
+  let bikeLeg;
+  try {
+    const result = await callGoogleRoutesSegment(bikeSeg, 'BICYCLE');
+    if (!result.ok) bikeLeg = { ok: true, routedReal: false, reason: result.reason };
+    else if (!legsAreBicyclePlausible(result.legs)) bikeLeg = { ok: true, routedReal: false, reason: 'implausible-speed' };
+    else {
+      markVerified('routing');
+      const leg = result.legs[0];
+      bikeLeg = { ok: true, routedReal: true, distanceMeters: leg.distanceMeters, seconds: parseDurationSeconds(leg.duration) };
+    }
+  } catch (e) {
+    bikeLeg = { ok: true, routedReal: false, reason: 'network-error' };
+  }
+
+  let walkLeg;
+  let walkFailReason = null;
+  const walkLegs = [];
+  for (const seg of walkSegments) {
+    let result;
+    try { result = await callGoogleRoutesSegment(seg); } catch (e) { walkFailReason = 'network-error'; break; }
+    if (!result.ok) { walkFailReason = result.reason; break; }
+    if (!legsAreWalkPlausible(result.legs)) { walkFailReason = 'implausible-speed'; break; }
+    walkLegs.push(...result.legs.map((l) => ({ distanceMeters: l.distanceMeters, seconds: parseDurationSeconds(l.duration) })));
+  }
+  if (walkFailReason) {
+    walkLeg = walkLegFromEstimate(portCoord, destination, walkFailReason);
+  } else {
+    markVerified('routing');
+    walkLeg = { routedReal: true, distanceMeters: walkLegs[0].distanceMeters, seconds: walkLegs[0].seconds };
+  }
+
+  return { bikeLeg, walkLeg };
 }

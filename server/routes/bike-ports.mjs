@@ -19,13 +19,24 @@
 import { openDb, nowIso } from '../db.mjs';
 import { config } from '../config.mjs';
 import crypto from 'node:crypto';
-import { haversineMeters, computeBicycleRoute, computeWalkingRoute } from '../adapters/routing.mjs';
+import { haversineMeters, computeBikeGuideRoutes } from '../adapters/routing.mjs';
 import { trialStatus, consumeTrial } from './trial.mjs';
-import { checkEntitlement } from './entitlement.mjs';
+import { checkEntitlement, checkTestAccess } from './entitlement.mjs';
 import { currentPeriod, checkCourseGenerationAllowed, commitCourseGenerationSuccess } from '../entitlement-usage.mjs';
 import { checkAndIncrement, hourWindow } from '../rate-limit.mjs';
 import { acquireLock, releaseLock } from '../locks.mjs';
 import { isRegionActive, officialMapUrlFor, activeBikeShareRegions } from '../bike-share-providers.mjs';
+
+/* 2026-09-16 ChatGPT 재검토 5절 — "실제 스크래핑 데이터는 상업적 재사용
+   조건이 확인되기 전까지 명시적으로 허용한 운영자 테스트 계정에서만
+   제공하고, 일반 사용자에게는 공식 지도 링크만 제공하라. 서버에서
+   제한하고 직접 API 호출로 우회 불가능하게 하라." 새 승인 플래그를
+   만들지 않고, 10차 재검토가 이미 만든 계정별 test_access(관리자 승인,
+   /api/admin/test-access)를 그대로 재사용한다 — "이 계정을 서버가
+   테스트 대상으로 승인했는가"라는 같은 질문이기 때문이다. */
+function hasRealDataAccess(accountId) {
+  return !!checkTestAccess(accountId).testAccess;
+}
 
 function isFiniteNumber(v) { return typeof v === 'number' && Number.isFinite(v); }
 function isValidLatLng(p) {
@@ -37,7 +48,8 @@ function isValidLatLng(p) {
    도시명을 다시 하드코딩하지 않는다는 7절 지시). officialMapUrl과
    최근 임포트 시각·건수도 함께 줘서, 화면이 "데이터 기준 시각"을
    실제 값으로 보여줄 수 있게 한다. */
-export function bikePortsStatusRoute() {
+export function bikePortsStatusRoute(accountId) {
+  const realAccess = hasRealDataAccess(accountId);
   const db = openDb();
   const regions = activeBikeShareRegions().map((r) => {
     const meta = db.prepare('SELECT source_url, retrieved_at, port_count FROM bike_share_import_meta WHERE provider_id = ? AND region_code = ?').get(r.providerId, r.regionCode);
@@ -46,15 +58,20 @@ export function bikePortsStatusRoute() {
       regionCode: r.regionCode,
       cityNames: r.cityNames,
       officialMapUrl: r.officialMapUrl,
-      portCount: meta ? meta.port_count : 0,
-      sourceUrl: meta ? meta.source_url : null,
-      retrievedAt: meta ? meta.retrieved_at : null,
+      // 실제 임포트 건수·출처는 "실제 데이터"의 일부로 취급해 승인된
+      // 테스트 계정에만 보여준다(5절) — 일반 계정도 이 지역이 언젠가
+      // 지원된다는 사실(officialMapUrl)까지는 알 수 있지만, 실제로 몇
+      // 곳이 들어와 있는지는 알 수 없다.
+      portCount: realAccess ? (meta ? meta.port_count : 0) : 0,
+      sourceUrl: realAccess ? (meta ? meta.source_url : null) : null,
+      retrievedAt: realAccess ? (meta ? meta.retrieved_at : null) : null,
+      realDataAccess: realAccess,
     };
   });
   return { ok: true, status: 200, regions };
 }
 
-export function nearbyBikePortsRoute(query) {
+export function nearbyBikePortsRoute(accountId, query) {
   const providerId = String((query && query.providerId) || '').trim();
   const regionCode = String((query && query.regionCode) || '').trim();
   const lat = Number(query && query.lat);
@@ -62,6 +79,18 @@ export function nearbyBikePortsRoute(query) {
   if (!providerId || !regionCode) return { ok: false, status: 400, reason: 'missing-provider-or-region' };
   if (!isRegionActive(providerId, regionCode)) return { ok: false, status: 404, reason: 'region-not-active' };
   if (!isValidLatLng({ lat, lng })) return { ok: false, status: 400, reason: 'invalid-coords' };
+
+  const officialMapUrl = officialMapUrlFor(providerId, regionCode);
+  // 5절 — 상업적 재사용 조건이 확인되기 전까지 실제 포트 목록 자체는
+  // 승인된 테스트 계정에만 보여준다. 일반 계정은 (지역이 활성이라
+  // 200으로 응답하되) 빈 목록만 받는다 — 화면은 이미 "후보를 찾지
+  // 못했어요 → 공식 지도에서 확인" 대체 화면을 갖고 있으므로 새 화면을
+  // 만들 필요 없이 그대로 자연스럽게 그 화면으로 이어진다. 인증된 API를
+  // 직접 호출해도(우회 시도) 서버가 여기서 막으므로 클라이언트를 안
+  // 믿는다.
+  if (!hasRealDataAccess(accountId)) {
+    return { ok: true, status: 200, officialMapUrl, sourceUrl: null, sourceRetrievedAt: null, ports: [], realDataAccess: false };
+  }
 
   const limit = Math.min(Math.max(Number.isFinite(Number(query && query.limit)) ? Number(query.limit) : 3, 1), 5);
   const db = openDb();
@@ -73,11 +102,12 @@ export function nearbyBikePortsRoute(query) {
   return {
     ok: true,
     status: 200,
-    officialMapUrl: officialMapUrlFor(providerId, regionCode),
+    officialMapUrl,
     sourceUrl: meta ? meta.source_url : null,
     // 4절 — "직선거리로 표기하고 실제 최단 이동시간이라고 주장하지
     // 마세요": distanceMeters는 목적지↔포트 하버사인(직선) 거리다.
     sourceRetrievedAt: meta ? meta.retrieved_at : null,
+    realDataAccess: true,
     ports: withDistance.slice(0, limit).map(({ row, distanceMeters }) => ({
       id: row.port_id,
       title: row.title,
@@ -122,6 +152,12 @@ export async function bikeGuideRoute(accountId, body) {
   if (!providerId || !regionCode || !portId) return { ok: false, status: 400, reason: 'invalid-request' };
   if (!isValidLatLng(origin) || !isValidLatLng(destination)) return { ok: false, status: 400, reason: 'invalid-coords' };
   if (!isRegionActive(providerId, regionCode)) return { ok: false, status: 404, reason: 'region-not-active' };
+  // 5절 — "저장 결과 재조회도 같은 권한 검사 적용." 승인이 나중에
+  // 거둬진 계정이 예전에 저장된 재생(replay) 결과를 통해 실제 데이터를
+  // 계속 들여다볼 수 없게, 이 검사를 멱등키 조회보다 먼저 한다.
+  if (!hasRealDataAccess(accountId)) {
+    return { ok: false, status: 403, reason: 'real-data-access-required', officialMapUrl: officialMapUrlFor(providerId, regionCode) };
+  }
 
   const hash = requestHash({ providerId, regionCode, portId, origin, destination });
   const existing = findStoredResult(idempotencyKey);
@@ -168,29 +204,24 @@ export async function bikeGuideRoute(accountId, body) {
     const portCoord = { lat: portRow.lat, lng: portRow.lng };
 
     // 두 구간 — 출발지→포트(자전거, 미지원/실패 시 숫자 없이 대체)와
-    // 포트→목적지(도보, 기존 어댑터 그대로 재사용). 5절 — "한 번의
-    // 안내 생성은 두 구간이라도 논리적 작업 1회"이므로 이용권 차감은
-    // 아래에서 딱 한 번만 판단한다(도보 구간의 routedReal 기준 —
-    // 자전거 구간은 애초에 "확인 필요" 안내가 핵심 가치라 성공 여부가
-        // 이용권 차감을 막지 않는다).
-    const bikeLeg = await computeBicycleRoute(origin, portCoord, accountId);
-    const walkResult = await computeWalkingRoute(portCoord, [destination], accountId);
-    const walkLeg = (walkResult.legs && walkResult.legs[0]) || null;
-    const routedReal = !!(walkResult.routedReal && walkLeg);
-
-    if (!walkLeg) {
-      const failure = { ok: false, status: 400, reason: 'walk-leg-unavailable' };
-      storeResult(idempotencyKey, accountId, hash, 'failed', failure);
-      return failure;
-    }
+    // 포트→목적지(도보, 실패해도 정직한 추정치). 2026-09-16 ChatGPT
+    // 재검토 2·3절 — "완전한 성공은 두 구간 모두 실제 경로 성공으로
+    // 정의"하고, "두 구간의 전체 요청 계획을 먼저 만들고 예산을 함께
+    // 검사"할 것. computeBikeGuideRoutes 하나가 이 둘을 같은 트랜잭션
+    // 예산 확인으로 묶는다(server/adapters/routing.mjs 참고) — 예전엔
+    // 도보 구간만으로 routedReal을 판정해, 자전거가 실패해도 이용권이
+    // 차감됐다.
+    const { bikeLeg, walkLeg } = await computeBikeGuideRoutes({ origin, portCoord, destination, accountId });
+    const routedReal = !!(bikeLeg.routedReal && walkLeg.routedReal);
 
     const guide = {
       providerId, regionCode, portId,
+      origin, destination,
       port: { id: portRow.port_id, title: portRow.title, address: portRow.address, lat: portRow.lat, lng: portRow.lng },
       bikeLeg: bikeLeg.routedReal
         ? { real: true, distanceMeters: Math.round(bikeLeg.distanceMeters), seconds: Math.round(bikeLeg.seconds) }
         : { real: false, reason: bikeLeg.reason },
-      walkLeg: { real: routedReal, distanceMeters: Math.round(walkLeg.distanceMeters), seconds: Math.round(walkLeg.seconds) },
+      walkLeg: { real: walkLeg.routedReal, distanceMeters: Math.round(walkLeg.distanceMeters), seconds: Math.round(walkLeg.seconds) },
       officialMapUrl: officialMapUrlFor(providerId, regionCode),
       generatedAt: nowIso(),
     };
