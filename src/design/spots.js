@@ -2622,7 +2622,13 @@ function daShowMapLinkAddResult(result) {
   if (!result || !result.place) { daToast('담았어요.'); return; }
   const p = result.place;
   if (result.already) {
-    open('이미 담아 둔 곳', `<div class="detail"><h2>이미 저장된 장소예요</h2><p>"${A.esc(p.name)}"은(는) 이미 담아 둔 목록에 있어요. 같은 이름의 다른 지점이라면 장소 상세에서 이름·주소를 고쳐 새 장소로 구분해 두세요.</p><button class="primary" data-view-place="${p.id}">장소 보기 ↗</button><button class="text-button" data-dismiss>닫기</button></div>`);
+    // 2026-09-21(17차 2차 독립검토) 3절 — "이름·주소를 고쳐 새 장소로
+    // 구분"은 기존 장소를 다른 지점인 것처럼 수정하라는 잘못된 안내였다
+    // (기존 장소 편집은 새 지점 추가가 아니다). 다른 지점을 담고
+    // 싶으면 그 지점의 구글맵 링크로 이 화면에서 다시 추가하면 되고,
+    // daMerge는 검증된 식별자(placeId·URL·좌표)가 다르면 이름이 같아도
+    // 절대 자동으로 합치지 않는다 — 그 원칙을 그대로 안내한다.
+    open('이미 담아 둔 곳', `<div class="detail"><h2>이미 저장된 장소예요</h2><p>"${A.esc(p.name)}"은(는) 이미 담아 둔 목록에 있어요. 이름은 같지만 다른 지점이라면, 그 지점의 구글맵 링크로 여기서 다시 추가해 주세요 — 서로 다른 곳으로 정확히 구분해 담깁니다.</p><button class="primary" data-view-place="${p.id}">장소 보기 ↗</button><button class="text-button" data-dismiss>닫기</button></div>`);
   } else {
     open('저장했어요', `<div class="detail"><h2>저장했어요</h2><p>"${A.esc(p.name)}"을(를) 담았어요.</p><button class="primary" data-add-today-route="${p.id}">오늘 동선에 담기 ↗</button><button class="text-button" data-dismiss>닫기</button></div>`);
   }
@@ -2648,6 +2654,20 @@ function showAddByMapLinkSheet(prefill) {
   const msg = (t2) => { const el = $('#mapLinkMsg'); if (el) { el.textContent = t2; el.hidden = false; } };
   let pendingLink = null; // nameRequired로 대기 중인 { url, lat, lng }
   let saving = false; // 빠른 연타/중복 제출 방지 — 응답 오기 전엔 재요청하지 않는다.
+  // 2026-09-21(17차 2차 독립검토) 1절 — 이 화면 인스턴스를 가리키는
+  // 값들을 여는 시점에 한 번만 기록해 둔다. 아래 모든 비동기 콜백은
+  // 응답이 돌아온 뒤 이 값들이 그대로인지 반드시 다시 확인하고,
+  // 하나라도 바뀌었으면(다른 화면으로 이동/로그아웃→다른 계정 로그인/
+  // 이 화면 안에서 더 최신 저장 시도가 이미 시작됨) 그 응답을 완전히
+  // 버린다 — 사라진 DOM을 건드리거나, 다른 화면을 덮거나, 다른 계정
+  // foodMap에 엉뚱한 장소를 써넣지 않는다.
+  // 재현: 계정 A로 저장 요청 → 응답 전에 로그아웃→계정 B로 로그인
+  // (sessionEpoch 증가, 전역 foodMap이 B 것으로 교체) → A 요청의 응답이
+  // 뒤늦게 도착 → epoch 검사 없이 daFinalizeMapLinkAdd를 부르면 지금
+  // 전역 foodMap(B)에 A의 장소가 섞여 들어간다.
+  const myScreenVersion = _screenVersion;
+  let requestSeq = 0;
+  const stillCurrentScreen = () => _screenVersion === myScreenVersion;
   const pasteBtn = $('#mapLinkPasteBtn');
   if (pasteBtn) pasteBtn.onclick = async () => {
     // 2절 — 클립보드 읽기는 오직 이 버튼을 누른 시점에만 시도한다(자동·반복
@@ -2658,14 +2678,20 @@ function showAddByMapLinkSheet(prefill) {
     }
     try {
       const text = await navigator.clipboard.readText();
+      // 권한 프롬프트가 떠 있는 동안 다른 화면으로 이동했으면(다른
+      // 장소 상세를 열었다든지) 이제 와서 그 화면의 입력칸에 쓰지
+      // 않는다 — 이미 사라졌거나 다른 화면의 것일 수 있다.
+      if (!stillCurrentScreen()) return;
       if (text) { $('#mapLinkInput').value = text; msg(''); $('#mapLinkMsg').hidden = true; }
       else msg('클립보드가 비어 있어요. 구글맵에서 공유 → 링크 복사를 먼저 해주세요.');
     } catch (err) {
+      if (!stillCurrentScreen()) return;
       msg('클립보드 읽기를 허용하지 않았어요. 입력칸을 길게 눌러 직접 붙여넣어 주세요.');
     }
   };
   const doSave = async () => {
     if (saving) return;
+    if (!stillCurrentScreen()) return;
     const raw = $('#mapLinkInput').value.trim();
     if (!raw) { msg('링크를 붙여넣어 주세요.'); return; }
     const { url: urlVal, nameHint } = A.extractMapsUrl(raw);
@@ -2675,12 +2701,31 @@ function showAddByMapLinkSheet(prefill) {
     // 되돌아와 자동으로 이어서 저장을 시도한다(다시 붙여넣지 않아도 됨).
     const token = A.sessionToken(foodMap);
     if (!token) { showLoginSheet(() => showAddByMapLinkSheet({ text: raw, autoSubmit: true })); return; }
+    // 새 시도가 시작되는 순간, 이전 시도의 "이름 확인 대기" 상태를
+    // 즉시 무효화한다 — 안 그러면 화면엔 새 링크가 보이는데 옛
+    // pendingLink를 가리키는 "이 이름으로 담기" 버튼이 그대로 살아
+    // 있어, 응답 도착 순서가 꼬이면 엉뚱한 링크에 이름을 붙일 수 있다.
+    pendingLink = null;
+    const oldWrap = $('#mapLinkNameWrap'); if (oldWrap) oldWrap.hidden = true;
+    const mySeq = ++requestSeq;
+    const epochAtStart = sessionEpoch;
     saving = true;
     const btn = $('#mapLinkAddBtn');
     btn.disabled = true; btn.textContent = '확인 중…';
     const r = await A.api('/api/places/resolve-link', { method: 'POST', token, body: { url: urlVal } });
     saving = false;
-    if (btn.isConnected) { btn.disabled = false; btn.textContent = '이 링크로 추가'; }
+    // 응답이 돌아왔을 때 이미 계정이 바뀌었으면(로그아웃→다른 계정
+    // 로그인) 이 응답은 완전히 버린다 — 지금 전역 foodMap은 이미 다른
+    // 계정 것이라, 여기서 저장하면 그 계정에 엉뚱한 장소가 생긴다.
+    if (sessionEpoch !== epochAtStart) return;
+    // 이 화면 안에서 더 최신 저장 시도가 이미 시작됐으면(예: 이 요청이
+    // 도는 사이 링크를 바꿔 다시 눌렀음) 이 응답은 낡은 것이니 버린다.
+    if (mySeq !== requestSeq) return;
+    // 이 화면 자체를 벗어났으면(다른 장소 상세·다른 시트로 이동) 이제
+    // 와서 버튼 텍스트를 되돌리거나 새 화면을 덮어씌우면 안 된다 —
+    // 이미 사라졌을 수 있는 DOM을 건드리지 않는다.
+    if (!stillCurrentScreen()) return;
+    btn.disabled = false; btn.textContent = '이 링크로 추가';
     if (!r.ok || !r.json || !r.json.ok) {
       const reason = r.json && r.json.reason;
       const reasonMsg = {
@@ -2714,7 +2759,7 @@ function showAddByMapLinkSheet(prefill) {
   $('#mapLinkAddBtn').onclick = doSave;
   const nameConfirmBtn = $('#mapLinkNameConfirmBtn');
   if (nameConfirmBtn) nameConfirmBtn.onclick = () => {
-    if (!pendingLink) return;
+    if (!pendingLink || !stillCurrentScreen()) return;
     const typedName = $('#mapLinkNameInput').value.trim();
     if (!typedName) { msg('이름을 입력해 주세요.'); return; }
     const item = { name: typedName, url: pendingLink.url, lat: pendingLink.lat, lng: pendingLink.lng };
@@ -3243,6 +3288,17 @@ daResumeAfterTossRedirect();
 // Safari는 이 경로 자체가 없다 — 그 경우는 그냥 평소처럼 빈 채로
 // 열린다). 확인 없이 자동 저장하지 않는다 — 시트에 미리 채워만
 // 두고, "이 링크로 추가"는 사람이 직접 누른다.
+// 2026-09-21(17차 2차 독립검토) — 서비스워커가 새로 배포된 문서를
+// 감지하면(캐시 우선이라 지금 화면은 옛 버전인 채) '../sw.js'(옛 앱과
+// 공유)가 postMessage로 알려준다. 옛 앱(index.html)은 이미 이 메시지에
+// 반응해 새로고침 안내 배너를 보여주는데, 디자인 앱은 지금까지 이
+// 메시지를 아예 안 듣고 있었다 — 새 화면 대신 새 토스트를 만들지 않고
+// 기존 daToast를 그대로 재사용한다.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if (e && e.data && e.data.type === 'newVersion') daToast('새 버전이 있어요 — 새로고침하면 최신 화면으로 바뀌어요.');
+  });
+}
 (function daHandleShareTarget() {
   const qs = new URLSearchParams(location.search);
   const shared = [qs.get('title'), qs.get('text'), qs.get('url')].filter(Boolean).join('\n');

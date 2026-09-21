@@ -39,6 +39,15 @@
  *  14) Web Share Target(GET) 쿼리스트링을 부팅 시 읽어 시트를 미리
  *      채우고, 쿼리스트링은 지워짐(자동 저장은 하지 않음).
  *
+ * 2026-09-21(17차 2차 독립검토) 1절 — ChatGPT 재현 추가:
+ *  15) 계정 A로 저장 요청 중 계정 B로 전환하면, A 요청의 늦은 응답이
+ *      B 계정에 저장되지 않음(응답 전 기록해 둔 sessionEpoch로 버림).
+ *  16) 저장 요청이 도는 중 다른 화면(장소 상세)으로 이동하면, 그
+ *      응답이 지금 보고 있는 화면을 덮지 않음(화면 버전으로 버림).
+ *  17) "이름 확인 대기" 중 링크를 바꿔 다시 누르면, 이전 pendingLink가
+ *      즉시 무효화돼 옛 이름 확인 버튼으로 엉뚱한 링크에 이름이
+ *      안 붙음.
+ *
  * 실행: node scripts/test-map-link-add.mjs
  */
 import { chromium } from 'playwright';
@@ -348,6 +357,112 @@ const fullUrl = 'https://www.google.com/maps/place/%EC%B9%B4%ED%8E%98+%ED%85%8C%
   t('14) 쿼리스트링이 지워짐(새로고침 시 반복 방지)', searchCleared);
   const notAutoSaved = await page.evaluate(() => !foodMap.places.some((p) => p.url && p.url.includes('sharetarget')));
   t('14) 자동 저장하지 않음(사람이 직접 눌러야 함)', notAutoSaved);
+}
+
+// =====================================================================
+// 15) 계정 A로 저장 요청 중 계정 B로 전환해도, A 요청의 늦은 응답이
+//     B 계정에 섞여 들어가지 않는다(sessionEpoch 기록·대조).
+//     화면 전환과 뒤섞이지 않게, 로그인 API를 직접 완료시켜(화면
+//     이동 없이) 계정 전환 자체만 분리해서 재현한다.
+// =====================================================================
+{
+  const urlSwitch = 'https://www.google.com/maps/place/%EA%B3%84%EC%A0%95%EC%A0%84%ED%99%98%ED%85%8C%EC%8A%A4%ED%8A%B8/@43.0,147.0,17z/data=!4m6!3m5!1s0x0:0x0!8m2!3d43.11!4d147.22!16s%2Fg%2F11acc';
+  await page.evaluate(() => showAddByMapLinkSheet());
+  await page.waitForTimeout(150);
+  await page.fill('#mapLinkInput', urlSwitch);
+
+  let releaseHold;
+  const held = new Promise((resolve) => { releaseHold = resolve; });
+  await page.route('**/api/places/resolve-link', async (route) => { await held; await route.continue(); });
+
+  await page.click('#mapLinkAddBtn'); // 요청 발사 — 위 라우트가 잡아 응답을 미룬다.
+  await page.waitForTimeout(150);
+
+  // 계정 B로 전환 — 화면(다이얼로그)은 건드리지 않고 로그인 API만
+  // 직접 완료시킨다(로그인 시트를 열면 화면 버전도 같이 바뀌어 두
+  // 가지 방어(계정·화면)가 섞여 버려, 계정 전환 자체만 격리해 본다).
+  const emailB = 'maplink-switch-b@example.com';
+  await page.evaluate((email) => A.api('/api/auth/request-code', { method: 'POST', body: { email } }), emailB);
+  const sentB = sentEmailsForTest.filter((e) => e.to === emailB).pop();
+  const codeB = sentB.body.match(/(\d{6})/)[1];
+  await page.evaluate(async ({ email, code }) => {
+    const r = await A.api('/api/auth/verify-code', { method: 'POST', body: { email, code } });
+    await daFinishLogin(r.json.token, email, r.json.isNew, () => {});
+  }, { email: emailB, code: codeB });
+  const bPlacesBeforeRelease = await page.evaluate(() => foodMap.places.length);
+
+  releaseHold(); // 이제 A 요청의 응답이 도착한다 — 이미 B 계정으로 전환된 뒤.
+  await page.waitForTimeout(400);
+  await page.unroute('**/api/places/resolve-link');
+
+  const leaked = await page.evaluate(() => foodMap.places.some((p) => p.name === '계정전환테스트'));
+  t('15) 계정 A 요청 중 계정 B로 전환해도 A의 장소가 B에 섞여 들어가지 않음', !leaked);
+  const bCountUnchanged = await page.evaluate((before) => foodMap.places.length === before, bPlacesBeforeRelease);
+  t('15) B 계정의 장소 개수도 늘지 않음(늦은 응답이 조용히 버려짐)', bCountUnchanged);
+  await page.evaluate(() => { const c = document.getElementById('close'); if (c) c.click(); });
+}
+
+// =====================================================================
+// 16) 저장 요청이 도는 중 다른 화면(프로필)으로 이동하면, 늦게 온
+//     응답이 지금 화면을 덮지 않는다(화면 버전으로 대조·폐기).
+// =====================================================================
+{
+  await page.evaluate(() => showAddByMapLinkSheet());
+  await page.waitForTimeout(150);
+  const urlScreen = 'https://www.google.com/maps/place/%ED%99%94%EB%A9%B4%EC%A0%84%ED%99%98%ED%85%8C%EC%8A%A4%ED%8A%B8/@44.0,148.0,17z/data=!4m6!3m5!1s0x0:0x0!8m2!3d44.11!4d148.22!16s%2Fg%2F11scr';
+  await page.fill('#mapLinkInput', urlScreen);
+
+  let releaseHold2;
+  const held2 = new Promise((resolve) => { releaseHold2 = resolve; });
+  await page.route('**/api/places/resolve-link', async (route) => { await held2; await route.continue(); });
+
+  await page.click('#mapLinkAddBtn');
+  await page.waitForTimeout(150);
+
+  await page.evaluate(() => profile()); // 저장 요청과 무관한 다른 화면으로 이동.
+  const labelAfterNav = await page.evaluate(() => document.getElementById('sheetLabel').textContent);
+
+  releaseHold2();
+  await page.waitForTimeout(400);
+  await page.unroute('**/api/places/resolve-link');
+
+  const labelAfterResponse = await page.evaluate(() => document.getElementById('sheetLabel').textContent);
+  t('16) 저장 요청 중 다른 화면으로 이동하면, 늦게 온 응답이 그 화면을 안 덮음', labelAfterResponse === labelAfterNav);
+  const savedAnyway = await page.evaluate(() => foodMap.places.some((p) => p.name === '화면전환테스트'));
+  t('16) 화면을 벗어난 뒤 도착한 응답은 저장도 하지 않음(안전한 쪽으로 완전히 버림)', !savedAnyway);
+  await page.evaluate(() => { const c = document.getElementById('close'); if (c) c.click(); });
+}
+
+// =====================================================================
+// 17) "이름 확인 대기" 중 링크를 바꿔 다시 누르면, 이전 pendingLink가
+//     즉시 무효화돼(이름 입력칸도 곧장 숨겨짐) 옛 확인 버튼으로
+//     엉뚱한 링크에 이름이 붙지 않는다.
+// =====================================================================
+{
+  await page.evaluate(() => showAddByMapLinkSheet());
+  await page.waitForTimeout(150);
+  const noNameUrl1 = 'https://www.google.com/maps/@45.1,149.1,17z'; // 이름 없는 링크 1.
+  await page.fill('#mapLinkInput', noNameUrl1);
+  await page.click('#mapLinkAddBtn');
+  await page.waitForTimeout(300);
+  const wrapShownFirst = await page.evaluate(() => !document.getElementById('mapLinkNameWrap').hidden);
+  t('17) 첫 번째 이름 없는 링크에서 이름 입력칸이 뜸', wrapShownFirst);
+
+  const fullUrl2 = 'https://www.google.com/maps/place/%EB%91%90%EB%B2%88%EC%A7%B8%EB%A7%81%ED%81%AC%ED%85%8C%EC%8A%A4%ED%8A%B8/@46.0,150.0,17z/data=!4m6!3m5!1s0x0:0x0!8m2!3d46.11!4d150.22!16s%2Fg%2F11two';
+  await page.fill('#mapLinkInput', fullUrl2);
+  await page.click('#mapLinkAddBtn'); // 이름 확인 없이 바로 새 시도를 시작 — 이전 pendingLink를 즉시 무효화해야 함.
+  const wrapHiddenImmediately = await page.evaluate(() => document.getElementById('mapLinkNameWrap').hidden);
+  t('17) 새 시도가 시작되자마자 이전 이름 입력칸이 즉시 숨겨짐(무효화)', wrapHiddenImmediately);
+
+  // 옛(숨겨진) 확인 버튼을 억지로 눌러도(예: 스크립트로) pendingLink가
+  // 이미 null이라 아무 일도 안 일어나야 한다.
+  await page.evaluate(() => { const b = document.getElementById('mapLinkNameConfirmBtn'); if (b) b.click(); });
+  await page.waitForTimeout(400);
+  const oldNameLeaked = await page.evaluate(() => foodMap.places.some((p) => p.name === '그 카페'));
+  t('17) 무효화된 옛 확인 버튼을 눌러도 엉뚱한 이름으로 저장되지 않음', !oldNameLeaked);
+  const secondSaved = await page.evaluate(() => foodMap.places.find((p) => p.name === '두번째링크테스트'));
+  t('17) 새로 시작한 두 번째 링크는 정상적으로 저장됨', !!secondSaved);
+  await page.evaluate(() => { const c = document.getElementById('close'); if (c) c.click(); });
 }
 
 t('콘솔/런타임 오류 없음', errs.length === 0);

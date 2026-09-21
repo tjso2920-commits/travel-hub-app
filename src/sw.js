@@ -5,11 +5,18 @@
  *
  * 앱을 새로 배포할 때 CACHE 값을 반드시 올린다. 올리지 않으면 사용자가 옛 버전을 계속 본다.
  */
-const CACHE = 'travel-hub-v54';
+const CACHE = 'travel-hub-v55';
 /* 앱 본체는 반드시 담겨야 한다. 나머지는 있으면 좋은 것들이다.
    2026-09-21(17차) 3절 — 디자인 앱(src/design/index.html)이 이 SW를
    부모 스코프(../sw.js)로 재사용해 설치형 PWA(공유 수신 전제조건)가
-   되면서 그 문서도 함께 담는다. */
+   되면서 그 문서도 함께 담는다.
+   2026-09-21(17차 2차 독립검토) — 여기 담기는 건 "문서(HTML) 한 장"
+   뿐이다. 디자인 앱은 옛 앱과 달리 spots.js·spots.css·
+   import-adapter.js 등 별도 파일로 나뉘어 있고 그 파일들은 이 목록에
+   없다 — 그래서 디자인 앱은 "문서 하나만 캐시하면 완전히 오프라인
+   동작"하지 않는다(오프라인에서 문서 자체는 뜨지만, 그 안의 스크립트·
+   스타일은 네트워크가 없으면 못 받아온다). 완전 오프라인 지원은 이번
+   범위가 아니다 — 이번엔 아래 문서 캐시 "쓰기 경로" 버그만 고친다. */
 const CORE = ['./index.html', './design/index.html'];
 const EXTRA = ['./', './manifest.webmanifest', './icon-192.png', './icon-512.png', './design/manifest.webmanifest'];
 
@@ -77,7 +84,12 @@ self.addEventListener('fetch', (event) => {
                 })
                 .catch(() => {}); /* 비교에 실패해도 앱은 그대로 돌아야 한다 */
             }
-            caches.open(CACHE).then((cache) => cache.put('./index.html', forCache));
+            // 2026-09-21(17차 2차 독립검토) — 재현된 버그: 읽기는 docKey로
+            // 앱을 구분해 놓고, 쓰기는 여기서 무조건 './index.html'만
+            // 썼다. 디자인 앱을 열어 보기만 해도(온라인 상태) 조용히 옛
+            // 앱의 캐시가 디자인 앱 내용으로 덮어써지는 실제 데이터
+            // 오염 버그였다 — 쓰기도 반드시 같은 docKey를 써야 한다.
+            caches.open(CACHE).then((cache) => cache.put(docKey, forCache));
             return response;
           })
           .catch(() => cached);
