@@ -19,6 +19,26 @@
  *  7) 저장(localStorage) 자체가 실패하면 성공 처리하지 않고 복구
  *     안내를 보여주며, 장소 목록에 아무것도 남지 않음(롤백).
  *
+ * 2026-09-21(17차) 1·2·3·4절 — "빠른 장소 추가" 재사용·개선분 추가:
+ *  4) 로그인 안 한 상태에서 열어도 시트가 바로 뜸(입력을 먼저 할 수
+ *     있어야 함 — 예전처럼 화면 자체를 로그인으로 막지 않음).
+ *  4-1) 로그인 안 한 채로 "저장"을 누르면 그때 로그인을 요구하고,
+ *       입력해 둔 내용이 사라지지 않고 로그인 완료 후 자동으로 이어서
+ *       저장까지 끝남(내용 유실 금지).
+ *  8) 이미 저장된 장소를 다시 추가하면 "이미 저장된 장소예요" + "장소
+ *     보기"가 뜨고(중복 생성 아님), 눌러 실제 상세로 이동함.
+ *  9) 새 장소를 저장하면 "저장했어요" + "오늘 동선에 담기"가 뜨고,
+ *     눌러도 코스 재계산 없이 route Set에만 더해짐.
+ *  10) "이름 + 링크" 공유 텍스트에서 URL과 이름 힌트를 분리함
+ *      (daExtractMapsUrl 단위 검증 — 링크 해석 자체는 기존 서버
+ *      엔드포인트를 그대로 재사용).
+ *  11) 클립보드 자동 붙여넣기 성공/거부 각각 처리(거부 시 수동 안내).
+ *  12) 빠른 연속 클릭(더블탭)에도 중복 저장되지 않음.
+ *  13) 느린 네트워크 중엔 버튼이 "확인 중…" 상태를 유지하고, 실패 후
+ *      재시도가 실제로 성공함.
+ *  14) Web Share Target(GET) 쿼리스트링을 부팅 시 읽어 시트를 미리
+ *      채우고, 쿼리스트링은 지워짐(자동 저장은 하지 않음).
+ *
  * 실행: node scripts/test-map-link-add.mjs
  */
 import { chromium } from 'playwright';
@@ -46,32 +66,37 @@ await page.addInitScript((base) => { window.API_BASE = base; }, apiBase);
 await page.goto('file://' + process.cwd() + '/src/design/index.html');
 await page.waitForTimeout(200);
 
-async function loginViaUi(email) {
-  await page.evaluate(() => showLoginSheet(() => {}));
-  await page.waitForTimeout(150);
-  await page.fill('#loginEmail', email);
-  await page.click('#loginSendBtn');
-  await page.waitForTimeout(200);
-  const sent = sentEmailsForTest.filter((e) => e.to === email).pop();
-  const code = sent.body.match(/(\d{6})/)[1];
-  await page.fill('#loginCode', code);
-  await page.click('#loginVerifyBtn');
-  await page.waitForFunction(() => !!(foodMap.session && foodMap.session.token), { timeout: 5000 });
-  await page.waitForTimeout(250);
-  await page.evaluate(() => { const c = document.getElementById('close'); if (c) c.click(); });
-}
-
 // =====================================================================
-// 4) 로그인 안 한 상태 — 링크 추가 시트를 열면 먼저 로그인부터 요구함.
+// 4) 로그인 안 한 상태 — 시트가 바로 뜸(입력을 먼저 할 수 있어야 함).
+// 4-1) "저장"을 누르는 시점에만 로그인을 요구하고, 입력 내용이 로그인
+//      후에도 남아 자동으로 이어서 저장됨.
 // =====================================================================
 {
   await page.evaluate(() => showAddByMapLinkSheet());
   await page.waitForTimeout(150);
-  const showsLogin = await page.evaluate(() => !!document.getElementById('loginEmail'));
-  t('4) 로그인 안 한 상태에서 열면 로그인 시트가 먼저 뜸', showsLogin);
-}
+  const opensDirectly = await page.evaluate(() => !!document.getElementById('mapLinkInput') && !document.getElementById('loginEmail'));
+  t('4) 로그인 안 한 상태에서도 시트가 바로 열림(입력 가능)', opensDirectly);
 
-await loginViaUi('maplink-1@example.com');
+  const preLoginUrl = 'https://www.google.com/maps/place/%EB%A1%9C%EA%B7%B8%EC%9D%B8%EC%A0%84%EC%9E%85%EB%A0%A5/@39.0,143.0,17z/data=!4m6!3m5!1s0x0:0x0!8m2!3d39.11!4d143.22!16s%2Fg%2F11xyz';
+  await page.fill('#mapLinkInput', preLoginUrl);
+  await page.click('#mapLinkAddBtn');
+  await page.waitForTimeout(150);
+  const asksLoginOnSave = await page.evaluate(() => !!document.getElementById('loginEmail'));
+  t('4-1) "저장"을 누를 때만 로그인을 요구함(입력 화면 자체는 안 막음)', asksLoginOnSave);
+
+  await page.fill('#loginEmail', 'maplink-1@example.com');
+  await page.click('#loginSendBtn');
+  await page.waitForTimeout(200);
+  const sent = sentEmailsForTest.filter((e) => e.to === 'maplink-1@example.com').pop();
+  const code = sent.body.match(/(\d{6})/)[1];
+  await page.fill('#loginCode', code);
+  await page.click('#loginVerifyBtn');
+  await page.waitForFunction(() => !!(foodMap.session && foodMap.session.token), { timeout: 5000 });
+  await page.waitForTimeout(400);
+  const added = await page.evaluate(() => foodMap.places.find((p) => p.name === '로그인전입력'));
+  t('4-1) 로그인 후 입력했던 링크로 자동으로 이어서 저장됨(내용 유실 없음)', !!added);
+  await page.evaluate(() => { const c = document.getElementById('close'); if (c) c.click(); });
+}
 
 // =====================================================================
 // 1) 지원하는 전체 URL(!3d!4d 확정 좌표 포함) — 실제로 장소가 담김.
@@ -180,6 +205,149 @@ const fullUrl = 'https://www.google.com/maps/place/%EC%B9%B4%ED%8E%98+%ED%85%8C%
   await page.waitForTimeout(400);
   const afterCount = await page.evaluate(() => foodMap.places.length);
   t('3) 같은 링크를 다시 추가해도 개수가 늘지 않음(중복 병합)', afterCount === beforeCount);
+
+  // ---------------------------------------------------------------------
+  // 8) 위와 같은 재추가 직후 화면 — "이미 저장된 장소예요" + "장소 보기"
+  //    (중복 생성 대신 기존 장소로 안내), 눌러 실제 상세로 이동함.
+  // ---------------------------------------------------------------------
+  const alreadyText = await page.evaluate(() => document.getElementById('sheetContent').textContent);
+  t('8) "이미 저장된 장소예요" 안내가 뜸', alreadyText.includes('이미 저장된 장소'));
+  const viewBtn = await page.evaluate(() => !!document.querySelector('[data-view-place]'));
+  t('8) "장소 보기" 버튼이 있음', viewBtn);
+  await page.click('[data-view-place]');
+  await page.waitForTimeout(200);
+  const wentToDetail = await page.evaluate(() => document.getElementById('sheetLabel').textContent === '내 장소' && document.getElementById('sheetContent').innerHTML.includes('카페 테스트'));
+  t('8) 실제로 그 장소의 상세 화면으로 이동함', wentToDetail);
+  await page.evaluate(() => { const c = document.getElementById('close'); if (c) c.click(); });
+}
+
+// =====================================================================
+// 9) 새 장소를 저장하면 "저장했어요" + "오늘 동선에 담기"가 뜨고,
+//    눌러도 코스 재계산 없이 route Set에만 더해짐(무료/무차감).
+// =====================================================================
+{
+  const newPlaceUrl = 'https://www.google.com/maps/place/%EC%98%A4%EB%8A%98%EB%8F%99%EC%84%A0%ED%85%8C%EC%8A%A4%ED%8A%B8/@40.0,144.0,17z/data=!4m6!3m5!1s0x0:0x0!8m2!3d40.11!4d144.22!16s%2Fg%2F11nrt';
+  await page.evaluate(() => showAddByMapLinkSheet());
+  await page.waitForTimeout(150);
+  await page.fill('#mapLinkInput', newPlaceUrl);
+  await page.click('#mapLinkAddBtn');
+  await page.waitForTimeout(400);
+  const savedText = await page.evaluate(() => document.getElementById('sheetContent').textContent);
+  t('9) "저장했어요" 안내가 뜸(신규)', savedText.includes('저장했어요'));
+  const addRouteBtn = await page.evaluate(() => !!document.querySelector('[data-add-today-route]'));
+  t('9) "오늘 동선에 담기" 버튼이 있음', addRouteBtn);
+  await page.click('[data-add-today-route]');
+  await page.waitForTimeout(200);
+  // route Set은 모듈 스코프 변수라 밖에서 직접 못 읽는다 — 화면 전환 결과(오늘 동선 화면에
+  // 그 장소가 실제로 나타나는지)로 대신 확인한다(내부 구현 세부가 아니라 눈에 보이는 결과).
+  const shownInRouteScreen = await page.evaluate((name) => document.getElementById('sheetContent').textContent.includes(name), '오늘동선테스트');
+  t('9) "오늘 동선" 화면으로 이동하고 그 장소가 실제로 담겨 있음', shownInRouteScreen);
+  await page.evaluate(() => { const c = document.getElementById('close'); if (c) c.click(); });
+}
+
+// =====================================================================
+// 10) "이름 + 링크" 공유 텍스트 — URL과 이름 힌트를 분리함(단위 검증).
+//     링크 자체의 해석은 기존 /api/places/resolve-link를 그대로 재사용
+//     하므로 여기선 클라이언트 파싱만 확인한다.
+// =====================================================================
+{
+  const ext1 = await page.evaluate(() => window.DesignAdapter.extractMapsUrl('카페 노스텔지어\nhttps://maps.app.goo.gl/abc123'));
+  t('10) "이름\\n링크" 형태에서 URL을 정확히 뽑음', ext1.url === 'https://maps.app.goo.gl/abc123');
+  t('10) 이름 힌트도 함께 뽑음', ext1.nameHint === '카페 노스텔지어');
+  const ext2 = await page.evaluate(() => window.DesignAdapter.extractMapsUrl('https://maps.app.goo.gl/abc123'));
+  t('10) 링크만 있어도 그대로 동작(이름 힌트는 빈 값)', ext2.url === 'https://maps.app.goo.gl/abc123' && ext2.nameHint === '');
+  const ext3 = await page.evaluate(() => window.DesignAdapter.extractMapsUrl('그냥 아무 문자'));
+  t('10) 링크가 아예 없으면 빈 URL을 돌려줌', ext3.url === '');
+}
+
+// =====================================================================
+// 11) 클립보드 붙여넣기 — 자동 읽기 성공/거부 각각 처리(거부 시 수동
+//     안내로 유도, 절대 반복 자동 시도하지 않음 — 버튼 클릭 시 1회뿐).
+// =====================================================================
+{
+  await page.evaluate(() => showAddByMapLinkSheet());
+  await page.waitForTimeout(150);
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { readText: async () => 'https://maps.app.goo.gl/pastetest' } });
+  });
+  await page.click('#mapLinkPasteBtn');
+  await page.waitForTimeout(150);
+  const pastedIn = await page.evaluate(() => document.getElementById('mapLinkInput').value);
+  t('11) 붙여넣기 버튼을 누르면 클립보드 내용이 입력칸에 들어감', pastedIn === 'https://maps.app.goo.gl/pastetest');
+
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { readText: async () => { throw new Error('permission denied'); } } });
+  });
+  await page.click('#mapLinkPasteBtn');
+  await page.waitForTimeout(150);
+  const deniedMsg = await page.evaluate(() => document.getElementById('mapLinkMsg').textContent);
+  t('11) 권한 거부 시 길게 눌러 직접 붙여넣으라는 안내가 뜸', deniedMsg.includes('길게 눌러'));
+  await page.evaluate(() => { const c = document.getElementById('close'); if (c) c.click(); delete navigator.clipboard; });
+}
+
+// =====================================================================
+// 12) 빠른 연속 클릭(더블탭) — 중복 저장되지 않음.
+// =====================================================================
+{
+  const beforeCount = await page.evaluate(() => foodMap.places.length);
+  const rapidUrl = 'https://www.google.com/maps/place/%EB%8D%94%EB%B8%94%ED%81%B4%EB%A6%AD%ED%85%8C%EC%8A%A4%ED%8A%B8/@41.0,145.0,17z/data=!4m6!3m5!1s0x0:0x0!8m2!3d41.11!4d145.22!16s%2Fg%2F11dbl';
+  await page.evaluate(() => showAddByMapLinkSheet());
+  await page.waitForTimeout(150);
+  await page.fill('#mapLinkInput', rapidUrl);
+  await page.evaluate(() => {
+    const btn = document.getElementById('mapLinkAddBtn');
+    btn.click(); btn.click(); // 응답이 오기 전에 같은 틱에서 두 번 누름 — saving 플래그가 두 번째를 막아야 함.
+  });
+  await page.waitForTimeout(500);
+  const afterCount = await page.evaluate(() => foodMap.places.length);
+  t('12) 더블탭해도 한 곳만 담김(중복 저장 방지)', afterCount === beforeCount + 1);
+  await page.evaluate(() => { const c = document.getElementById('close'); if (c) c.click(); });
+}
+
+// =====================================================================
+// 13) 느린 네트워크 — 응답이 늦는 동안 "확인 중…" 상태 유지, 실패 후
+//     재시도가 실제로 성공함.
+// =====================================================================
+{
+  await page.evaluate(() => showAddByMapLinkSheet());
+  await page.waitForTimeout(150);
+  const slowUrl = 'https://www.google.com/maps/place/%EB%8A%90%EB%A6%B0%EB%A7%9D%ED%85%8C%EC%8A%A4%ED%8A%B8/@42.0,146.0,17z/data=!4m6!3m5!1s0x0:0x0!8m2!3d42.11!4d146.22!16s%2Fg%2F11slw';
+  await page.fill('#mapLinkInput', slowUrl);
+  let failOnce = true;
+  await page.route('**/api/places/resolve-link', async (route) => {
+    if (failOnce) { failOnce = false; await new Promise((r) => setTimeout(r, 600)); return route.abort(); }
+    return route.continue();
+  });
+  await page.click('#mapLinkAddBtn');
+  await page.waitForTimeout(200);
+  const showsChecking = await page.evaluate(() => document.getElementById('mapLinkAddBtn').textContent);
+  t('13) 응답을 기다리는 동안 "확인 중…" 상태로 바뀜', showsChecking.includes('확인 중'));
+  await page.waitForTimeout(700);
+  const afterFail = await page.evaluate(() => document.getElementById('mapLinkAddBtn').disabled);
+  t('13) 실패 후 버튼이 다시 눌러지는 상태로 돌아옴(재시도 가능)', afterFail === false);
+  await page.click('#mapLinkAddBtn'); // 재시도 — 이번엔 route.continue()로 실제 성공.
+  await page.waitForTimeout(400);
+  const added = await page.evaluate(() => foodMap.places.find((p) => p.name === '느린망테스트'));
+  t('13) 재시도가 실제로 성공함', !!added);
+  await page.unroute('**/api/places/resolve-link');
+  await page.evaluate(() => { const c = document.getElementById('close'); if (c) c.click(); });
+}
+
+// =====================================================================
+// 14) Web Share Target(GET) 쿼리스트링 — 부팅 시 읽어 시트를 미리
+//     채우고, 쿼리스트링은 지워짐(자동 저장은 하지 않음 — 사람이
+//     "이 링크로 추가"를 직접 눌러야 함).
+// =====================================================================
+{
+  const shareUrl = 'file://' + process.cwd() + '/src/design/index.html?title=%EC%B9%B4%ED%8E%98&text=&url=' + encodeURIComponent('https://maps.app.goo.gl/sharetarget');
+  await page.goto(shareUrl);
+  await page.waitForTimeout(300);
+  const prefilled = await page.evaluate(() => document.getElementById('mapLinkInput') && document.getElementById('mapLinkInput').value);
+  t('14) 공유로 받은 내용이 시트에 미리 채워짐', !!(prefilled && prefilled.includes('maps.app.goo.gl/sharetarget')));
+  const searchCleared = await page.evaluate(() => location.search === '');
+  t('14) 쿼리스트링이 지워짐(새로고침 시 반복 방지)', searchCleared);
+  const notAutoSaved = await page.evaluate(() => !foodMap.places.some((p) => p.url && p.url.includes('sharetarget')));
+  t('14) 자동 저장하지 않음(사람이 직접 눌러야 함)', notAutoSaved);
 }
 
 t('콘솔/런타임 오류 없음', errs.length === 0);

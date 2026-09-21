@@ -2600,24 +2600,44 @@ function daFinalizeMapLinkAdd(item, msg) {
   if (!saved) {
     foodMap = A.loadFoodMap();
     msg('저장에 실패했어요. 브라우저 저장 공간을 확인한 뒤 다시 시도해 주세요.');
-    return false;
+    return null;
   }
   if (!z.added && !z.updated) {
     msg('이 링크로는 담을 내용을 찾지 못했어요.');
-    return false;
+    return null;
   }
   daSyncPushSafe();
   refreshFromStorage();
   updateCity();
-  daToast(z.updated ? '이미 담아 둔 곳과 합쳐졌어요.' : `"${item.name}"을(를) 담았어요.`);
-  return true;
+  // 2026-09-21(17차) 2절 — z.updated만 보고는 "이미 있던 곳과 합쳐졌다"와
+  // "재수입 지문(importFingerprint)이 같아 갱신됐다"를 구분 못 했다.
+  // resultItems[0]로 실제 어떤 레코드에 붙었는지 확인해 정확히 분기한다.
+  const r0 = (z.resultItems || [])[0];
+  return { place: r0 && r0.place, already: !!(r0 && (r0.matchKind === 'exact' || r0.matchKind === 'already')) };
 }
-function showAddByMapLinkSheet() {
-  const token = A.sessionToken(foodMap);
-  if (!token) { showLoginSheet(() => showAddByMapLinkSheet()); return; }
-  open('지도 링크로 추가', `<div class="detail"><h2>구글맵 장소 링크,<br>하나만 있나요?</h2><p>지도 앱에서 공유한 장소 링크를 붙여넣으면 이름을 찾아 바로 담아드려요(짧은 링크(maps.app.goo.gl)도 됩니다).</p>` +
-    `<input class="xinput" id="mapLinkInput" type="url" inputmode="url" placeholder="https://maps.app.goo.gl/..." style="width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit">` +
-    `<button class="primary" id="mapLinkAddBtn" style="margin-top:10px">이 링크로 추가</button>` +
+// 2026-09-21(17차) 2절 — 저장 직후 화면. "이미 저장된 장소예요"(중복
+// 추가 대신 기존 장소로 안내)와 "저장했어요"(신규, 코스 재계산 없이
+// route Set에만 담는 "오늘 동선에 담기")를 분명히 구분한다.
+function daShowMapLinkAddResult(result) {
+  if (!result || !result.place) { daToast('담았어요.'); return; }
+  const p = result.place;
+  if (result.already) {
+    open('이미 담아 둔 곳', `<div class="detail"><h2>이미 저장된 장소예요</h2><p>"${A.esc(p.name)}"은(는) 이미 담아 둔 목록에 있어요. 같은 이름의 다른 지점이라면 장소 상세에서 이름·주소를 고쳐 새 장소로 구분해 두세요.</p><button class="primary" data-view-place="${p.id}">장소 보기 ↗</button><button class="text-button" data-dismiss>닫기</button></div>`);
+  } else {
+    open('저장했어요', `<div class="detail"><h2>저장했어요</h2><p>"${A.esc(p.name)}"을(를) 담았어요.</p><button class="primary" data-add-today-route="${p.id}">오늘 동선에 담기 ↗</button><button class="text-button" data-dismiss>닫기</button></div>`);
+  }
+}
+// 2026-09-21(17차) 1·2·4절 — "지도 링크로 한 곳만 추가"를 그대로 재사용해
+// 개선한다. prefill은 로그인 재개(showLoginSheet 콜백) 또는 공유
+// 수신(Web Share Target)으로 다시 열 때 { text, autoSubmit }로 넘어온다.
+// 로그인 확인은 더 이상 화면을 열기 전에 하지 않는다 — 입력/붙여넣기를
+// 먼저 할 수 있어야 하고, "저장" 시점에만 로그인을 요구하되 지금까지
+// 입력한 내용을 그대로 들고 로그인 후 이어간다(내용 유실 금지).
+function showAddByMapLinkSheet(prefill) {
+  open('장소 추가', `<div class="detail"><h2>구글맵에서 본 곳,<br>여기 담아둘까요?</h2><p><b>구글맵 → 공유 → 링크 복사</b>로 받은 링크를 붙여넣으면 이름을 찾아 바로 담아드려요. 짧은 링크(maps.app.goo.gl)나, 카톡 등으로 받은 "장소 이름 + 링크" 문자도 그대로 붙여넣을 수 있어요.</p>` +
+    `<textarea class="xinput" id="mapLinkInput" rows="2" placeholder="https://maps.app.goo.gl/... 또는 공유받은 문자 그대로" style="width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit;resize:vertical">${A.esc((prefill && prefill.text) || '')}</textarea>` +
+    `<div style="display:flex;gap:8px;margin-top:10px"><button id="mapLinkPasteBtn" style="flex:1;min-height:44px">붙여넣기</button><button class="primary" id="mapLinkAddBtn" style="flex:2;min-height:44px">이 링크로 추가</button></div>` +
+    `<p class="inline-note">자동 붙여넣기가 안 되면 입력칸을 길게 눌러 직접 붙여넣어 주세요.</p>` +
     // 2026-09-11 재검토(14차) 3절 — 링크에서 좌표(지도 중심)는 찾았지만
     // 이름을 찾을 근거가 없을 때(순수 좌표 핀 공유 등), 무명 장소를
     // 조용히 만들지 않고 이름을 직접 입력받는다.
@@ -2627,13 +2647,40 @@ function showAddByMapLinkSheet() {
     `<p class="inline-note" id="mapLinkMsg" hidden></p></div>`);
   const msg = (t2) => { const el = $('#mapLinkMsg'); if (el) { el.textContent = t2; el.hidden = false; } };
   let pendingLink = null; // nameRequired로 대기 중인 { url, lat, lng }
-  $('#mapLinkAddBtn').onclick = async () => {
-    const urlVal = $('#mapLinkInput').value.trim();
-    if (!urlVal) { msg('링크를 붙여넣어 주세요.'); return; }
+  let saving = false; // 빠른 연타/중복 제출 방지 — 응답 오기 전엔 재요청하지 않는다.
+  const pasteBtn = $('#mapLinkPasteBtn');
+  if (pasteBtn) pasteBtn.onclick = async () => {
+    // 2절 — 클립보드 읽기는 오직 이 버튼을 누른 시점에만 시도한다(자동·반복
+    // 시도 금지). 권한 거부·미지원이면 길게 눌러 직접 붙여넣도록 안내한다.
+    if (!navigator.clipboard || !navigator.clipboard.readText) {
+      msg('이 브라우저에서는 자동 붙여넣기를 지원하지 않아요. 입력칸을 길게 눌러 직접 붙여넣어 주세요.');
+      return;
+    }
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) { $('#mapLinkInput').value = text; msg(''); $('#mapLinkMsg').hidden = true; }
+      else msg('클립보드가 비어 있어요. 구글맵에서 공유 → 링크 복사를 먼저 해주세요.');
+    } catch (err) {
+      msg('클립보드 읽기를 허용하지 않았어요. 입력칸을 길게 눌러 직접 붙여넣어 주세요.');
+    }
+  };
+  const doSave = async () => {
+    if (saving) return;
+    const raw = $('#mapLinkInput').value.trim();
+    if (!raw) { msg('링크를 붙여넣어 주세요.'); return; }
+    const { url: urlVal, nameHint } = A.extractMapsUrl(raw);
+    if (!urlVal) { msg('이 안에서 구글맵 링크를 찾지 못했어요. 공유 링크가 포함된 내용인지 확인해 주세요.'); return; }
+    // 4절 — 로그인 확인은 여기, "저장"을 실제로 시도하는 시점에만 한다.
+    // 지금까지 입력한 원문(raw)을 그대로 들고 로그인 후 이 화면으로
+    // 되돌아와 자동으로 이어서 저장을 시도한다(다시 붙여넣지 않아도 됨).
+    const token = A.sessionToken(foodMap);
+    if (!token) { showLoginSheet(() => showAddByMapLinkSheet({ text: raw, autoSubmit: true })); return; }
+    saving = true;
     const btn = $('#mapLinkAddBtn');
     btn.disabled = true; btn.textContent = '확인 중…';
     const r = await A.api('/api/places/resolve-link', { method: 'POST', token, body: { url: urlVal } });
-    btn.disabled = false; btn.textContent = '이 링크로 추가';
+    saving = false;
+    if (btn.isConnected) { btn.disabled = false; btn.textContent = '이 링크로 추가'; }
     if (!r.ok || !r.json || !r.json.ok) {
       const reason = r.json && r.json.reason;
       const reasonMsg = {
@@ -2654,21 +2701,27 @@ function showAddByMapLinkSheet() {
       pendingLink = { url: finalUrl || urlVal, lat: safeLat, lng: safeLng };
       const wrap = $('#mapLinkNameWrap');
       if (wrap) wrap.hidden = false;
+      const ni = $('#mapLinkNameInput');
+      if (ni && nameHint && !ni.value) ni.value = nameHint; // 공유 텍스트에 딸려온 이름은 힌트일 뿐 — 그대로 자동확정하지 않고 사람이 한 번 확인/수정 후 누른다.
       msg('');
       $('#mapLinkMsg').hidden = true;
       return;
     }
     const item = { name, url: finalUrl || urlVal, lat: safeLat, lng: safeLng };
-    if (daFinalizeMapLinkAdd(item, msg)) sheet.close();
+    const result = daFinalizeMapLinkAdd(item, msg);
+    if (result) daShowMapLinkAddResult(result);
   };
+  $('#mapLinkAddBtn').onclick = doSave;
   const nameConfirmBtn = $('#mapLinkNameConfirmBtn');
   if (nameConfirmBtn) nameConfirmBtn.onclick = () => {
     if (!pendingLink) return;
     const typedName = $('#mapLinkNameInput').value.trim();
     if (!typedName) { msg('이름을 입력해 주세요.'); return; }
     const item = { name: typedName, url: pendingLink.url, lat: pendingLink.lat, lng: pendingLink.lng };
-    if (daFinalizeMapLinkAdd(item, msg)) sheet.close();
+    const result = daFinalizeMapLinkAdd(item, msg);
+    if (result) daShowMapLinkAddResult(result);
   };
+  if (prefill && prefill.autoSubmit) doSave();
 }
 /* 병합 로직은 private/personal.html 의 fmMerge 를 그대로 옮긴 A.merge() 를
    쓴다 — 여기서 다시 만들지 않는다(중복 판정이 갈리는 사고를 막는다).
@@ -2852,6 +2905,12 @@ $('#sheetContent').onclick = (e) => {
   if (b.hasAttribute('data-dismiss')) sheet.close();
   if (b.dataset.detailPick) { toggle(b.dataset.detailPick); detail(b.dataset.detailPick); }
   if (b.dataset.remove) { route.delete(b.dataset.remove); showRoute(); }
+  // 2026-09-21(17차) 2절 — 지도 링크 빠른 추가 저장 직후 결과 화면의
+  // 두 버튼. "오늘 동선에 담기"는 기존 route Set에 더하기만 할 뿐
+  // (기존 #addRoute 핸들러와 동일한 route.add 호출), 코스 재계산이나
+  // 이용권 차감 경로는 전혀 건드리지 않는다.
+  if (b.dataset.viewPlace) return detail(b.dataset.viewPlace);
+  if (b.dataset.addTodayRoute) { route.add(b.dataset.addTodayRoute); daToast('오늘 동선에 담았어요.'); showRoute(); return; }
   if (b.dataset.citySingle) return cityAssignSheet([b.dataset.citySingle]);
   if (b.dataset.catEdit) return catAssignSheet(b.dataset.catEdit);
   if (b.dataset.tagsEdit) return tagsEditSheet(b.dataset.tagsEdit);
@@ -3154,6 +3213,10 @@ $('#bulkTagEdit').onclick = () => {
 $('#route').onclick = showRoute;
 document.querySelectorAll('[data-profile]').forEach((b) => { b.onclick = profile; });
 document.querySelectorAll('[data-add]').forEach((b) => { b.onclick = add; });
+// 2026-09-21(17차) 1절 — 헤더의 눈에 잘 띄는 "+" 버튼은 이제 Takeout
+// 전체 가져오기 선택 화면이 아니라, 장소 하나를 빠르게 담는 지도 링크
+// 추가로 곧장 연결한다(기존 하단 "가져오기 ↗" 배너는 그대로 add() 유지).
+document.querySelectorAll('[data-quick-add]').forEach((b) => { b.onclick = () => showAddByMapLinkSheet(); });
 $('#browse').onclick = () => $('.section-heading').scrollIntoView({ behavior: 'smooth', block: 'start' });
 $('#home').onclick = () => window.scrollTo({ top: 0, behavior: 'smooth' });
 $('#collection').onclick = () => $('.album').scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -3172,3 +3235,18 @@ renderServiceTestModeBanner();
 // 남아있는 경우엔 여기서 바로 조회된다.
 if (typeof BikePorts !== 'undefined' && A.sessionToken(foodMap)) BikePorts.loadStatus(A.sessionToken(foodMap), () => sessionEpoch);
 daResumeAfterTossRedirect();
+// 2026-09-21(17차) 3절 — Web Share Target(GET) 수신. manifest의
+// share_target이 ?title=&text=&url= 붙은 평범한 내비게이션으로 이
+// 문서를 다시 열 뿐이라(서비스워커 fetch 가로채기 불필요), 여기서
+// 쿼리스트링만 읽으면 된다. 설치된 PWA에서 안드로이드 크롬 계열로
+// "공유 → 이 앱 선택"을 했을 때만 실제로 값이 붙어 들어온다(iOS
+// Safari는 이 경로 자체가 없다 — 그 경우는 그냥 평소처럼 빈 채로
+// 열린다). 확인 없이 자동 저장하지 않는다 — 시트에 미리 채워만
+// 두고, "이 링크로 추가"는 사람이 직접 누른다.
+(function daHandleShareTarget() {
+  const qs = new URLSearchParams(location.search);
+  const shared = [qs.get('title'), qs.get('text'), qs.get('url')].filter(Boolean).join('\n');
+  if (!shared) return;
+  history.replaceState(null, '', location.pathname);
+  showAddByMapLinkSheet({ text: shared });
+})();

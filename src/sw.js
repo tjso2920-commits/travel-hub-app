@@ -5,10 +5,13 @@
  *
  * 앱을 새로 배포할 때 CACHE 값을 반드시 올린다. 올리지 않으면 사용자가 옛 버전을 계속 본다.
  */
-const CACHE = 'travel-hub-v53';
-/* 앱 본체는 반드시 담겨야 한다. 나머지는 있으면 좋은 것들이다. */
-const CORE = ['./index.html'];
-const EXTRA = ['./', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
+const CACHE = 'travel-hub-v54';
+/* 앱 본체는 반드시 담겨야 한다. 나머지는 있으면 좋은 것들이다.
+   2026-09-21(17차) 3절 — 디자인 앱(src/design/index.html)이 이 SW를
+   부모 스코프(../sw.js)로 재사용해 설치형 PWA(공유 수신 전제조건)가
+   되면서 그 문서도 함께 담는다. */
+const CORE = ['./index.html', './design/index.html'];
+const EXTRA = ['./', './manifest.webmanifest', './icon-192.png', './icon-512.png', './design/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -44,9 +47,15 @@ self.addEventListener('fetch', (event) => {
   const isDocument = request.mode === 'navigate' || request.destination === 'document';
 
   if (isDocument) {
+    // 2026-09-21(17차) 3절 — 이 SW가 담당하는 문서가 './index.html'
+    // 하나였을 때는 무조건 그것만 돌려줘도 맞았지만, 디자인 앱까지
+    // 이 SW의 스코프에 들어오면서(../sw.js 재사용) 그대로 두면 디자인
+    // 앱 화면 요청에도 예전 앱 문서를 돌려주는 오류가 생긴다 — 요청
+    // 경로를 보고 캐시 키를 고른다.
+    const docKey = /\/design(\/|$)/.test(url.pathname) ? './design/index.html' : './index.html';
     // 캐시 우선 — 비행기 안에서도 열려야 한다. 네트워크가 되면 뒤에서 조용히 갱신한다.
     event.respondWith(
-      caches.match('./index.html').then((cached) => {
+      caches.match(docKey).then((cached) => {
         /* 화면에 넘긴 응답은 본문을 다시 못 읽는다(한 번만 읽힌다).
            비교에 쓸 몫은 **넘기기 전에** 따로 떠 둬야 한다. */
         const forCompare = cached ? cached.clone() : null;

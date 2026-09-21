@@ -1065,6 +1065,13 @@ const daNameKey = (n) => String(n || '').trim().toLowerCase().replace(/\s+/g, ' 
 function daDupKey(p) { return daNameKey(p.name) + '|' + String(p.address || '').trim().toLowerCase() + '|' + String(p.url || '').trim(); }
 function daMerge(arr, sourceLabel, places, importBatchId) {
   let added = 0, updated = 0, skipped = 0, dupCandidates = 0;
+  // 2026-09-21(17차) — 지도 링크 빠른 추가가 "이미 저장된 장소예요"와
+  // "저장했어요"를 구분해 보여주려면 입력 항목별로 실제 어떤 레코드에
+  // 붙었는지(또는 새로 만들어졌는지) 알아야 한다. added/updated 개수만으론
+  // 여러 곳을 한 번에 올리는 ZIP/CSV에선 충분했지만, 단건 추가에는 부족
+  // 했다 — 기존 반환값(added/updated/skipped/dupCandidates)은 그대로 두고
+  // resultItems만 덧붙인다(호출부 하위호환, 기존 호출은 새 필드를 안 씀).
+  const resultItems = [];
   const byKey = new Map(); const byName = new Map();
   /* 좌표가 진짜 있을 때만 이름+좌표를 검증된 식별자로 쓴다.
      null|null 은 "좌표가 없다"는 뜻이지 "같은 좌표"가 아니다 — 이걸
@@ -1084,7 +1091,7 @@ function daMerge(arr, sourceLabel, places, importBatchId) {
     addName(daNameKey(p.name), p);
   });
   arr.forEach((x) => {
-    if (!x || !x.name) { skipped++; return; }
+    if (!x || !x.name) { skipped++; resultItems.push({ place: null, matchKind: 'skipped' }); return; }
     const nk = daNameKey(x.name);
     const kx = kName(x);
     let exact = (x.placeId && byKey.get(x.placeId)) || (urlKey(x) && byKey.get(urlKey(x))) || (kx && byKey.get(kx));
@@ -1128,7 +1135,7 @@ function daMerge(arr, sourceLabel, places, importBatchId) {
       // 채워 넣는다 — "몰랐던 정보를 채움"이지 "덮어쓰기"가 아니다.
       if (exact.originalSavedAt === undefined && x.originalSavedAt) exact.originalSavedAt = x.originalSavedAt;
       regKeys(exact);
-      updated++; return;
+      updated++; resultItems.push({ place: exact, matchKind: 'exact' }); return;
     }
     /* 2026-09-09 코드 검토(2차): 식별자가 없는 항목은 같은 파일을 다시
        올릴 때마다 후보가 하나씩 더 쌓여 개수가 계속 늘었다 — "같은
@@ -1144,7 +1151,7 @@ function daMerge(arr, sourceLabel, places, importBatchId) {
       // originalSavedAt까지 무시하면 안 된다. exact 식별자 매칭 분기와
       // 똑같이, 몰랐던 값만 비파괴적으로 채운다(덮어쓰지 않음).
       if (already.originalSavedAt === undefined && x.originalSavedAt) already.originalSavedAt = x.originalSavedAt;
-      updated++; return;
+      updated++; resultItems.push({ place: already, matchKind: 'already' }); return;
     }
     const p = Object.assign({ id: 'fm' + Date.now() + added + Math.floor(Math.random() * 9999) }, x);
     delete p.title;
@@ -1179,9 +1186,27 @@ function daMerge(arr, sourceLabel, places, importBatchId) {
     places.push(p);
     regKeys(p);
     addName(nk, p);
-    added++;
+    added++; resultItems.push({ place: p, matchKind: 'new' });
   });
-  return { added, updated, skipped, dupCandidates };
+  return { added, updated, skipped, dupCandidates, resultItems };
+}
+/* 2026-09-21(17차) 1·2절 — "이름 + 링크" 형태로 공유된 텍스트(구글맵
+   공유 시트가 그대로 붙여넣기 되는 경우 포함)에서 URL 하나와, 그 앞에
+   놓인 줄을 이름 힌트로 뽑아낸다. 링크 자체의 해석(짧은 링크 풀기,
+   허용 도메인 검사 등)은 절대 여기서 하지 않는다 — 뽑아낸 URL을
+   그대로 기존 /api/places/resolve-link에 넘겨 서버의 기존 검증을
+   그대로 통과시킨다(새 서버 로직을 만들지 않는다). 이름 힌트는 참고
+   값일 뿐 사람이 다시 확인/수정할 수 있어야 한다(자동확정 금지). */
+function daExtractMapsUrl(text) {
+  const s = String(text || '');
+  const m = s.match(/https?:\/\/[^\s"'<>]+/);
+  if (!m) return { url: '', nameHint: '' };
+  const url = m[0].replace(/[)\].,!?]+$/, '');
+  const before = s.slice(0, s.indexOf(m[0])).trim();
+  const lines = before.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  let nameHint = lines.length ? lines[lines.length - 1].replace(/[:：]\s*$/, '') : '';
+  if (nameHint.length > 60) nameHint = '';
+  return { url, nameHint };
 }
 /* 여러 장소를 한 번에, 또는 하나씩 도시로 확정한다(로드맵 ④에서 요구한
    "여러 장소 선택 → 여행지 일괄 지정과 개별 수정"). 좌표를 만들어내지
@@ -1404,6 +1429,7 @@ window.DesignAdapter = {
   parseCsv: daCsv,
   parseJson: daJsonPlaces,
   merge: daMerge,
+  extractMapsUrl: daExtractMapsUrl,
   buildSpots: daBuildSpots,
   cityGuess: daCityGuess,
   cityHint: daCityHint,
