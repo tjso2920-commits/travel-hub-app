@@ -5,7 +5,7 @@
  *
  * 앱을 새로 배포할 때 CACHE 값을 반드시 올린다. 올리지 않으면 사용자가 옛 버전을 계속 본다.
  */
-const CACHE = 'travel-hub-v55';
+const CACHE = 'travel-hub-v56';
 /* 앱 본체는 반드시 담겨야 한다. 나머지는 있으면 좋은 것들이다.
    2026-09-21(17차) 3절 — 디자인 앱(src/design/index.html)이 이 SW를
    부모 스코프(../sw.js)로 재사용해 설치형 PWA(공유 수신 전제조건)가
@@ -19,6 +19,36 @@ const CACHE = 'travel-hub-v55';
    범위가 아니다 — 이번엔 아래 문서 캐시 "쓰기 경로" 버그만 고친다. */
 const CORE = ['./index.html', './design/index.html'];
 const EXTRA = ['./', './manifest.webmanifest', './icon-192.png', './icon-512.png', './design/manifest.webmanifest'];
+
+/* 2026-09-21(17차 3차 독립검토) 2절 — 재현된 버그: 예전엔 "네비게이션이면
+   전부 앱 문서"로 취급해, /api/health 처럼 같은 origin의 JSON API를
+   주소창에 직접 열어도(진짜 방문 가능성 있음 — 디버깅 등) 이 로직을
+   그대로 타서 그 JSON 응답이 ./index.html 캐시에 그대로 덮어써졌다.
+   실제 두 앱의 진입 경로만 정확히 나열해 그 목록에 있을 때만 "앱
+   문서 캐시" 대상으로 삼는다 — 그 외 경로는(네비게이션이어도) 아래
+   일반 통과 경로로 넘어가 캐시를 전혀 안 건드리고 그대로 응답한다. */
+const APP_DOC_ROUTES = [
+  { paths: ['/', '/index.html'], key: './index.html' },
+  { paths: ['/design', '/design/', '/design/index.html'], key: './design/index.html' },
+];
+function appDocKeyFor(pathname) {
+  const hit = APP_DOC_ROUTES.find((r) => r.paths.includes(pathname));
+  return hit ? hit.key : null;
+}
+/* 배경 갱신 응답을 캐시에 써도 되는 조건 — 정상 HTML 응답만. 상태가
+   실패거나, 도중에 다른 곳으로 리디렉션됐거나(리디렉션으로 엉뚱한
+   페이지가 온 경우 오염 방지), 같은 origin이 아니거나, Content-Type이
+   text/html이 아니면 전부 거부한다(캐시를 안 건드리고 응답만 그대로
+   돌려줌). */
+function isCacheableAppDoc(response) {
+  if (!response || !response.ok) return false;
+  if (response.redirected) return false;
+  let responseUrl;
+  try { responseUrl = new URL(response.url); } catch (e) { return false; }
+  if (responseUrl.origin !== self.location.origin) return false;
+  const contentType = (response.headers.get('content-type') || '').toLowerCase();
+  return contentType.includes('text/html');
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -52,14 +82,12 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
 
   const isDocument = request.mode === 'navigate' || request.destination === 'document';
+  // 네비게이션이라고 전부 "앱 문서"가 아니다 — 실제 두 앱의 진입
+  // 경로일 때만 docKey가 나온다(그 외엔 null — 아래에서 일반 통과
+  // 경로로 넘어간다).
+  const docKey = isDocument ? appDocKeyFor(url.pathname) : null;
 
-  if (isDocument) {
-    // 2026-09-21(17차) 3절 — 이 SW가 담당하는 문서가 './index.html'
-    // 하나였을 때는 무조건 그것만 돌려줘도 맞았지만, 디자인 앱까지
-    // 이 SW의 스코프에 들어오면서(../sw.js 재사용) 그대로 두면 디자인
-    // 앱 화면 요청에도 예전 앱 문서를 돌려주는 오류가 생긴다 — 요청
-    // 경로를 보고 캐시 키를 고른다.
-    const docKey = /\/design(\/|$)/.test(url.pathname) ? './design/index.html' : './index.html';
+  if (docKey) {
     // 캐시 우선 — 비행기 안에서도 열려야 한다. 네트워크가 되면 뒤에서 조용히 갱신한다.
     event.respondWith(
       caches.match(docKey).then((cached) => {
@@ -68,7 +96,11 @@ self.addEventListener('fetch', (event) => {
         const forCompare = cached ? cached.clone() : null;
         const network = fetch(request)
           .then((response) => {
-            if (!response || !response.ok) return response;
+            // 2026-09-21(17차 3차 독립검토) 2절 — 정상 HTML 응답일 때만
+            // 캐시를 건드린다. 실패·리디렉션·비HTML 응답은 그대로
+            // 돌려주기만 하고 캐시는 절대 안 쓴다(옛/새 앱 캐시가
+            // 엉뚱한 내용으로 덮어써지는 걸 막는다).
+            if (!isCacheableAppDoc(response)) return response;
             const forCache = response.clone();
             const forDiff = response.clone();
             /* 받아온 것이 지금 보여주고 있는 것과 다르면 = 새 버전이 올라온 것이다.
@@ -84,11 +116,6 @@ self.addEventListener('fetch', (event) => {
                 })
                 .catch(() => {}); /* 비교에 실패해도 앱은 그대로 돌아야 한다 */
             }
-            // 2026-09-21(17차 2차 독립검토) — 재현된 버그: 읽기는 docKey로
-            // 앱을 구분해 놓고, 쓰기는 여기서 무조건 './index.html'만
-            // 썼다. 디자인 앱을 열어 보기만 해도(온라인 상태) 조용히 옛
-            // 앱의 캐시가 디자인 앱 내용으로 덮어써지는 실제 데이터
-            // 오염 버그였다 — 쓰기도 반드시 같은 docKey를 써야 한다.
             caches.open(CACHE).then((cache) => cache.put(docKey, forCache));
             return response;
           })

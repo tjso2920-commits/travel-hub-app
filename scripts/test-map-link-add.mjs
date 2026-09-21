@@ -48,6 +48,14 @@
  *      즉시 무효화돼 옛 이름 확인 버튼으로 엉뚱한 링크에 이름이
  *      안 붙음.
  *
+ * 2026-09-21(17차 3차 독립검토) 1절 — 재현·수정 추가:
+ *  18) "이름 확인 대기" 중 버튼을 다시 안 누르고 입력칸만 B로 고쳐
+ *      쓴 뒤 바로 "이 이름으로 담기"를 누르면, A 링크에 새 이름이
+ *      저장되지 않음(직접 입력 경로에서도 pendingLink가 즉시 무효화).
+ *  19) A 요청이 도는 중(응답 전) 버튼을 다시 안 누르고 입력만 B로
+ *      바꾸면, 나중에 도착한 A의 응답이 저장되거나 이름 확인 UI를
+ *      열지 않음(입력 버전 대조).
+ *
  * 실행: node scripts/test-map-link-add.mjs
  */
 import { chromium } from 'playwright';
@@ -451,7 +459,11 @@ const fullUrl = 'https://www.google.com/maps/place/%EC%B9%B4%ED%8E%98+%ED%85%8C%
   const fullUrl2 = 'https://www.google.com/maps/place/%EB%91%90%EB%B2%88%EC%A7%B8%EB%A7%81%ED%81%AC%ED%85%8C%EC%8A%A4%ED%8A%B8/@46.0,150.0,17z/data=!4m6!3m5!1s0x0:0x0!8m2!3d46.11!4d150.22!16s%2Fg%2F11two';
   await page.fill('#mapLinkInput', fullUrl2);
   await page.click('#mapLinkAddBtn'); // 이름 확인 없이 바로 새 시도를 시작 — 이전 pendingLink를 즉시 무효화해야 함.
-  const wrapHiddenImmediately = await page.evaluate(() => document.getElementById('mapLinkNameWrap').hidden);
+  // 로컬 인메모리 서버라 두 번째 요청이 곧바로(체크 전에) 끝나 결과
+  // 화면으로 넘어가 있을 수도 있다 — 그 경우 mapLinkNameWrap 자체가
+  // 이미 없다(옛 이름칸이 안 보인다는 목적은 이미 달성됨). 없거나
+  // 숨겨져 있으면 둘 다 통과로 본다.
+  const wrapHiddenImmediately = await page.evaluate(() => { const w = document.getElementById('mapLinkNameWrap'); return !w || w.hidden; });
   t('17) 새 시도가 시작되자마자 이전 이름 입력칸이 즉시 숨겨짐(무효화)', wrapHiddenImmediately);
 
   // 옛(숨겨진) 확인 버튼을 억지로 눌러도(예: 스크립트로) pendingLink가
@@ -462,6 +474,68 @@ const fullUrl = 'https://www.google.com/maps/place/%EC%B9%B4%ED%8E%98+%ED%85%8C%
   t('17) 무효화된 옛 확인 버튼을 눌러도 엉뚱한 이름으로 저장되지 않음', !oldNameLeaked);
   const secondSaved = await page.evaluate(() => foodMap.places.find((p) => p.name === '두번째링크테스트'));
   t('17) 새로 시작한 두 번째 링크는 정상적으로 저장됨', !!secondSaved);
+  await page.evaluate(() => { const c = document.getElementById('close'); if (c) c.click(); });
+}
+
+// =====================================================================
+// 18) ChatGPT 3차 재현 — "이름 확인 대기" 중 버튼을 다시 안 누르고
+//     입력칸만 직접 고쳐 쓴 뒤 바로 "이 이름으로 담기"를 누르면, 옛
+//     링크(A)에 새로 고친 링크용이 아닌 이름이 저장되지 않는다(직접
+//     입력 경로에서도 즉시 무효화돼야 함 — 17차 2차 수정은 doSave
+//     재호출 시점에만 초기화해 이 경로를 놓쳤었다).
+// =====================================================================
+{
+  await page.evaluate(() => showAddByMapLinkSheet());
+  await page.waitForTimeout(150);
+  const noNameUrlA = 'https://www.google.com/maps/@47.1,151.1,17z'; // 이름 없는 링크(A).
+  await page.fill('#mapLinkInput', noNameUrlA);
+  await page.click('#mapLinkAddBtn');
+  await page.waitForTimeout(300);
+  const wrapShown = await page.evaluate(() => !document.getElementById('mapLinkNameWrap').hidden);
+  t('18) A 링크에서 이름 입력칸이 뜸', wrapShown);
+  await page.fill('#mapLinkNameInput', 'A용이름');
+
+  const fullUrlB = 'https://www.google.com/maps/place/%EC%84%B8%EB%B2%88%EC%A7%B8%EB%A7%81%ED%81%AC%ED%85%8C%EC%8A%A4%ED%8A%B8/@48.0,152.0,17z/data=!4m6!3m5!1s0x0:0x0!8m2!3d48.11!4d152.22!16s%2Fg%2F11thr';
+  await page.fill('#mapLinkInput', fullUrlB); // 버튼을 다시 안 누르고 입력칸만 B로 바꿈(재현 절차 그대로).
+  const wrapHiddenAfterEdit = await page.evaluate(() => document.getElementById('mapLinkNameWrap').hidden);
+  t('18) 입력칸을 직접 바꾸기만 해도 이름 입력칸이 즉시 숨겨짐(무효화)', wrapHiddenAfterEdit);
+
+  await page.evaluate(() => { const b = document.getElementById('mapLinkNameConfirmBtn'); if (b) b.click(); }); // 숨겨진 옛 확인 버튼을 억지로 눌러도.
+  await page.waitForTimeout(300);
+  const wrongSaved = await page.evaluate(() => foodMap.places.some((p) => p.name === 'A용이름'));
+  t('18) 재현 절차대로 해도 옛 이름으로 저장되지 않음(원래 버그: A 링크에 "A용이름"이 저장됨)', !wrongSaved);
+  await page.evaluate(() => { const c = document.getElementById('close'); if (c) c.click(); });
+}
+
+// =====================================================================
+// 19) A 요청이 도는 중(응답 전) 버튼을 다시 안 누르고 입력만 B로
+//     바꾸면, 나중에 도착한 A의 응답이 저장되거나 이름 확인 UI를
+//     열지 않는다(입력 버전 대조로 폐기).
+// =====================================================================
+{
+  const urlA2 = 'https://www.google.com/maps/place/%EC%9E%85%EB%A0%A5%EB%B2%84%EC%A0%84A/@49.0,153.0,17z/data=!4m6!3m5!1s0x0:0x0!8m2!3d49.11!4d153.22!16s%2Fg%2F11iva';
+  const urlB2 = 'https://www.google.com/maps/place/%EC%9E%85%EB%A0%A5%EB%B2%84%EC%A0%84B/@50.0,154.0,17z/data=!4m6!3m5!1s0x0:0x0!8m2!3d50.11!4d154.22!16s%2Fg%2F11ivb';
+  await page.evaluate(() => showAddByMapLinkSheet());
+  await page.waitForTimeout(150);
+  await page.fill('#mapLinkInput', urlA2);
+
+  let releaseHold3;
+  const held3 = new Promise((resolve) => { releaseHold3 = resolve; });
+  await page.route('**/api/places/resolve-link', async (route) => { await held3; await route.continue(); });
+
+  await page.click('#mapLinkAddBtn'); // A 요청 발사 — 응답은 미뤄짐.
+  await page.waitForTimeout(150);
+
+  await page.fill('#mapLinkInput', urlB2); // 버튼을 다시 안 누르고 입력만 B로 바꿈.
+
+  releaseHold3(); // 이제 A의 응답이 도착한다 — 하지만 입력은 이미 B로 바뀐 뒤.
+  await page.waitForTimeout(400);
+  await page.unroute('**/api/places/resolve-link');
+
+  const aSaved = await page.evaluate(() => foodMap.places.some((p) => p.name === '입력버전A'));
+  t('19) 응답이 늦게 온 A 요청이 저장되지 않음(입력이 이미 B로 바뀐 뒤라 폐기)', !aSaved);
+  const nameWrapOpenedWrongly = await page.evaluate(() => { const w = document.getElementById('mapLinkNameWrap'); return !!w && !w.hidden; });
+  t('19) A 응답으로 이름 확인 UI가 잘못 열리지 않음', !nameWrapOpenedWrongly);
   await page.evaluate(() => { const c = document.getElementById('close'); if (c) c.click(); });
 }
 

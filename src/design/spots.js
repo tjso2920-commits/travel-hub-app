@@ -2667,7 +2667,22 @@ function showAddByMapLinkSheet(prefill) {
   // 전역 foodMap(B)에 A의 장소가 섞여 들어간다.
   const myScreenVersion = _screenVersion;
   let requestSeq = 0;
+  // 2026-09-21(17차 3차 독립검토) 1절 — 재현된 버그: pendingLink는
+  // "새 저장 시도가 시작될 때"만 지워졌다. 그런데 nameRequired 응답을
+  // 받아 이름 입력칸이 뜬 뒤에는(요청 자체는 이미 끝났음) saving도
+  // false로 돌아와 있어, 사용자가 버튼을 다시 안 눌러도 입력칸만
+  // 고쳐 쓰고 "이 이름으로 담기"를 곧장 누르면 옛 pendingLink(예전
+  // 링크)에 새로 입력한 이름이 그대로 붙어 버렸다. 입력칸이 바뀌는
+  // 모든 경로(직접 입력·붙여넣기)에서 곧장 무효화하도록 바꾼다.
+  let inputVersion = 0; // 입력 내용이 바뀔 때마다(경로 불문) 올라간다 — 진행 중인 요청이 그 사이 입력이 바뀌었는지 판단하는 기준.
   const stillCurrentScreen = () => _screenVersion === myScreenVersion;
+  const invalidatePending = () => {
+    inputVersion++;
+    pendingLink = null;
+    const wrap = $('#mapLinkNameWrap'); if (wrap) wrap.hidden = true;
+  };
+  const inputEl = $('#mapLinkInput');
+  if (inputEl) inputEl.oninput = invalidatePending; // 직접 입력(길게 눌러 붙여넣기 포함) — 브라우저가 항상 input 이벤트를 낸다.
   const pasteBtn = $('#mapLinkPasteBtn');
   if (pasteBtn) pasteBtn.onclick = async () => {
     // 2절 — 클립보드 읽기는 오직 이 버튼을 누른 시점에만 시도한다(자동·반복
@@ -2682,8 +2697,13 @@ function showAddByMapLinkSheet(prefill) {
       // 장소 상세를 열었다든지) 이제 와서 그 화면의 입력칸에 쓰지
       // 않는다 — 이미 사라졌거나 다른 화면의 것일 수 있다.
       if (!stillCurrentScreen()) return;
-      if (text) { $('#mapLinkInput').value = text; msg(''); $('#mapLinkMsg').hidden = true; }
-      else msg('클립보드가 비어 있어요. 구글맵에서 공유 → 링크 복사를 먼저 해주세요.');
+      if (text) {
+        $('#mapLinkInput').value = text;
+        // 스크립트로 값을 바꾸면 브라우저가 input 이벤트를 안 내므로,
+        // 직접 입력과 같은 무효화 경로를 여기서 명시적으로 부른다.
+        invalidatePending();
+        msg(''); $('#mapLinkMsg').hidden = true;
+      } else msg('클립보드가 비어 있어요. 구글맵에서 공유 → 링크 복사를 먼저 해주세요.');
     } catch (err) {
       if (!stillCurrentScreen()) return;
       msg('클립보드 읽기를 허용하지 않았어요. 입력칸을 길게 눌러 직접 붙여넣어 주세요.');
@@ -2705,9 +2725,12 @@ function showAddByMapLinkSheet(prefill) {
     // 즉시 무효화한다 — 안 그러면 화면엔 새 링크가 보이는데 옛
     // pendingLink를 가리키는 "이 이름으로 담기" 버튼이 그대로 살아
     // 있어, 응답 도착 순서가 꼬이면 엉뚱한 링크에 이름을 붙일 수 있다.
-    pendingLink = null;
-    const oldWrap = $('#mapLinkNameWrap'); if (oldWrap) oldWrap.hidden = true;
+    invalidatePending();
     const mySeq = ++requestSeq;
+    // 이 요청을 보내는 시점의 입력 버전을 기억해 둔다 — 응답이 오는
+    // 사이 입력이 또 바뀌면(버튼을 다시 안 눌러도) 이 응답으로 저장하거나
+    // 이름 확인 UI를 열지 않는다("A 요청 중 입력이 B로 바뀜" 재현 차단).
+    const myInputVersion = inputVersion;
     const epochAtStart = sessionEpoch;
     saving = true;
     const btn = $('#mapLinkAddBtn');
@@ -2721,6 +2744,9 @@ function showAddByMapLinkSheet(prefill) {
     // 이 화면 안에서 더 최신 저장 시도가 이미 시작됐으면(예: 이 요청이
     // 도는 사이 링크를 바꿔 다시 눌렀음) 이 응답은 낡은 것이니 버린다.
     if (mySeq !== requestSeq) return;
+    // 버튼을 다시 안 누르고 입력칸만 고쳤어도(또는 붙여넣기로 바꿨어도)
+    // 이 응답은 더 이상 지금 입력과 무관하다 — 버린다.
+    if (inputVersion !== myInputVersion) return;
     // 이 화면 자체를 벗어났으면(다른 장소 상세·다른 시트로 이동) 이제
     // 와서 버튼 텍스트를 되돌리거나 새 화면을 덮어씌우면 안 된다 —
     // 이미 사라졌을 수 있는 DOM을 건드리지 않는다.
@@ -2743,7 +2769,10 @@ function showAddByMapLinkSheet(prefill) {
     const safeLat = (typeof lat === 'number') ? lat : null;
     const safeLng = (typeof lng === 'number') ? lng : null;
     if (nameRequired || !name) {
-      pendingLink = { url: finalUrl || urlVal, lat: safeLat, lng: safeLng };
+      // epochAtCreate/inputVersionAtCreate — 이름 확정 버튼을 누르는
+      // 시점에도 그때와 계정·입력이 그대로인지 다시 대조하기 위한
+      // 방어적 기록(주 방어는 위 invalidatePending의 즉시 무효화).
+      pendingLink = { url: finalUrl || urlVal, lat: safeLat, lng: safeLng, epochAtCreate: sessionEpoch, inputVersionAtCreate: inputVersion };
       const wrap = $('#mapLinkNameWrap');
       if (wrap) wrap.hidden = false;
       const ni = $('#mapLinkNameInput');
@@ -2760,6 +2789,11 @@ function showAddByMapLinkSheet(prefill) {
   const nameConfirmBtn = $('#mapLinkNameConfirmBtn');
   if (nameConfirmBtn) nameConfirmBtn.onclick = () => {
     if (!pendingLink || !stillCurrentScreen()) return;
+    // 방어적 재확인 — pendingLink를 만든 뒤로 계정이 바뀌었거나
+    // (로그아웃→재로그인) 입력이 다시 바뀌었으면(이미 invalidatePending이
+    // pendingLink를 null로 만들어 위에서 걸리지만, 한 번 더 명시적으로
+    // 대조해 둔다) 확정하지 않는다.
+    if (sessionEpoch !== pendingLink.epochAtCreate || inputVersion !== pendingLink.inputVersionAtCreate) return;
     const typedName = $('#mapLinkNameInput').value.trim();
     if (!typedName) { msg('이름을 입력해 주세요.'); return; }
     const item = { name: typedName, url: pendingLink.url, lat: pendingLink.lat, lng: pendingLink.lng };

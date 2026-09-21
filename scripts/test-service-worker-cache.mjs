@@ -1,11 +1,18 @@
 /**
  * 17차 2차 독립검토 2절 — 실제 서비스워커(src/sw.js) 캐시 동작 검증.
  *
- * 재현된 버그: 문서 캐시를 "읽을" 때는 요청 경로(docKey)를 보고 옛
- * 앱(./index.html)과 디자인 앱(./design/index.html)을 구분했지만,
+ * 재현된 버그(2차): 문서 캐시를 "읽을" 때는 요청 경로(docKey)를 보고
+ * 옛 앱(./index.html)과 디자인 앱(./design/index.html)을 구분했지만,
  * 백그라운드 갱신 결과를 "쓸" 때는 여전히 무조건 './index.html'에만
  * 썼다 — 디자인 앱을 열어 보기만 해도(온라인 상태에서) 조용히 옛 앱의
  * 캐시가 디자인 앱 내용으로 덮어써지는 실제 데이터 오염 버그였다.
+ *
+ * 재현된 버그(3차) — 2차 수정 이후에도 남음: "네비게이션이면 전부 앱
+ * 문서"로 취급해 response.ok만 봤다. /api/health처럼 같은 origin의
+ * JSON API를 네비게이션으로 열어도(주소창에 직접 입력 등) 그 JSON이
+ * 그대로 ./index.html 캐시에 기록됐다. 실제 앱 진입 경로 목록에 있을
+ * 때만 캐시 대상으로 좁히고, 정상 HTML 응답(리디렉션 아님·같은
+ * origin·Content-Type text/html)일 때만 캐시를 쓰도록 고쳤다.
  *
  * file://로는 서비스워커 등록 자체가 안 되므로(이 세션이 이전에
  * file://로만 검증하고 "실사용 가능"이라 적었던 것 자체가 부정확했다),
@@ -24,10 +31,11 @@ let fail = 0; const t = (n, c) => { console.log((c ? 'PASS ' : 'FAIL ') + n); if
 const ROOT = path.resolve(process.cwd(), 'src');
 const mime = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.webmanifest': 'application/manifest+json; charset=utf-8', '.png': 'image/png', '.woff2': 'font/woff2' };
 // 2절 지적 사항 검증용 — 특정 요청 하나만 골라 다른 응답으로 바꿔치기(새
-// 배포 시뮬레이션·오류 응답 시뮬레이션)할 수 있게 훅을 둔다. 평소엔
-// 실제 파일을 그대로 서빙하는 순수 정적 서버다(serve.mjs와 같은
-// safeFile 방식 — API 프록시는 이 검증에 필요 없어 뺐다).
-let override = null; // { path, status, body } | null
+// 배포 시뮬레이션·오류 응답·비HTML 응답·잘못된 리디렉션 시뮬레이션)할
+// 수 있게 훅을 둔다. 평소엔 실제 파일을 그대로 서빙하는 순수 정적
+// 서버다(serve.mjs와 같은 safeFile 방식 — API 프록시는 이 검증에
+// 필요 없어 뺐다).
+let override = null; // { path, status?, body?, contentType?, redirectTo? } | null
 function safeFile(urlPath) {
   const clean = decodeURIComponent(urlPath.split('?')[0]);
   const relative = clean.replace(/^\/+/, '');
@@ -36,8 +44,21 @@ function safeFile(urlPath) {
 }
 const server = http.createServer((req, res) => {
   const pathname = (req.url || '/').split('?')[0];
+  // 실제 재현(3차) 그대로 — 같은 origin의 JSON API를 네비게이션으로
+  // 직접 열 수 있는 실제 엔드포인트. 앱 문서가 아니므로 캐시 대상이면
+  // 절대 안 된다.
+  if (pathname === '/api/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
   if (override && override.path === pathname) {
-    res.writeHead(override.status || 200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    if (override.redirectTo) {
+      res.writeHead(302, { Location: override.redirectTo, 'Cache-Control': 'no-store' });
+      res.end();
+      return;
+    }
+    res.writeHead(override.status || 200, { 'Content-Type': override.contentType || 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(override.body);
     return;
   }
@@ -180,6 +201,70 @@ t('서비스워커가 실제로 등록되고 이 페이지를 제어함(localhos
   const cacheAfterError = await cacheEntryText(page, base + '/design/index.html');
   t('오류 오염 방지) 실패한 응답(오류 페이지)으로 캐시가 안 덮여씀', !!cacheAfterError && !cacheAfterError.includes('서버 오류'));
   override = null;
+}
+
+// =====================================================================
+// 3차 재현 A) /api/health를 네비게이션으로 직접 열면(같은 origin의
+//    JSON API) 실제 JSON 응답이 그대로 뜨고, 그 응답이 앱 문서 캐시
+//    (옛 앱·디자인 앱 어느 쪽도)를 덮어쓰지 않는다.
+// =====================================================================
+{
+  const classicBefore = await cacheEntryText(page, base + '/index.html');
+  const designBefore = await cacheEntryText(page, base + '/design/index.html');
+
+  await page.goto(base + '/api/health');
+  const contentType = await page.evaluate(() => document.contentType);
+  t('3차재현A) /api/health가 실제 JSON으로 열림(캐시된 앱 문서로 안 바뀜)', contentType.includes('json'));
+
+  const classicAfter = await cacheEntryText(page, base + '/index.html');
+  const designAfter = await cacheEntryText(page, base + '/design/index.html');
+  // 내용이 이전과 완전히 같은지(바이트 단위)로 판정한다 — 부분 문자열
+  // 포함 여부(예: '"ok"')는 두 앱의 실제 정상 코드에도 우연히 나타날
+  // 수 있어(옛 앱 JS에 실제로 있음) 오탐이 난다.
+  t('3차재현A) 기존 앱 캐시가 JSON으로 오염되지 않음(내용 그대로)', classicAfter === classicBefore);
+  t('3차재현A) 디자인 앱 캐시도 JSON으로 오염되지 않음(내용 그대로)', designAfter === designBefore);
+}
+
+// =====================================================================
+// 3차 재현 B) 앱 진입 경로(docKey 대상)라도 응답이 HTML이 아니면
+//    (예: 서버 오류로 JSON이 대신 온 경우) 캐시를 쓰지 않는다.
+// =====================================================================
+{
+  const designBeforeB = await cacheEntryText(page, base + '/design/index.html');
+  override = { path: '/design/index.html', status: 200, body: JSON.stringify({ error: 'unexpected' }), contentType: 'application/json; charset=utf-8' };
+  await page.goto(base + '/design/index.html');
+  // 캐시 우선이라 배경 응답이 비HTML이어도 지금 화면은 여전히 캐시된
+  // 정상 디자인 앱 그대로다 — 사용자에게 잘못된 응답이 새어 나가지
+  // 않는다는 뜻(핵심 확인 대상은 아래 캐시 쓰기 여부).
+  const shownDuringNonHtml = await page.title();
+  t('3차재현B) 캐시 우선이라 화면은 정상 디자인 앱 그대로임', shownDuringNonHtml.includes(DESIGN_MARK));
+  await page.waitForTimeout(300);
+  const designAfterB = await cacheEntryText(page, base + '/design/index.html');
+  t('3차재현B) 디자인 앱 캐시가 비HTML 응답으로 안 덮여씀', designAfterB === designBeforeB);
+  override = null;
+  await page.goto(base + '/design/index.html'); // 정상 상태로 복귀.
+}
+
+// =====================================================================
+// 3차 재현 C) 앱 진입 경로가 다른 페이지로 리디렉션되면(운영 실수 등)
+//    그 리디렉션된 내용으로 캐시를 덮어쓰지 않는다.
+// =====================================================================
+{
+  const designBeforeC = await cacheEntryText(page, base + '/design/index.html');
+  override = { path: '/design/index.html', redirectTo: '/index.html' }; // 디자인 앱 경로가 엉뚱하게 옛 앱으로 리디렉션되는 상황을 흉내.
+  await page.goto(base + '/design/index.html');
+  // 캐시 우선 전략이라, 배경에서 리디렉션이 나도 지금 화면은 여전히
+  // 캐시된(정상) 디자인 앱을 그대로 보여준다 — 이게 바로 "리디렉션된
+  // 엉뚱한 내용이 사용자에게도, 캐시에도 새어 들어가지 않는다"는 뜻.
+  const titleAfterRedirect = await page.title();
+  t('3차재현C) 캐시 우선이라 배경 리디렉션과 무관하게 화면은 정상 디자인 앱 그대로임', titleAfterRedirect.includes(DESIGN_MARK));
+  await page.waitForTimeout(300);
+  const designAfterC = await cacheEntryText(page, base + '/design/index.html');
+  const classicAfterC = await cacheEntryText(page, base + '/index.html');
+  t('3차재현C) 리디렉션으로 온 다른 페이지 내용이 디자인 앱 캐시에 안 들어감', designAfterC === designBeforeC);
+  t('3차재현C) 기존 앱 캐시도 그 사이 안 바뀜(정상 내용 그대로)', !!classicAfterC && classicAfterC.includes(CLASSIC_MARK));
+  override = null;
+  await page.goto(base + '/design/index.html'); // 정상 상태로 복귀.
 }
 
 // =====================================================================
