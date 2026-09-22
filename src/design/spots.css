@@ -86,3 +86,28 @@ nav button{font-weight:500;font-size:13px;letter-spacing:-.025em}
 .phrase-ko{font-size:14px;color:#5e7e84;margin-top:6px}
 .phrase-speak-btn{margin-top:8px;min-height:40px;padding:8px 14px;background:#e5efee;border-radius:20px;font-size:13px;color:var(--blue)}
 .phrase-speak-btn:disabled{opacity:.65;cursor:default}
+/* 날짜별 일정·영업시간(2026-09-22, 18차 3절) — 기존 .route-row·.inline-note·
+   .filters와 같은 톤(흰 카드, 파랑 글씨, 연한 회녹색 바탕)을 그대로 쓴다.
+   경고색은 가져오기 화면의 오류색(#b45050/#fbecec)을 재사용한다.
+   누르는 곳은 전부 44×44px 이상(장갑·젖은 손). */
+.sched-head{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin:4px 0 2px;font-size:14px;color:#6c858d}
+.sched-head b{font-size:17px;font-weight:600;color:var(--ink)}
+.sched-tz{font-size:12px;color:#8b9c9b}
+.sched-depart{display:flex;align-items:center;gap:10px;width:100%;margin-top:6px;font-size:15px;color:var(--ink)}
+.sched-depart button,.route-row .sched-actions button,.sched-hours-btn{min-height:44px;min-width:44px;padding:8px 14px;border-radius:20px;background:#eef1ec;color:var(--blue);font-size:13px;margin-left:0;line-height:1.3}
+.sched-hours{margin:10px 0 4px}
+.route-row.sched-row{align-items:flex-start}
+.sched-main{flex:1;min-width:0}
+.route-row .sched-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.detail .sched-actions a{display:inline-flex;align-items:center;min-height:44px;margin:0;padding:8px 14px;border-radius:20px;background:#f3f5f1;font-size:13px}
+.hours-line p{margin:4px 0 0;font-size:12.5px;line-height:1.5}
+.route-row p.hours-ok{color:#4d8a6a}
+.route-row p.hours-warn{color:#b45050;background:#fbecec;border-radius:10px;padding:4px 8px}
+.route-row p.hours-info{color:#7c8585}
+.route-row p.hours-meta{color:#98a2a0;font-size:11.5px}
+.route-row p.sched-warn{color:#b45050}
+.route-row p.sched-memo{color:#5e7e84}
+.detail p.sched-foot{font-size:12px;color:#8b9c9b;margin:4px 0 8px}
+.detail .sched-sub{font-size:16px;font-weight:600;margin:22px 0 4px}
+.sched-wide{display:block;width:100%;min-height:44px;text-align:left}
+.sched-danger{color:#b45050}

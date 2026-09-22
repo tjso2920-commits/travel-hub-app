@@ -182,6 +182,12 @@ function daBrowserBucket() {
    떠 있는 다른 계정의 데이터를 늦게 도착한 이전 계정 응답이 덮어쓰는
    사고를 막는다. */
 let sessionEpoch = 0;
+// 2026-09-22(18차) 3절 — 날짜별 일정 화면 상태. 영업시간은 로그인 세대
+// (sessionEpoch)별 메모리에만 둔다 — 계정이 바뀌면 이전 계정 것은 안 보인다.
+let daServerServices = null;
+let daHoursMem = { epoch: -1, map: new Map() };
+let daLastCourseUndo = null;
+const DA_HOURS_MAX_PER_CALL = 10;
 
 /* 2026-09-09 코드 검토 — 로드맵 ⑨(구매 흐름)·⑩(측정). 측정은 절대
    화면 동작을 막으면 안 된다(analytics.js가 아직 안 붙었거나 서버가
@@ -1713,12 +1719,14 @@ function daCoursesForCity(cityName) {
   }
   return list.slice().sort((a, b) => ((a.date || '') < (b.date || '') ? -1 : (a.date || '') > (b.date || '') ? 1 : 0));
 }
+/* 2026-09-22(18차 최종검수) — 재현된 문제: 예전엔 'YYYY-MM-DDT00:00:00'을
+   기기 시간대로 읽은 뒤 toISOString()(UTC)으로 되돌렸다. 한국처럼 UTC보다
+   빠른 시간대의 기기에서는 "다음날"이 같은 날짜로 나와 "+ 날짜 추가"가
+   마지막 날짜를 그대로 다시 제안했다. 날짜 문자열끼리 UTC로만 더한다. */
 function daNextDay(cityName) {
   const days = daCoursesForCity(cityName);
   const base = (days.length && days[days.length - 1].date) || A.destNow(cityName).ymd;
-  const dt = new Date(base + 'T00:00:00');
-  dt.setDate(dt.getDate() + 1);
-  return dt.toISOString().slice(0, 10);
+  return window.DaySchedule.addDaysYmd(base, 1) || base;
 }
 
 /* "코스 만들기"를 실제로 누르기 전에 통과해야 하는 문.
@@ -2164,14 +2172,27 @@ function buildCourseSheet(opts) {
   const list = spots.filter((p) => p.city === city && route.has(p.id));
   const defaultDate = opts.date || A.destNow(city).ymd;
   const dateNote = opts.isNewDay ? '<p class="inline-note">새 날짜의 코스를 만듭니다. 필요하면 날짜를 바꿔도 돼요.</p>' : '';
+  // 2026-09-22(18차) 3절 — 출발 시각. 예전엔 날짜와 무관하게 "여행지의
+  // 지금 시각"으로 강제돼, 밤에 내일 코스를 짜면 내일 밤 출발로 계산됐다.
+  const DS = window.DaySchedule;
+  const tzId = A.cityTimeZone(city);
+  const defaultStart = DS.clock(DS.defaultDepartureFor(defaultDate, A.destNow(city)));
   open('출발지 정하기', `<div class="detail"><h2>어디서 출발할까요?</h2>` +
     `<p>${list.length}곳을 실제 방문 순서·이동시간으로 만듭니다.</p>` +
     dateNote +
     `<label class="xsmall" style="display:block;margin:10px 0 6px">날짜<input class="xinput" id="courseDate" type="date" value="${A.esc(defaultDate)}" style="margin-top:6px;width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit"></label>` +
+    `<label class="xsmall" style="display:block;margin:10px 0 6px">출발 시각(${A.esc(tzId ? '현지 시간' : '도쿄 시간으로 계산')})<input class="xinput" id="courseStartTime" type="time" step="600" value="${A.esc(defaultStart)}" style="margin-top:6px;width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit;min-height:44px"></label>` +
     `<div class="city-options"><button class="city-option" data-start-gps><span><b>현재 위치에서 출발</b><small>브라우저 위치 권한이 필요해요</small></span><span class="city-check">›</span></button>` +
     list.map((p) => `<button class="city-option" data-start-pick="${p.id}"><span><b>${A.esc(p.name)}</b><small>${p.hasCoords ? '이 장소에서 출발' : '좌표가 없어 출발지로 못 씀'}</small></span><span class="city-check">${p.hasCoords ? '›' : '—'}</span></button>`).join('') +
     `</div><label class="xsmall" style="display:block;margin-top:6px">쓸 수 있는 시간(분, 선택)<input class="xinput" id="courseMinutes" type="number" min="30" step="10" placeholder="예: 240" style="margin-top:6px;width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit"></label></div>`);
   const dateVal = () => { const el = $('#courseDate'); return (el && el.value) || defaultDate; };
+  // 사용자가 출발 시각을 직접 고치기 전까지는 날짜를 바꾸면 기본값도
+  // 따라 바뀐다(오늘 → 지금 시각, 다른 날 → 09:00). 직접 고친 값은 안 건드린다.
+  let startTouched = false;
+  const startEl = $('#courseStartTime');
+  if (startEl) startEl.oninput = () => { startTouched = true; };
+  const dateEl = $('#courseDate');
+  if (dateEl && startEl) dateEl.onchange = () => { if (!startTouched) startEl.value = DS.clock(DS.defaultDepartureFor(dateVal(), A.destNow(city))); };
   /* 2026-09-10 재검토(3차): 응답을 기다리는 동안 버튼을 비활성화한다
      (느린 네트워크에서 여러 번 눌러 중복 요청이 나가는 걸 막는다 —
      서버도 멱등하게 처리하지만 화면 반응성 자체를 개선한다). */
@@ -2301,10 +2322,14 @@ async function runCourseGeneration(origin, startPlaceId, dateStr, opts) {
      여기서도 지금 도시로 한 번 더 거른다(buildCourseSheet만 걸러서는
      이 함수가 다른 경로로 직접 불릴 가능성까지 막지 못한다). */
   const list = spots.filter((p) => p.city === city && route.has(p.id) && p.id !== startPlaceId);
-  /* 시작 시각은 "오전 9시" 고정이 아니라 여행지 현지의 지금 시각이다. */
+  /* 2026-09-22(18차) 3절 — 출발 시각은 화면에서 고른 값(현지 시간)이다.
+     입력이 없거나 잘못됐으면 오늘은 지금 시각, 다른 날짜는 09:00. 미래
+     날짜를 "지금 시각"으로 강제하던 예전 동작을 고쳤다. */
   const destNow = A.destNow(city);
-  const startMinutes = destNow.hour * 60 + destNow.minute;
   const date = dateStr || destNow.ymd;
+  const startEl = $('#courseStartTime');
+  const pickedStart = startEl ? window.DaySchedule.parseClock(startEl.value) : null;
+  const startMinutes = pickedStart != null ? pickedStart : window.DaySchedule.defaultDepartureFor(date, destNow);
   if (usingSample) { await runSampleCourseGeneration(origin, list, startMinutes, budgetMinutes); return; }
   await runRealCourseGeneration(origin, startPlaceId, list, city, date, startMinutes, budgetMinutes, opts);
 }
@@ -2326,47 +2351,291 @@ function dayTabsHTML(c) {
   if (!days.length) return '';
   const todayYmd = A.destNow(city).ymd;
   return `<div class="filters" role="group" aria-label="날짜 선택">${
-    days.map((d) => `<button data-day="${A.esc(d.date || '')}" class="${d.date === c.date ? 'active' : ''}" aria-pressed="${d.date === c.date}">${A.esc(d.date || '날짜 미상')}${d.date === todayYmd ? ' · 오늘' : ''}</button>`).join('')
+    days.map((d) => `<button data-day="${A.esc(d.date || '')}" class="${d.date === c.date ? 'active' : ''}" aria-pressed="${d.date === c.date}">${A.esc(d.date ? window.DaySchedule.dateLabel(d.date) : '날짜 미상')}${d.date === todayYmd ? ' · 오늘' : ''}</button>`).join('')
   }<button data-day-new>+ 날짜 추가</button></div>`;
 }
+/* 2026-09-22(18차) 3절 — 날짜별 일정. 예전 화면(도착 시각·도보 이동·
+   대중교통 링크·빠진 곳 안내·날씨·제휴·설문)은 그대로 두고, 그 위에
+   날짜+요일·기준 시간대·출발 시각 변경·장소별 방문 시각/머무는 시간/
+   다른 날짜로 옮기기/코스에서 빼기·영업시간 확인을 얹는다.
+   - 표시되는 도착 시각은 저장된 코스를 DaySchedule.recompute로 다시
+     계산한 값이다(출발 시각·머무는 시간·지정 방문 시각 반영). 저장된
+     이동시간(walk)은 그대로 쓴다 — 비용이 드는 경로 계산은 다시 안 한다.
+   - 영업시간은 "영업시간 확인" 버튼을 눌렀을 때만 서버에 묻고, 이
+     화면(현재 로그인 세대)의 메모리에만 둔다. 코스·장소·동기화 데이터에
+     절대 넣지 않는다. */
+function daHoursGet(placeId) {
+  if (!placeId || daHoursMem.epoch !== sessionEpoch) return null;
+  return daHoursMem.map.get(placeId) || null;
+}
+function daHoursPut(placeId, item) {
+  if (daHoursMem.epoch !== sessionEpoch) daHoursMem = { epoch: sessionEpoch, map: new Map() };
+  daHoursMem.map.set(placeId, item);
+}
+function daHoursFeatureOn() {
+  const mode = daServerServices && daServerServices.businessHours;
+  // 서버 상태를 아직 모르면 버튼은 보여 준다(누르면 서버가 판정). 꺼져 있다고
+  // 확인되면 숨긴다 — 운영에서 제공량이 확정되기 전까지는 꺼져 있다.
+  return mode == null || mode === 'real' || mode === 'test';
+}
+function daPlaceById(id) { return (foodMap.places || []).find((x) => x.id === id) || null; }
+function daCoordsOf(id) { const p = daPlaceById(id); return p && A.hasCoords(p) ? { lat: p.lat, lng: p.lng } : null; }
+function daCourseStopPlaceIds(c) {
+  return [...new Set((c.stops || []).map((st) => (daPlaceById(st.id) || {}).placeId).filter(Boolean))];
+}
+function daTzNoteHTML(cityName) {
+  const tz = A.cityTimeZone(cityName);
+  return tz ? `현지 시간 기준(${A.esc(tz)})` : '현지 시간대 미확인 — 도쿄 시간으로 계산';
+}
+function daFormatFetched(iso) {
+  try { return new Date(iso).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; }
+}
 function showSavedCourse() {
-  const c = foodMap.course;
+  const stored = foodMap.course;
+  const DS = window.DaySchedule, BH = window.BusinessHours;
+  const c = DS.recompute(stored);
+  const clock = (m) => DS.clock(m);
   const stopViews = c.stops.map((s, i) => {
-    const p = foodMap.places.find((x) => x.id === s.id);
+    const p = daPlaceById(s.id);
     if (!p) return '';
     const prevId = i === 0 ? null : c.stops[i - 1].id;
-    const prevP = prevId ? foodMap.places.find((x) => x.id === prevId) : null;
+    const prevP = prevId ? daPlaceById(prevId) : null;
     const links = prevP && A.hasCoords(prevP) && A.hasCoords(p)
       ? `<div class="course-modes"><a href="${A.esc(window.CourseGen.directionsLink(prevP, p, 'transit'))}" target="_blank" rel="noopener noreferrer">🚃 대중교통</a><a href="${A.esc(window.CourseGen.directionsLink(prevP, p, 'driving'))}" target="_blank" rel="noopener noreferrer">🚕 택시·자동차</a></div>`
       : '';
-    return `<div class="route-row"><span>${i + 1}</span>${photoHTML(p, '')}<div><b>${A.esc(p.name)}</b><p>${window.CourseGen.clockLabel(s.at)} 도착 · 도보 ${s.walk}분 이동${links}</p></div></div>`;
+    const dwell = Number.isFinite(s.dwell) && s.dwell > 0 ? s.dwell : DS.DEFAULT_DWELL_MIN;
+    const extra = [
+      `${dwell}분 머무름`,
+      `도보 ${s.walk}분${s.walkEstimated ? '(직선거리 추정)' : ''} 이동`,
+      s.wait > 0 ? `${s.wait}분 기다림` : '',
+      Number.isFinite(s.fixedAt) ? '방문 시각 지정' : '',
+    ].filter(Boolean).join(' · ');
+    const lateNote = s.lateForFixed ? `<p class="sched-warn">정해 둔 방문 시각(${clock(s.fixedAt)})보다 늦게 도착해요 — 앞 일정을 줄이거나 시각을 바꿔 주세요.</p>` : '';
+    const memo = s.userHoursNote ? `<p class="sched-memo">내 메모: ${A.esc(s.userHoursNote)}</p>` : '';
+    return `<div class="route-row sched-row"><span>${i + 1}</span>${photoHTML(p, '')}<div class="sched-main"><b>${A.esc(p.name)}</b><p>${clock(s.at)} 도착 · ${extra}</p>${lateNote}${memo}` +
+      `<div class="hours-line" data-hours-stop="${A.esc(s.id)}"></div>${links}` +
+      `<div class="sched-actions"><button data-stop-edit="${A.esc(s.id)}" aria-label="${A.esc(p.name)} 시간·날짜 바꾸기">시간·날짜 바꾸기</button>` +
+      `<a href="${A.esc(BH.googleMapsUrl(p.name, p.placeId))}" target="_blank" rel="noopener noreferrer">구글 지도에서 확인 ↗</a></div></div></div>`;
   }).join('');
   /* 2026-09-09 코드 검토(2차): "좌표가 없어서 빠짐"과 "가용 시간 안에
      못 들어가서 빠짐"은 사용자가 할 수 있는 다음 행동이 다르다(위치
      확인 vs 시간을 늘리거나 곳 수를 줄이기) — 하나로 뭉뚱그리지 않는다. */
   const reasons = c.excludedReasons || {};
-  const excluded = (c.excludedIds || []).map((id) => foodMap.places.find((p) => p.id === id)).filter(Boolean);
+  const excluded = (c.excludedIds || []).map((id) => daPlaceById(id)).filter(Boolean);
   const noCoordsList = excluded.filter((p) => reasons[p.id] !== 'time-budget');
   const timeList = excluded.filter((p) => reasons[p.id] === 'time-budget');
-  const totalKm = (c.totalMeters / 1000).toFixed(1);
+  const totalKm = ((c.totalMeters || 0) / 1000).toFixed(1);
   const hours = Math.floor(c.walkTotal / 60), mins = c.walkTotal % 60;
   const surveyTrip = currentTripForCity(city);
   // 2026-09-11 재검토(11차) — 코스 필드 충돌 안내. trip에 딸린 코스는
   // 날짜별 upsert만 하고 아직 필드 병합을 안 하므로(daRemergeGenericConflict
   // 미적용) 여기서는 레거시(tripId 없음) 코스만 해당된다 — 없으면
   // c._fieldConflicts 자체가 애초에 안 생긴다.
-  const courseConflictHTML = daFieldConflictBlockHTML(c._fieldConflicts, 'course-conflict-resolve', `${c.city}::${c.date}`);
-  open('오늘의 코스', `${window.WeatherCard.skeletonHTML(city)}${window.StreetVideo.buttonHTML(city)}<div class="detail">${dayTabsHTML(c)}${tripBlockHTML(city)}${courseConflictHTML}<h2>${c.stops.length}곳 · 도보 이동 ${hours ? hours + '시간 ' : ''}${mins}분</h2>` +
-    `<p>${c.routedReal ? '실제 도보 경로 기준으로 계산했습니다.' : '실제 경로 연결에 실패해 직선거리 기준으로 추정했습니다(실제와 다를 수 있어요).'} 총 이동 거리 약 ${totalKm}km · 마지막 장소 도착 예정 ${window.CourseGen.clockLabel(c.endAt - (c.stops[c.stops.length - 1] ? c.stops[c.stops.length - 1].dwell : 0))}</p>` +
+  const courseConflictHTML = daFieldConflictBlockHTML(stored._fieldConflicts, 'course-conflict-resolve', `${c.city}::${c.date}`);
+  const lastStop = c.stops[c.stops.length - 1];
+  const routeLine = c.edited
+    ? '직접 바꾼 일정이에요. 일부 이동시간은 직선거리로 추정했어요(실제와 다를 수 있어요).'
+    : `${c.routedReal ? '실제 도보 경로 기준으로 계산했습니다.' : '실제 경로 연결에 실패해 직선거리 기준으로 추정했습니다(실제와 다를 수 있어요).'} 총 이동 거리 약 ${totalKm}km`;
+  const placeIds = daCourseStopPlaceIds(c);
+  const loggedIn = !!A.sessionToken(foodMap);
+  const noIdCount = c.stops.filter((st) => !(daPlaceById(st.id) || {}).placeId).length;
+  const anyChecked = placeIds.some((id) => daHoursGet(id));
+  const hoursBox = (loggedIn && daHoursFeatureOn() && c.stops.length)
+    ? `<div class="sched-hours">` +
+      (placeIds.length ? `<button class="sched-hours-btn" data-hours-check>${anyChecked ? '영업시간 다시 확인' : '영업시간 확인'}(${Math.min(placeIds.length, DA_HOURS_MAX_PER_CALL)}곳)</button>` : '') +
+      (noIdCount ? `<p class="xsmall sched-foot">위치 확인 전인 ${noIdCount}곳은 영업시간을 불러올 수 없어요 — "구글 지도에서 확인"으로 봐 주세요.</p>` : '') +
+      `<p class="xsmall sched-foot" id="schedHoursMsg" hidden></p></div>`
+    : '';
+  const undoBtn = (daLastCourseUndo && daLastCourseUndo.epoch === sessionEpoch) ? `<button class="text-button" data-sched-undo>방금 바꾼 것 되돌리기(${A.esc(daLastCourseUndo.label)})</button>` : '';
+  open('오늘의 코스', `${window.WeatherCard.skeletonHTML(city)}${window.StreetVideo.buttonHTML(city)}<div class="detail">${dayTabsHTML(c)}${tripBlockHTML(city)}${courseConflictHTML}` +
+    `<div class="sched-head"><b>${A.esc(DS.dateLabel(c.date))}</b><span class="sched-tz">${daTzNoteHTML(city)}</span>` +
+    `<div class="sched-depart">출발 ${clock(c.departureMinutes)}<button data-sched-depart>출발 시각 바꾸기</button></div></div>` +
+    `<h2>${c.stops.length}곳 · 도보 이동 ${hours ? hours + '시간 ' : ''}${mins}분</h2>` +
+    `<p>${routeLine}${lastStop ? ` · 마지막 장소 도착 예정 ${clock(lastStop.at)}` : ''}</p>` +
+    (c.stops.length ? '' : '<p class="inline-note">이 날짜에 남은 장소가 없어요. 다른 날짜에서 옮겨 오거나 새로 만들 수 있어요.</p>') +
+    hoursBox + undoBtn +
     stopViews +
+    (c.stops.length ? '<p class="xsmall sched-foot">영업 종료 시각은 가게가 문을 닫는 시각이에요 — 마지막 주문은 더 이를 수 있어요. 영업시간은 이 화면에서만 보여 주고 저장하지 않아요.</p>' : '') +
     (noCoordsList.length ? `<div class="inline-note">좌표가 없어 이번 코스 계산에서 빠진 곳 ${noCoordsList.length}곳: ${noCoordsList.map((p) => A.esc(p.name)).join(', ')}. 위치를 확인하면 다음 코스에 포함할 수 있어요.</div>` : '') +
     (timeList.length ? `<div class="inline-note">가용 시간 안에 다 들르지 못해 빠진 곳 ${timeList.length}곳: ${timeList.map((p) => A.esc(p.name)).join(', ')}. 쓸 수 있는 시간을 늘리거나 곳 수를 줄이면 포함할 수 있어요.</div>` : '') +
-    `<button class="text-button" data-course-new>새로 만들기</button><button class="primary" data-dismiss>확인</button>${window.Affiliates.placeholderHTML('affiliateSection')}${courseSurveyHTML(surveyTrip && surveyTrip.tripId)}</div>`);
+    `<button class="text-button" data-course-new>새로 만들기</button><p class="xsmall sched-foot">새로 만들면 실제 도보 경로로 다시 계산하고 코스 생성 1회가 사용돼요(자동으로 다시 계산하지 않아요).</p>` +
+    `<button class="primary" data-dismiss>확인</button>${window.Affiliates.placeholderHTML('affiliateSection')}${courseSurveyHTML(surveyTrip && surveyTrip.tripId)}</div>`);
+  daRenderHoursLines();
   window.WeatherCard.loadWeatherCard(A, city, spots, c.date);
   // 2026-09-11 재검토(9차) — 최소 제휴 준비. 이 도시에 승인된 실제
   // 제휴가 없으면(지금은 전부 없음) 섹션이 그대로 숨겨진 채로 남는다.
   window.Affiliates.bindAffiliateClicks('affiliateSection');
   window.Affiliates.loadAffiliateSection(A, city, 'affiliateSection');
+}
+/* 메모리에 있는 영업시간으로 각 장소 줄의 판정을 채운다(서버 호출 없음). */
+function daRenderHoursLines() {
+  const stored = foodMap.course; if (!stored) return;
+  const DS = window.DaySchedule, BH = window.BusinessHours;
+  const c = DS.recompute(stored);
+  const tz = A.cityTimeZone(city);
+  document.querySelectorAll('#sheetContent [data-hours-stop]').forEach((el) => {
+    const s = c.stops.find((x) => x.id === el.dataset.hoursStop);
+    const p = s && daPlaceById(s.id);
+    const mem = p && daHoursGet(p.placeId);
+    if (!s || !mem) { el.innerHTML = ''; return; }
+    const ev = BH.evaluateVisit(mem, c.date, s.at, s.dwell);
+    const day = BH.describeDay(mem, c.date);
+    const meta = [day ? `그날 영업: ${day}` : '', ev.basisLabel || '', BH.sourceLabel(mem), mem.fetchedAt ? `${daFormatFetched(mem.fetchedAt)} 확인` : ''].filter(Boolean).join(' · ');
+    const tzWarn = (mem.timeZone && tz && mem.timeZone !== tz) ? `<p class="hours-info">이 장소 시간대(${A.esc(mem.timeZone)})가 코스 기준 시간대와 달라 시각 비교가 정확하지 않을 수 있어요.</p>` : '';
+    el.innerHTML = `<p class="hours-${ev.level === 'none' ? 'info' : ev.level}">${A.esc(ev.text)}</p>${meta ? `<p class="hours-meta">${A.esc(meta)}</p>` : ''}${tzWarn}`;
+  });
+}
+/* "영업시간 확인" — 사용자가 눌렀을 때만. 이미 이번 세션에 받은 곳은 다시
+   안 묻고(실패·미조회만 다시), 전부 받은 뒤 누르면 "다시 확인"으로 전부
+   다시 묻는다. 계정 전환·화면 전환 뒤 늦게 온 응답은 반영하지 않는다. */
+async function daFetchHoursForCourse(btn) {
+  const c = foodMap.course; if (!c) return;
+  const token = A.sessionToken(foodMap);
+  if (!token) { showLoginSheet(() => showSavedCourse()); return; }
+  const ids = daCourseStopPlaceIds(c);
+  if (!ids.length) return;
+  const needed = ids.filter((id) => { const m = daHoursGet(id); return !m || m.status === 'failed' || m.status === 'not-requested'; });
+  const batch = (needed.length ? needed : ids).slice(0, DA_HOURS_MAX_PER_CALL);
+  const epochAtStart = sessionEpoch;
+  const screenAtStart = _screenVersion;
+  const msg = $('#schedHoursMsg');
+  if (btn) { btn.disabled = true; btn.textContent = '영업시간 확인 중…'; }
+  const r = await A.api('/api/places/hours', { method: 'POST', token, body: { placeIds: batch } });
+  if (sessionEpoch !== epochAtStart) return; // 그 사이 로그아웃·계정 전환 — 버린다.
+  let note = '';
+  if (r.ok && r.json && r.json.ok && Array.isArray(r.json.results)) {
+    r.json.results.forEach((it) => { if (it && it.placeId) daHoursPut(it.placeId, it); });
+    const limited = r.json.results.filter((it) => it && it.status === 'not-requested').length;
+    if (limited) note = `${limited}곳은 이번에 확인하지 못했어요(휴무라는 뜻이 아니에요). "구글 지도에서 확인"으로 봐 주세요.`;
+  } else if (r.json && r.json.reason === 'business-hours-disabled') {
+    daServerServices = Object.assign({}, daServerServices || {}, { businessHours: 'disabled' });
+    note = '영업시간 확인은 아직 준비 중이에요. 각 장소의 "구글 지도에서 확인"으로 봐 주세요.';
+  } else {
+    note = '영업시간을 불러오지 못했어요. 코스는 그대로예요 — 잠시 뒤 다시 눌러 주세요.';
+  }
+  if (_screenVersion !== screenAtStart) return; // 다른 화면으로 옮겨 갔다 — 화면은 안 건드린다.
+  daRenderHoursLines();
+  if (btn) { btn.disabled = false; btn.textContent = '영업시간 다시 확인'; }
+  if (msg) { msg.hidden = !note; msg.textContent = note; }
+}
+/* 일정 바꾸기 저장 — 로컬 저장이 실패하면 바꾸기 전 일정으로 그대로
+   되돌린다(반쯤 바뀐 상태로 남기지 않는다). 성공하면 되돌리기 한 번을
+   남기고 기존 동기화 경로(daSyncPushSafe)로 올린다. entries의 마지막
+   항목이 화면에 보일 코스다. */
+function daCommitCourseEdits(entries, label) {
+  const before = {
+    courses: JSON.parse(JSON.stringify(foodMap.courses || [])),
+    current: foodMap.course ? JSON.parse(JSON.stringify(foodMap.course)) : null,
+  };
+  entries.forEach((e) => daUpsertCourse(e));
+  const saved = A.saveFoodMap(foodMap);
+  if (!saved) {
+    daRestoreCourses(before);
+    alert('이 기기에 저장하지 못해 바꾸기 전 일정으로 되돌렸어요. 저장 공간을 확인한 뒤 다시 시도해 주세요.');
+    showSavedCourse();
+    return false;
+  }
+  daLastCourseUndo = { epoch: sessionEpoch, before, label };
+  daSyncPushSafe();
+  showSavedCourse();
+  return true;
+}
+function daRestoreCourses(before) {
+  foodMap.courses = before.courses;
+  const cur = before.current;
+  foodMap.course = cur ? (foodMap.courses.find((x) => x.city === cur.city && x.date === cur.date && x.tripId === cur.tripId) || cur) : foodMap.course;
+}
+function daUndoCourseEdit() {
+  const u = daLastCourseUndo;
+  if (!u || u.epoch !== sessionEpoch) return;
+  const snapshot = { courses: JSON.parse(JSON.stringify(foodMap.courses || [])), current: foodMap.course ? JSON.parse(JSON.stringify(foodMap.course)) : null };
+  daRestoreCourses(u.before);
+  if (!A.saveFoodMap(foodMap)) {
+    daRestoreCourses(snapshot);
+    alert('되돌리기를 저장하지 못했어요. 지금 일정은 그대로예요.');
+    showSavedCourse();
+    return;
+  }
+  daLastCourseUndo = null;
+  daSyncPushSafe();
+  daToast('바꾸기 전 일정으로 되돌렸어요.');
+  showSavedCourse();
+}
+const DA_INPUT_STYLE = 'margin-top:6px;width:100%;box-sizing:border-box;padding:12px 16px;border-radius:20px;border:1px solid #e5e6e1;font:inherit;min-height:44px';
+function showDepartureEditor() {
+  const c = foodMap.course; if (!c) return;
+  const DS = window.DaySchedule;
+  const cur = DS.departureOf(c);
+  open('출발 시각', `<div class="detail"><h2>${A.esc(DS.dateLabel(c.date))} 출발 시각</h2><p>${daTzNoteHTML(city)}</p>` +
+    `<label class="xsmall" style="display:block;margin:10px 0 6px">출발 시각<input class="xinput" id="departInput" type="time" step="300" value="${A.esc(DS.clock(cur))}" style="${DA_INPUT_STYLE}"></label>` +
+    `<p class="inline-note">이동시간은 그대로 두고 도착 시각만 다시 계산해요. 비용이 드는 경로 계산은 다시 하지 않아요.</p>` +
+    `<p class="inline-note" id="departMsg" hidden></p>` +
+    `<button class="primary" id="departSaveBtn">저장</button><button class="text-button" data-back-course>돌아가기</button></div>`);
+  $('#departSaveBtn').onclick = () => {
+    const v = DS.parseClock($('#departInput').value);
+    if (v == null) { const m = $('#departMsg'); m.hidden = false; m.textContent = '시각을 다시 골라 주세요(예: 09:30).'; return; }
+    daCommitCourseEdits([DS.recompute(Object.assign({}, foodMap.course, { departureMinutes: v }))], '출발 시각');
+  };
+}
+function showStopEditor(stopId) {
+  const stored = foodMap.course; if (!stored) return;
+  const DS = window.DaySchedule;
+  const c = DS.recompute(stored);
+  const s = c.stops.find((x) => x.id === stopId);
+  const p = s && daPlaceById(s.id);
+  if (!s || !p) return;
+  const sameTrip = (x) => (x.tripId || null) === (stored.tripId || null);
+  const otherDays = daCoursesForCity(city).filter((d) => d.date && d.date !== stored.date && sameTrip(d));
+  open('일정 바꾸기', `<div class="detail"><h2>${A.esc(p.name)}</h2><p>${A.esc(DS.dateLabel(stored.date))} · 지금 ${DS.clock(s.at)} 도착 예정</p>` +
+    `<label class="xsmall" style="display:block;margin:10px 0 6px">방문 시각(선택)<input class="xinput" id="stopFixedAt" type="time" step="300" value="${Number.isFinite(s.fixedAt) ? A.esc(DS.clock(s.fixedAt)) : ''}" style="${DA_INPUT_STYLE}"></label>` +
+    `<p class="xsmall sched-foot">비워 두면 앞 장소에서 이동한 순서대로 도착해요. 정하면 그 시각까지 기다렸다 들어가요.</p>` +
+    `<label class="xsmall" style="display:block;margin:10px 0 6px">머무는 시간(분)<input class="xinput" id="stopDwell" type="number" inputmode="numeric" min="10" max="600" step="5" value="${A.esc(String(s.dwell || DS.DEFAULT_DWELL_MIN))}" style="${DA_INPUT_STYLE}"></label>` +
+    `<label class="xsmall" style="display:block;margin:10px 0 6px">내 메모(영업 정보 등, 선택)<textarea id="stopNote" maxlength="200" rows="2" style="${DA_INPUT_STYLE};border-radius:16px">${A.esc(s.userHoursNote || '')}</textarea></label>` +
+    `<p class="xsmall sched-foot">내가 적은 메모는 따로 보관돼요. 구글 영업시간으로 덮어쓰지 않아요.</p>` +
+    `<button class="primary" id="stopSaveBtn">이 날짜 일정에 저장</button>` +
+    `<h3 class="sched-sub">다른 날짜로 옮기기</h3>` +
+    `<label class="xsmall" style="display:block;margin:6px 0">옮길 날짜<select id="stopMoveTarget" style="${DA_INPUT_STYLE}">${otherDays.map((d) => `<option value="${A.esc(d.date)}">${A.esc(DS.dateLabel(d.date))} (${(d.stops || []).length}곳)</option>`).join('')}<option value="__new">새 날짜 고르기</option></select></label>` +
+    `<label class="xsmall" id="stopMoveNewWrap" style="display:${otherDays.length ? 'none' : 'block'};margin:6px 0">새 날짜<input class="xinput" id="stopMoveNewDate" type="date" value="${A.esc(DS.addDaysYmd(stored.date, 1) || '')}" style="${DA_INPUT_STYLE}"></label>` +
+    `<p class="xsmall sched-foot">옮기면 이 날짜 코스에서 빠지고, 옮긴 날짜 코스의 맨 뒤에 붙어요. 그 날짜의 기존 순서·시각은 그대로 둬요. 이동시간은 직선거리로 추정해요(비용이 드는 경로 계산은 자동으로 하지 않아요).</p>` +
+    `<button class="text-button sched-wide" id="stopMoveBtn">이 날짜로 옮기기</button>` +
+    `<button class="text-button sched-wide sched-danger" id="stopRemoveBtn">이 날짜 코스에서 빼기</button>` +
+    `<p class="xsmall sched-foot">빼도 저장한 장소 목록에서는 지워지지 않아요. 바로 다음 화면에서 되돌릴 수 있어요.</p>` +
+    `<p class="inline-note" id="stopEditMsg" hidden></p>` +
+    `<button class="text-button" data-back-course>돌아가기</button></div>`);
+  const msg = (t) => { const m = $('#stopEditMsg'); m.hidden = false; m.textContent = t; };
+  const sel = $('#stopMoveTarget');
+  if (!otherDays.length) sel.value = '__new';
+  sel.onchange = () => { $('#stopMoveNewWrap').style.display = sel.value === '__new' ? 'block' : 'none'; };
+  $('#stopSaveBtn').onclick = () => {
+    const fixedRaw = $('#stopFixedAt').value;
+    const fixed = fixedRaw ? DS.parseClock(fixedRaw) : null;
+    if (fixedRaw && fixed == null) return msg('방문 시각을 다시 골라 주세요(예: 12:30).');
+    const dwell = Math.round(Number($('#stopDwell').value));
+    if (!Number.isFinite(dwell) || dwell < 10 || dwell > 600) return msg('머무는 시간은 10분~600분 사이로 적어 주세요.');
+    const note = $('#stopNote').value.trim().slice(0, 200);
+    const next = JSON.parse(JSON.stringify(foodMap.course));
+    const st = next.stops.find((x) => x.id === stopId);
+    if (!st) return msg('이 장소가 더 이상 이 날짜 코스에 없어요.');
+    if (fixed == null) delete st.fixedAt; else st.fixedAt = fixed;
+    st.dwell = dwell;
+    if (note) st.userHoursNote = note; else delete st.userHoursNote;
+    daCommitCourseEdits([DS.recompute(next)], '방문 시각·머무는 시간');
+  };
+  $('#stopMoveBtn').onclick = () => {
+    const targetDate = sel.value === '__new' ? $('#stopMoveNewDate').value : sel.value;
+    if (!DS.parseYmd(targetDate)) return msg('옮길 날짜를 골라 주세요.');
+    const src = foodMap.course;
+    const target = (foodMap.courses || []).find((x) => x.city === src.city && x.date === targetDate && sameTrip(x)) || null;
+    const res = DS.moveStop(src, stopId, target, targetDate, daCoordsOf, { today: A.destNow(city).ymd });
+    if (!res.ok) return msg(res.reason === 'same-date' ? '지금 보고 있는 날짜예요. 다른 날짜를 골라 주세요.' : res.reason === 'already-in-target' ? '그 날짜 코스에 이미 있는 곳이에요.' : '옮기지 못했어요.');
+    // 도착 날짜를 먼저 저장하고, 화면에는 원래 보던 날짜를 남긴다.
+    if (daCommitCourseEdits([res.target, res.source], `${DS.dateLabel(targetDate)}로 옮기기`)) daToast(`${DS.dateLabel(targetDate)} 코스 맨 뒤로 옮겼어요.`);
+  };
+  $('#stopRemoveBtn').onclick = () => {
+    const res = DS.removeStop(foodMap.course, stopId, daCoordsOf);
+    if (!res.ok) return msg('이 장소가 더 이상 이 날짜 코스에 없어요.');
+    if (daCommitCourseEdits([res.course], '코스에서 빼기')) daToast('이 날짜 코스에서 뺐어요. 장소 목록에는 그대로 있어요.');
+  };
 }
 /* 2026-09-10 재검토(6차) — "계정 화면에서 잔여 횟수를 확인할 수 있게
    하라"는 지시. API/SKU 같은 개발 용어 없이, 이번 이용권(무료체험 또는
@@ -2463,6 +2732,10 @@ async function renderServiceTestModeBanner() {
   const el = $('#serviceTestModeBanner'); if (!el) return;
   const r = await A.api('/api/health');
   el.hidden = !(r.ok && r.json && r.json.testMode);
+  // 2026-09-22(18차) — 같은 응답으로 "영업시간 확인"이 서버에서 켜져
+  // 있는지도 알아 둔다(꺼져 있으면 버튼 자체를 안 보여 준다). 비용이
+  // 드는 호출이 아니다.
+  if (r.ok && r.json && r.json.services) daServerServices = r.json.services;
 }
 /* 6-4절 — "불편함 보내기". 로그인 없이도 보낼 수 있다(아직 로그인
    못 한 상태에서 겪은 문제도 알려야 한다). 화면 스크린샷 첨부는 이번
@@ -3036,6 +3309,13 @@ $('#sheetContent').onclick = (e) => {
      있는 그 날짜를 다시 계산하는 것이다 — 날짜를 안 넘기면 오늘
      날짜로 새로 만들어져 같은 날짜가 두 개로 갈라진다. */
   if (b.hasAttribute('data-course-new')) return daGateThenBuildCourseSheet({ date: foodMap.course && foodMap.course.date });
+  // 2026-09-22(18차) 3절 — 날짜별 일정 편집(전부 비용 없는 로컬 계산)과
+  // 영업시간 확인(누를 때만 서버 호출).
+  if (b.hasAttribute('data-sched-depart')) return showDepartureEditor();
+  if (b.dataset.stopEdit) return showStopEditor(b.dataset.stopEdit);
+  if (b.hasAttribute('data-hours-check')) return daFetchHoursForCourse(b);
+  if (b.hasAttribute('data-sched-undo')) return daUndoCourseEdit();
+  if (b.hasAttribute('data-back-course')) return foodMap.course ? showSavedCourse() : sheet.close();
   /* 날짜 탭 전환 — 이미 만들어 둔 걸 다시 보여줄 뿐이라 게이트를 아예
      안 거친다(서버에 묻지 않는다, 항상 무료). */
   if (b.dataset.day) {

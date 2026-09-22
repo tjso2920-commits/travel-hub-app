@@ -87,7 +87,9 @@ const day1Date = afterDay1.course.date;
 
 // --- 날짜 탭이 화면에 보이는지, "+ 날짜 추가" 버튼이 있는지 ---
 const savedCourseHtml = await p.textContent('#sheetContent');
-t('저장된 코스 화면에 현재 날짜 탭이 보임', savedCourseHtml.includes(day1Date));
+// 2026-09-22(18차) — 날짜 탭은 이제 "10월 5일 (월)"처럼 날짜+요일로 보인다.
+const labelOf = (d) => p.evaluate((x) => window.DaySchedule.dateLabel(x), d);
+t('저장된 코스 화면에 현재 날짜 탭이 보임', savedCourseHtml.includes(await labelOf(day1Date)));
 const hasAddDayBtn = await p.evaluate(() => !!document.querySelector('[data-day-new]'));
 t('"+ 날짜 추가" 버튼이 있음', hasAddDayBtn);
 
@@ -204,7 +206,7 @@ await p.waitForTimeout(150);
 const backTitle = await p.textContent('#sheetLabel');
 const backHtml = await p.textContent('#sheetContent');
 t('원래 도시로 돌아오면 그 도시에 저장했던 날짜들이 그대로 다시 보임(다른 도시 방문에 안 지워짐)',
-  backTitle === '오늘의 코스' && backHtml.includes(day1Date) && backHtml.includes(day2Default));
+  backTitle === '오늘의 코스' && backHtml.includes(await labelOf(day1Date)) && backHtml.includes(await labelOf(day2Default)));
 await p.evaluate(() => document.getElementById('close').click());
 
 t('최종 콘솔/런타임 오류 0', errs.length === 0);

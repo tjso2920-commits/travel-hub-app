@@ -1481,6 +1481,9 @@ window.DesignAdapter = {
   lookupState: daLookupState,
   migrateStorage: daMigrateStorage,
   destNow: daDestNow,
+  // 2026-09-22(18차) — 코스 화면에 "어느 시간대 기준인지"를 보여 주기 위한 것.
+  // 표에 없는 도시는 null(화면이 "시간대 미확인 — 도쿄 시간으로 계산"이라고 알린다).
+  cityTimeZone: (cityName) => FM_CITY_TZ[cityName] || null,
   sortSpots: daSortSpots,
   centroid: daCentroid,
   testModeAllowed: daTestModeAllowed,

@@ -44,6 +44,22 @@ p.on('dialog', (d) => d.dismiss());
 let fail = 0;
 const t = (n, c) => { console.log((c ? 'PASS ' : 'FAIL ') + n); if (!c) fail++; };
 
+// 2026-09-22(18차 최종검수) — 이 검사는 서버 없이 파일을 직접 연다. 앱은
+// 켜질 때 서버 상태(/api/health)를 한 번 묻는데, file:// 에서는 그 요청이
+// 브라우저 규칙(CORS)상 무조건 막혀 "콘솔 오류"로 잡혔다(앱 결함이 아니라
+// 검사 환경 탓 — 18차 이전부터 있던 실패). 서버 주소를 가짜 http 주소로
+// 두고 상태 요청에만 최소 응답을 준다. 다른 API 요청은 이 검사에서
+// 원래 없다(측정 이벤트 제외) — 생기면 abort되어 콘솔 오류로 드러난다.
+await p.addInitScript(() => { window.API_BASE = 'http://api.design-check.test'; });
+// 측정 이벤트(/api/events)도 서버 주소가 생기면 나가므로 받기만 한다.
+const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET,POST,OPTIONS' };
+await p.route('http://api.design-check.test/**', (route) => {
+  const pathname = new URL(route.request().url()).pathname;
+  if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+  if (pathname === '/api/health') return route.fulfill({ status: 200, contentType: 'application/json', headers: cors, body: JSON.stringify({ ok: true, testMode: false, services: {} }) });
+  if (pathname === '/api/events') return route.fulfill({ status: 200, contentType: 'application/json', headers: cors, body: '{"ok":true}' });
+  return route.abort();
+});
 await p.goto('file://' + process.cwd() + '/src/design/index.html');
 await p.waitForTimeout(300);
 t('초기 화면(데이터 없음)은 샘플로 뜸', (await p.evaluate(() => usingSample)) === true);
@@ -63,7 +79,11 @@ t('가져온 뒤 샘플 표시가 꺼짐', state.usingSample === false);
 t('배경 화면(#count)도 같이 갱신됨', state.count === '3');
 t('foodMap.places 에도 저장됨', (await p.evaluate(() => foodMap.places.length)) === 3);
 
-await p.click('.spot-open >> nth=0');
+// 2026-09-22(18차 최종검수) — 예전엔 목록의 "첫 번째" 장소를 열었다. 세
+// 곳의 저장 시각이 같아 정렬 순서가 실행마다 달라질 수 있고, 링크가 없는
+// 세 번째 행(st.763)이 먼저 오면 검색 링크(정상 동작)가 나와 이 검사가
+// 간헐적으로 실패했다. 실제 저장 URL이 있는 장소를 이름으로 지정해 연다.
+await p.click('.spot-open:has-text("이자카야 2호점")');
 await p.waitForTimeout(200);
 const detailHTML = await p.textContent('#sheetContent');
 t('상세 시트에 샘플 문구가 안 남음("디자인 예시" 없음)', !detailHTML.includes('디자인 예시'));
