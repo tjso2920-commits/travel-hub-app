@@ -2741,17 +2741,25 @@ function showAddByMapLinkSheet(prefill) {
     // 로그인) 이 응답은 완전히 버린다 — 지금 전역 foodMap은 이미 다른
     // 계정 것이라, 여기서 저장하면 그 계정에 엉뚱한 장소가 생긴다.
     if (sessionEpoch !== epochAtStart) return;
-    // 이 화면 안에서 더 최신 저장 시도가 이미 시작됐으면(예: 이 요청이
-    // 도는 사이 링크를 바꿔 다시 눌렀음) 이 응답은 낡은 것이니 버린다.
-    if (mySeq !== requestSeq) return;
-    // 버튼을 다시 안 누르고 입력칸만 고쳤어도(또는 붙여넣기로 바꿨어도)
-    // 이 응답은 더 이상 지금 입력과 무관하다 — 버린다.
-    if (inputVersion !== myInputVersion) return;
     // 이 화면 자체를 벗어났으면(다른 장소 상세·다른 시트로 이동) 이제
     // 와서 버튼 텍스트를 되돌리거나 새 화면을 덮어씌우면 안 된다 —
     // 이미 사라졌을 수 있는 DOM을 건드리지 않는다.
     if (!stillCurrentScreen()) return;
+    // 이 화면 안에서 더 최신 저장 시도가 이미 시작됐으면(예: 이 요청이
+    // 도는 사이 링크를 바꿔 다시 눌렀음) 이 응답은 낡은 것이다. 게다가
+    // 지금 버튼("확인 중…")은 그 최신 요청의 것이므로 여기서 되돌리면
+    // 안 된다 — 되돌리는 건 그 요청이 자기 응답을 받을 때 한다.
+    if (mySeq !== requestSeq) return;
+    // 2026-09-22(최종검수 1절) — 재현된 버그: 입력이 B로 바뀐 뒤 A의
+    // 응답이 오면 아래 inputVersion 검사에서 곧장 return 해 버려,
+    // 버튼이 disabled·"확인 중…" 상태로 굳어 B를 제출할 방법이
+    // 없어졌다. 계정·화면·요청 주인이 모두 지금 이 요청으로 확인된
+    // 이 시점에서는 결과를 쓰든 버리든 버튼 상태부터 되돌린다.
     btn.disabled = false; btn.textContent = '이 링크로 추가';
+    // 버튼을 다시 안 누르고 입력칸만 고쳤어도(또는 붙여넣기로 바꿨어도)
+    // 이 응답은 더 이상 지금 입력과 무관하다 — 저장·이름확인 UI 없이
+    // 버린다(버튼은 위에서 이미 되살려 B를 바로 제출할 수 있다).
+    if (inputVersion !== myInputVersion) return;
     if (!r.ok || !r.json || !r.json.ok) {
       const reason = r.json && r.json.reason;
       const reasonMsg = {

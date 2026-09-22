@@ -56,6 +56,11 @@
  *      바꾸면, 나중에 도착한 A의 응답이 저장되거나 이름 확인 UI를
  *      열지 않음(입력 버전 대조).
  *
+ * 2026-09-22 출시 전 최종검수 1절 — 재현·수정 추가:
+ *  20) 위 19)에 이어서, 오래된 A 응답을 버린 뒤에도 버튼이
+ *      disabled·"확인 중…"으로 굳지 않고 되살아나, 사용자가 지금
+ *      입력된 B를 그대로 눌러 정상 저장까지 된다(기능 사용 불능 방지).
+ *
  * 실행: node scripts/test-map-link-add.mjs
  */
 import { chromium } from 'playwright';
@@ -536,6 +541,21 @@ const fullUrl = 'https://www.google.com/maps/place/%EC%B9%B4%ED%8E%98+%ED%85%8C%
   t('19) 응답이 늦게 온 A 요청이 저장되지 않음(입력이 이미 B로 바뀐 뒤라 폐기)', !aSaved);
   const nameWrapOpenedWrongly = await page.evaluate(() => { const w = document.getElementById('mapLinkNameWrap'); return !!w && !w.hidden; });
   t('19) A 응답으로 이름 확인 UI가 잘못 열리지 않음', !nameWrapOpenedWrongly);
+
+  // 20) 2026-09-22 최종검수 1절 — "A가 저장되지 않았다"에서 끝내지
+  //     않는다. 오래된 A 응답을 버린 뒤에도 버튼이 되살아나 있어야
+  //     하고(예전엔 disabled·"확인 중…"으로 굳었다), 사용자가 그대로
+  //     B를 눌러 정상 저장까지 되는지 이어서 확인한다.
+  const btnState = await page.evaluate(() => { const x = document.getElementById('mapLinkAddBtn'); return { disabled: x.disabled, text: x.textContent }; });
+  t('20) 오래된 응답을 버린 뒤 버튼이 다시 눌러지는 상태로 돌아옴', btnState.disabled === false && btnState.text.includes('이 링크로 추가'));
+  t('20) 버튼 문구도 "확인 중…"으로 굳지 않음', !btnState.text.includes('확인 중'));
+
+  await page.click('#mapLinkAddBtn'); // 사용자가 지금 입력된 B를 그대로 제출.
+  await page.waitForTimeout(500);
+  const bSaved = await page.evaluate(() => foodMap.places.some((p) => p.name === '입력버전B'));
+  t('20) 이어서 B를 눌러 실제로 정상 저장됨(사용 불능 상태로 안 빠짐)', bSaved);
+  const stillNoA = await page.evaluate(() => foodMap.places.some((p) => p.name === '입력버전A'));
+  t('20) 그 과정에서도 A는 여전히 저장되지 않음', !stillNoA);
   await page.evaluate(() => { const c = document.getElementById('close'); if (c) c.click(); });
 }
 

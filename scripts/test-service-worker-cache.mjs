@@ -43,7 +43,18 @@ function safeFile(urlPath) {
   return candidate === ROOT || candidate.startsWith(`${ROOT}${path.sep}`) ? candidate : null;
 }
 const server = http.createServer((req, res) => {
-  const pathname = (req.url || '/').split('?')[0];
+  let pathname = (req.url || '/').split('?')[0];
+  // 2026-09-22 최종검수 — 실제 배포 형태 두 가지를 그대로 흉내 낸다.
+  // (1) 하위 경로 배포(GitHub Pages 프로젝트 사이트: /<repo>/...)를
+  //     '/app' 접두어로 재현한다.
+  const subPath = pathname.startsWith('/app/') || pathname === '/app';
+  if (subPath) pathname = pathname.replace(/^\/app/, '') || '/';
+  const prefix = subPath ? '/app' : '';
+  // (2) 문서에 적힌 폰 테스트 구성(scripts/serve.mjs)과 똑같이 루트
+  //     주소는 디자인 앱으로 리디렉션한다 — 서비스워커가 이걸 무시하고
+  //     캐시된 옛 앱을 돌려주면 폰에서 엉뚱한 앱이 뜬다.
+  if (pathname === '/') { res.writeHead(302, { Location: `${prefix}/design/`, 'Cache-Control': 'no-store' }); res.end(); return; }
+  if (pathname === '/design/') pathname = '/design/index.html';
   // 실제 재현(3차) 그대로 — 같은 origin의 JSON API를 네비게이션으로
   // 직접 열 수 있는 실제 엔드포인트. 앱 문서가 아니므로 캐시 대상이면
   // 절대 안 된다.
@@ -265,6 +276,69 @@ t('서비스워커가 실제로 등록되고 이 페이지를 제어함(localhos
   t('3차재현C) 기존 앱 캐시도 그 사이 안 바뀜(정상 내용 그대로)', !!classicAfterC && classicAfterC.includes(CLASSIC_MARK));
   override = null;
   await page.goto(base + '/design/index.html'); // 정상 상태로 복귀.
+}
+
+// =====================================================================
+// 최종검수 D) 문서에 적힌 폰 테스트 구성 그대로 — 루트 주소(/)는 서버가
+//    디자인 앱으로 리디렉션한다. 서비스워커가 설치된 뒤에도 루트를 열면
+//    디자인 앱이 떠야 한다(캐시된 옛 앱이 대신 뜨면 폰에서 "새 앱이
+//    안 열린다"가 된다).
+// =====================================================================
+{
+  await page.goto(base + '/');
+  const rootTitle = await page.title();
+  t('D) 서비스워커 설치 후에도 루트 주소를 열면 디자인 앱이 뜸(옛 앱이 대신 뜨지 않음)', rootTitle.includes(DESIGN_MARK));
+  const classicUntouched = await cacheEntryText(page, base + '/index.html');
+  t('D) 그 과정에서 옛 앱 캐시는 옛 앱 내용 그대로임', !!classicUntouched && classicUntouched.includes(CLASSIC_MARK));
+}
+
+// =====================================================================
+// 최종검수 E) 하위 경로 배포(GitHub Pages 프로젝트 사이트처럼
+//    /<repo>/... 밑에 통째로 올라가는 형태)에서도 앱 문서 캐시가
+//    동작한다 — 경로를 절대경로로 고정하면 이 배포에서 조용히 죽는다.
+// =====================================================================
+{
+  const ctx2 = await b.newContext();
+  const p2 = await ctx2.newPage();
+  p2.on('dialog', (d) => d.dismiss());
+  await p2.goto(base + '/app/design/index.html');
+  await p2.evaluate(() => navigator.serviceWorker.ready);
+  await p2.waitForFunction(() => !!navigator.serviceWorker.controller, { timeout: 8000 }).catch(() => {});
+  t('E) 하위 경로 배포에서도 서비스워커가 등록·제어함', await p2.evaluate(() => !!navigator.serviceWorker.controller));
+  await p2.goto(base + '/app/design/index.html');
+  await p2.waitForTimeout(500);
+  const subCached = await cacheEntryText(p2, base + '/app/design/index.html');
+  t('E) 하위 경로 배포에서도 디자인 앱 문서가 캐시에 담김', !!subCached && subCached.includes(DESIGN_MARK));
+  await ctx2.setOffline(true);
+  await p2.goto(base + '/app/design/index.html').catch(() => {});
+  const subOffline = await p2.title().catch(() => '');
+  t('E) 하위 경로 배포에서도 오프라인으로 디자인 앱이 열림', subOffline.includes(DESIGN_MARK));
+  await ctx2.setOffline(false);
+
+  // 위 두 가지는 설치 시점 선캐시(cache.add)와 일반 통과 경로만으로도
+  // 우연히 통과할 수 있다. "앱 문서 캐시 갱신 경로"가 하위 경로
+  // 배포에서도 실제로 살아 있는지는, 새 버전이 배포됐을 때 캐시가
+  // 실제로 갱신되는지로만 확인된다(일반 통과 경로는 캐시를 안 쓴다).
+  // 마커는 실제 HTML에 우연히 들어 있을 수 없는 문자열을 쓴다 —
+  // 'v3'처럼 짧은 문자열은 SVG 경로 데이터('0v3')에 실제로 들어 있어
+  // 검사가 항상 통과하는 가짜 초록불이 된다(이번 검수에서 실제로 겪음).
+  const subNewHtml = fs.readFileSync(path.join(ROOT, 'design', 'index.html'), 'utf8').replace('내 스팟 · Travel hub', '내 스팟 · Travel hub SUBPATH_NEW_BUILD');
+  // 이 테스트 서버는 '/app' 접두어를 먼저 떼고 override.path와 비교하므로
+  // 떼어낸 형태로 지정한다(지금 이 구간에서는 p2만 이동한다).
+  override = { path: '/design/index.html', status: 200, body: subNewHtml };
+  await p2.goto(base + '/app/design/index.html');
+  await p2.waitForFunction(async () => {
+    const names = await caches.keys();
+    const cacheName = names.find((n) => n.startsWith('travel-hub-'));
+    if (!cacheName) return false;
+    const cache = await caches.open(cacheName);
+    const res = await cache.match(location.origin + '/app/design/index.html');
+    return res ? (await res.text()).includes('SUBPATH_NEW_BUILD') : false;
+  }, { timeout: 5000 }).catch(() => {});
+  const subUpdated = await cacheEntryText(p2, base + '/app/design/index.html');
+  t('E) 하위 경로 배포에서도 새 버전이 캐시에 실제로 갱신됨(앱 문서 경로가 살아 있음)', !!subUpdated && subUpdated.includes('SUBPATH_NEW_BUILD'));
+  override = null;
+  await ctx2.close();
 }
 
 // =====================================================================

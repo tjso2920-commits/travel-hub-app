@@ -5,7 +5,7 @@
  *
  * 앱을 새로 배포할 때 CACHE 값을 반드시 올린다. 올리지 않으면 사용자가 옛 버전을 계속 본다.
  */
-const CACHE = 'travel-hub-v56';
+const CACHE = 'travel-hub-v57';
 /* 앱 본체는 반드시 담겨야 한다. 나머지는 있으면 좋은 것들이다.
    2026-09-21(17차) 3절 — 디자인 앱(src/design/index.html)이 이 SW를
    부모 스코프(../sw.js)로 재사용해 설치형 PWA(공유 수신 전제조건)가
@@ -27,13 +27,28 @@ const EXTRA = ['./', './manifest.webmanifest', './icon-192.png', './icon-512.png
    실제 두 앱의 진입 경로만 정확히 나열해 그 목록에 있을 때만 "앱
    문서 캐시" 대상으로 삼는다 — 그 외 경로는(네비게이션이어도) 아래
    일반 통과 경로로 넘어가 캐시를 전혀 안 건드리고 그대로 응답한다. */
+/* 2026-09-22(출시 전 최종검수) — 경로를 '/design/index.html'처럼 절대경로로
+   고정하면, 이 앱이 사이트 루트가 아니라 하위 경로에 통째로 올라가는
+   배포(예: GitHub Pages 프로젝트 사이트 https://…/<repo>/…)에서는 어느
+   것도 안 맞아 앱 문서 캐시 갱신 경로가 조용히 죽는다. 이 서비스워커
+   파일 자신의 위치를 기준(self.location)으로 잡아 어느 배포 형태에서도
+   같게 동작하게 한다 — 캐시 키('./index.html')도 원래 같은 기준으로
+   풀리므로 둘의 기준이 일치한다. */
+const SCOPE_PATH = self.location.pathname.replace(/[^/]*$/, ''); // 예: '/' 또는 '/travel-hub-app/'
 const APP_DOC_ROUTES = [
-  { paths: ['/', '/index.html'], key: './index.html' },
-  { paths: ['/design', '/design/', '/design/index.html'], key: './design/index.html' },
+  // 루트 주소는 "어느 앱을 보여줄지"를 이 서비스워커가 단정할 수 없다 —
+  // 배포에 따라 옛 앱을 그대로 주기도 하고(GitHub Pages), 디자인 앱으로
+  // 리디렉션하기도 한다(문서에 적힌 폰 테스트 구성 scripts/serve.mjs).
+  // 그래서 루트만 네트워크 우선으로 두고(호스트 판단을 그대로 따름),
+  // 네트워크가 안 될 때만 캐시로 떨어진다. 재현된 문제: 캐시 우선으로
+  // 두면 서비스워커 설치 뒤 폰에서 루트 주소를 열 때 리디렉션을 무시하고
+  // 캐시된 옛 앱이 떠서 "새 앱이 안 열린다"가 된다.
+  { paths: [SCOPE_PATH], key: './index.html', strategy: 'network-first' },
+  { paths: [`${SCOPE_PATH}index.html`], key: './index.html', strategy: 'cache-first' },
+  { paths: [`${SCOPE_PATH}design`, `${SCOPE_PATH}design/`, `${SCOPE_PATH}design/index.html`], key: './design/index.html', strategy: 'cache-first' },
 ];
-function appDocKeyFor(pathname) {
-  const hit = APP_DOC_ROUTES.find((r) => r.paths.includes(pathname));
-  return hit ? hit.key : null;
+function appDocRouteFor(pathname) {
+  return APP_DOC_ROUTES.find((r) => r.paths.includes(pathname)) || null;
 }
 /* 배경 갱신 응답을 캐시에 써도 되는 조건 — 정상 HTML 응답만. 상태가
    실패거나, 도중에 다른 곳으로 리디렉션됐거나(리디렉션으로 엉뚱한
@@ -83,9 +98,28 @@ self.addEventListener('fetch', (event) => {
 
   const isDocument = request.mode === 'navigate' || request.destination === 'document';
   // 네비게이션이라고 전부 "앱 문서"가 아니다 — 실제 두 앱의 진입
-  // 경로일 때만 docKey가 나온다(그 외엔 null — 아래에서 일반 통과
+  // 경로일 때만 라우트가 나온다(그 외엔 null — 아래에서 일반 통과
   // 경로로 넘어간다).
-  const docKey = isDocument ? appDocKeyFor(url.pathname) : null;
+  const docRoute = isDocument ? appDocRouteFor(url.pathname) : null;
+  const docKey = docRoute ? docRoute.key : null;
+
+  if (docRoute && docRoute.strategy === 'network-first') {
+    // 루트 주소 — 호스트가 실제로 무엇을 주는지(옛 앱이든, 디자인 앱으로의
+    // 리디렉션이든)를 그대로 따른다. 네트워크가 안 될 때만 캐시로 떨어져
+    // 비행기 모드에서도 뭔가는 열리게 한다.
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (isCacheableAppDoc(response)) {
+            const forCache = response.clone();
+            caches.open(CACHE).then((cache) => cache.put(docKey, forCache));
+          }
+          return response;
+        })
+        .catch(() => caches.match(docKey))
+    );
+    return;
+  }
 
   if (docKey) {
     // 캐시 우선 — 비행기 안에서도 열려야 한다. 네트워크가 되면 뒤에서 조용히 갱신한다.
