@@ -92,6 +92,11 @@ function makeActivePaidAccount(email) {
   const db = openDb();
   const row = db.prepare("SELECT id FROM accounts WHERE email = ?").get('existing-paid-3@example.com');
   db.prepare("UPDATE accounts SET plan_expires_at = ? WHERE id = ?").run('2000-01-01T00:00:00.000Z', row.id);
+  // 2026-09-22(18차) — 이제 결제창을 연 뒤 아직 결제 안 한 "대기 주문"도
+  // 최근 30분간은 이용권 1개분으로 예약된다(new-sale-pending-reservation
+  // 테스트). 이 절은 "만료된 손님 몫이 풀리는지"만 보려는 것이라, 첫 절에서
+  // 만든 new-customer-1의 대기 주문은 결제창을 떠난 지 오래된 것으로 둔다.
+  db.prepare("UPDATE orders SET created_at = ? WHERE status = 'pending'").run('2000-01-01T00:00:00.000Z');
 
   const { createOrder } = await import('../adapters/payment-toss.mjs');
   const newAcc3 = directAccount('new-customer-3@example.com');

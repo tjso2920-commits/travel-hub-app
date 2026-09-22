@@ -114,19 +114,36 @@ export function orderName() {
    예산에서 기존 활성 유료 손님들의 약속된 잔여 몫을 먼저 뺀 뒤에도,
    새 손님 한 명의 최악의 경우(이용권 하나 전체 안전상한)를 감당할
    여유가 남는지"를 확인한다. */
-function totalCommittedRemainingMicros() {
+/* 2026-09-22(18차) 6절 — 재현된 결함: 결제창을 열고(주문 생성) 아직
+   결제를 안 끝낸 사람은 약속에 안 들어가서, 예산이 딱 1명분 남았을 때
+   두 사람이 연달아 주문을 만들면 둘 다 통과했다(둘 다 결제하면 이용권
+   1개분 초과 약속 — server/test/new-sale-pending-reservation.test.mjs).
+   최근 config.pendingOrderReserveMinutes 안에 만든 대기 주문도 "곧 결제될
+   수 있는 이용권 1개분"으로 예약한다(계정당 1개 — 같은 사람이 결제창을
+   다시 열어도 두 번 세지 않고, 지금 주문을 만드는 사람 자신은 빼고 센다
+   — 그 사람 몫은 아래 판정에서 따로 1개분으로 확인한다). */
+function totalCommittedRemainingMicros(excludeAccountId) {
   const db = openDb();
-  const rows = db.prepare("SELECT id, active_order_id FROM accounts WHERE plan = 'paid' AND (plan_expires_at IS NULL OR plan_expires_at > ?)").all(nowIso());
+  const now = nowIso();
+  const rows = db.prepare("SELECT id, active_order_id FROM accounts WHERE plan = 'paid' AND (plan_expires_at IS NULL OR plan_expires_at > ?)").all(now);
   let total = 0;
+  const paidIds = new Set();
   for (const row of rows) {
     if (!row.active_order_id) continue;
+    paidIds.add(row.id);
     const spent = periodCostMicros(row.id, row.active_order_id);
     total += Math.max(0, config.costSafetyCap.paidEntitlementMicros - spent);
+  }
+  const since = new Date(Date.now() - config.pendingOrderReserveMinutes * 60 * 1000).toISOString();
+  const pending = db.prepare("SELECT DISTINCT account_id FROM orders WHERE status = 'pending' AND created_at >= ?").all(since);
+  for (const row of pending) {
+    if (row.account_id === excludeAccountId || paidIds.has(row.account_id)) continue;
+    total += config.costSafetyCap.paidEntitlementMicros;
   }
   return total;
 }
 
-function isServiceUnavailableForNewSales() {
+function isServiceUnavailableForNewSales(accountId) {
   if (config.isProd && config.services.routing !== 'real') return true;
   const usage = usageSummary(null);
   const caps = usage.caps;
@@ -137,28 +154,44 @@ function isServiceUnavailableForNewSales() {
   if (caps.globalDailyMicros > 0 && (caps.globalDailyMicros - usage.globalDailyMicros) < minCourseCostMicros) return true;
 
   if (caps.globalMonthlyMicros > 0) {
-    const committed = totalCommittedRemainingMicros();
+    const committed = totalCommittedRemainingMicros(accountId);
     const remainingAfterCommitments = (caps.globalMonthlyMicros - usage.globalMonthlyMicros) - committed;
     if (remainingAfterCommitments < config.costSafetyCap.paidEntitlementMicros) return true;
   }
   return false;
 }
 
+/* 2026-09-22(18차) 6절 — 막힐 때 "503"만 주지 않고 사람이 읽을 안내를
+   같이 준다. 신규 판매 차단은 새 주문만 막는다 — 이미 결제한 사람의 승인
+   재확인·이용권 복구(confirmPayment)는 이 판정을 아예 거치지 않는다. */
+export const NEW_SALES_PAUSED_MESSAGE = '지금은 새 이용권 판매를 잠시 멈췄어요. 이번 달 준비한 운영 한도 안에서 이미 이용 중인 분들께 약속한 사용량을 먼저 지키기 위해서예요. 결제는 되지 않았어요. 저장한 장소·코스 보기와 무료 체험은 그대로 쓸 수 있어요.';
 export function createOrder(accountId) {
-  if (isServiceUnavailableForNewSales()) {
-    return { ok: false, status: 503, reason: 'service-unavailable-for-new-sales' };
-  }
-  const ent = checkEntitlement(accountId);
-  if (ent.ok && ent.plan === 'paid') {
-    return { ok: false, status: 409, reason: 'already-has-active-entitlement', expiresAt: ent.expiresAt };
-  }
   const db = openDb();
-  const orderId = 'order_' + uuid();
-  const amount = config.price.amountKrw;
-  const now = nowIso();
-  db.prepare('INSERT INTO orders (order_id, account_id, amount, status, entitlement_days, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(orderId, accountId, amount, 'pending', config.price.periodDays, now, now);
-  return { ok: true, orderId, amount, orderName: orderName() };
+  // 판정과 주문 기록을 한 트랜잭션으로 묶는다 — 같은 DB 파일을 쓰는 다른
+  // 프로세스가 사이에 끼어들어 둘 다 "1명분 남음"을 보고 통과하는 걸 막는다
+  // (이 프로세스 안에서는 이 함수가 동기라 원래 끼어들 틈이 없다).
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    if (isServiceUnavailableForNewSales(accountId)) {
+      db.exec('ROLLBACK');
+      return { ok: false, status: 503, reason: 'service-unavailable-for-new-sales', userMessage: NEW_SALES_PAUSED_MESSAGE, existingCustomersUnaffected: true };
+    }
+    const ent = checkEntitlement(accountId);
+    if (ent.ok && ent.plan === 'paid') {
+      db.exec('ROLLBACK');
+      return { ok: false, status: 409, reason: 'already-has-active-entitlement', expiresAt: ent.expiresAt };
+    }
+    const orderId = 'order_' + uuid();
+    const amount = config.price.amountKrw;
+    const now = nowIso();
+    db.prepare('INSERT INTO orders (order_id, account_id, amount, status, entitlement_days, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(orderId, accountId, amount, 'pending', config.price.periodDays, now, now);
+    db.exec('COMMIT');
+    return { ok: true, orderId, amount, orderName: orderName() };
+  } catch (e) {
+    try { db.exec('ROLLBACK'); } catch (e2) { /* 이미 끝난 트랜잭션 */ }
+    throw e;
+  }
 }
 
 function getOrder(orderId) {

@@ -2116,6 +2116,18 @@ async function daRunRealTossPayment(token, paymentConfig, opts) {
   const orderRes = await A.api('/api/payment/order', { method: 'POST', token });
   if (!orderRes.ok || !orderRes.json || !orderRes.json.orderId) {
     daTrackSafe('payment_result', { result: 'failure' });
+    const j = orderRes.json || {};
+    // 2026-09-22(18차) 6절 — 신규 판매가 잠시 멈춘 경우는 "결제 준비 실패"가
+    // 아니다. 이유와 "결제되지 않았음·기존 이용자 영향 없음"을 그대로 알린다.
+    if (j.reason === 'service-unavailable-for-new-sales') {
+      open('새 이용권 판매 일시 중지', `<div class="detail"><h2>지금은 새 이용권 판매를 잠시 멈췄어요.</h2><p>${A.esc(j.userMessage || '결제는 되지 않았어요. 저장한 장소·코스 보기와 무료 체험은 그대로 쓸 수 있어요.')}</p><p class="inline-note">판매가 다시 열리면 이 화면에서 바로 구매할 수 있어요. 이미 이용권이 있는 분은 영향이 없어요.</p><button class="primary" data-dismiss>확인</button></div>`);
+      return;
+    }
+    if (j.reason === 'already-has-active-entitlement') {
+      const until = j.expiresAt ? ` (${new Date(j.expiresAt).toLocaleDateString('ko-KR')}까지)` : '';
+      open('이미 이용 중', `<div class="detail"><h2>이미 이용 중인 이용권이 있어요${A.esc(until)}.</h2><p>새로 결제하지 않아도 돼요. 남은 횟수는 계정 화면에서 볼 수 있어요.</p><button class="primary" data-dismiss>확인</button></div>`);
+      return;
+    }
     alert('결제를 준비하지 못했어요. 잠시 후 다시 시도해 주세요.');
     return;
   }

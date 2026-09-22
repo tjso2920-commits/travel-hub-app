@@ -292,6 +292,10 @@ export function buildConfig(env) {
     // 환경변수로 분리 — 결제 API는 코스 생성보다 느릴 수 있어 여유를
     // 더 둘 수 있게).
     paymentLockTimeoutSeconds: Number(env.PAYMENT_LOCK_TIMEOUT_SECONDS || 60),
+    // 2026-09-22(18차) 6절 — 결제창을 연(주문 생성) 뒤 이 시간 안의 대기
+    // 주문은 "곧 결제될 수 있는 이용권 1개분"으로 신규 판매 예산에서 미리
+    // 뺀다. 결제창에서 오래 머무는 경우를 감안한 제안값(확정 아님).
+    pendingOrderReserveMinutes: Number(env.PENDING_ORDER_RESERVE_MINUTES || 30),
 
     // 2026-09-10 재검토(8차) 2절 — 장소 확인 잠정 예약(reserve→finalize
     // 사이)도 서버가 그 사이에 죽으면 회수돼야 한다(같은 이유:

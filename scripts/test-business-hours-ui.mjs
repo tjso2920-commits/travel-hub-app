@@ -23,6 +23,8 @@
  * 14) 코스 생성 화면: 미래 날짜 출발 기본값 09:00, 고른 출발 시각이
  *     서버 요청(startMinutes)에 그대로 실린다(지금 시각 강제 안 함).
  * 15) 한국 시간대 기기에서 "+ 날짜 추가"가 마지막 날짜의 다음날을 제안.
+ * 16) (18차 6절) 신규 판매가 멈췄을 때 "결제 준비 실패" 대신 이유·결제
+ *      안 됨·기존 이용자 영향 없음을 화면으로 알린다.
  *
  * 실행: node scripts/test-business-hours-ui.mjs
  */
@@ -315,6 +317,18 @@ await page.waitForTimeout(200);
   const last = await page.evaluate(() => daCoursesForCity('후쿠오카').map((c) => c.date).sort().pop());
   const expected = await page.evaluate((d) => window.DaySchedule.addDaysYmd(d, 1), last);
   t('15) (Asia/Seoul 기기) "+ 날짜 추가" 기본값이 마지막 날짜의 다음날', next === expected && next !== last, `${last} → ${next}`);
+}
+
+// 16) 신규 판매 일시 중지 안내
+{
+  await page.route('**/api/payment/order', (route) => route.fulfill({ status: 503, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ ok: false, reason: 'service-unavailable-for-new-sales', userMessage: '지금은 새 이용권 판매를 잠시 멈췄어요. 결제는 되지 않았어요.', existingCustomersUnaffected: true }) }));
+  let alerted = false;
+  page.once('dialog', () => { alerted = true; });
+  await page.evaluate(() => daRunRealTossPayment(A.sessionToken(foodMap), { clientKey: 'test' }, {}));
+  await page.waitForTimeout(200);
+  const txt = await page.textContent('#sheetContent');
+  t('16) 판매 중지 시 이유·결제 안 됨·기존 이용자 영향 없음 안내(막연한 실패 알림 아님)', !alerted && txt.includes('잠시 멈췄어요') && txt.includes('결제는 되지 않았어요') && txt.includes('이미 이용권이 있는 분은 영향이 없어요'), txt.slice(0, 200));
+  await page.unroute('**/api/payment/order');
 }
 
 t('페이지 오류 없음', errs.length === 0, errs.join(' | '));
