@@ -17,3 +17,6 @@ server/data/
 # 편집기
 .vscode/
 .idea/
+
+# 18차 — PC 실행용 개인 설정(비밀키가 들어갈 수 있음). 예시는 .env.example
+local.env

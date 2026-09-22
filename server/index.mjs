@@ -587,7 +587,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.exit(1);
   }
   const server = createServer();
-  server.listen(config.port, () => {
-    console.log(`서버 시작: http://localhost:${config.port} (환경: ${config.appEnv})`);
+  // 2026-09-22(18차) 9절 — HOST를 주면 그 주소에만 연다(예: 127.0.0.1 = 이 PC
+  // 안에서만). 안 주면 예전처럼 모든 네트워크에서 받는다.
+  server.listen(config.port, config.host || undefined, () => {
+    console.log(`서버 시작: http://localhost:${config.port} (환경: ${config.appEnv}${config.host ? `, 열린 주소: ${config.host}` : ''})`);
   });
 }
