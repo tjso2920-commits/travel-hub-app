@@ -191,6 +191,9 @@ export function buildConfig(env) {
     // 없이는 real이 안 되는 부가 기능이라 "전부 test인지" 판정과 무관).
     testMode: !isProd && (forceTest || Object.entries(services).every(([k, m]) => k === 'aiClassify' || k === 'googleAuth' || k === 'businessHours' || m === 'test')),
     port: Number(env.PORT || 8787),
+    // 2026-09-22(18차) 2·9절 — 화면(src/)도 이 서버가 같은 주소로 내보낼지.
+    // 켜면 "/"가 새 앱(/design/)으로 간다. 기본 꺼짐(예전 동작 그대로).
+    serveStatic: env.SERVE_STATIC === 'true',
     dbPath: env.DB_PATH || path.join(HERE, 'data', 'app.db'),
 
     price: {

@@ -5,7 +5,7 @@
  *
  * 앱을 새로 배포할 때 CACHE 값을 반드시 올린다. 올리지 않으면 사용자가 옛 버전을 계속 본다.
  */
-const CACHE = 'travel-hub-v57';
+const CACHE = 'travel-hub-v58';
 /* 앱 본체는 반드시 담겨야 한다. 나머지는 있으면 좋은 것들이다.
    2026-09-21(17차) 3절 — 디자인 앱(src/design/index.html)이 이 SW를
    부모 스코프(../sw.js)로 재사용해 설치형 PWA(공유 수신 전제조건)가
@@ -47,6 +47,14 @@ const APP_DOC_ROUTES = [
   { paths: [`${SCOPE_PATH}index.html`], key: './index.html', strategy: 'cache-first' },
   { paths: [`${SCOPE_PATH}design`, `${SCOPE_PATH}design/`, `${SCOPE_PATH}design/index.html`], key: './design/index.html', strategy: 'cache-first' },
 ];
+/* 2026-09-22(18차) 2절 — 재현된 문제: 루트가 새 앱(/design/)으로 넘어가는
+   배포에서 망이 끊긴 채 대표 주소(/)를 열면, 아래 네트워크 우선 경로가
+   캐시된 옛 앱(./index.html — 사용자에게 API 키를 요구)을 돌려줬다.
+   온라인일 때 루트가 "직접 문서를 줬는지 / 다른 곳으로 넘겼는지"만
+   작은 표식으로 기억해 두고, 오프라인에서는 그 기억대로 보낸다. 새 앱으로
+   보낼 때는 내용이 아니라 주소를 옮긴다(302) — 루트 주소에서 새 앱 내용을
+   그대로 보여 주면 상대경로 자산(spots.css 등)이 /spots.css로 풀려 깨진다. */
+const ROOT_TARGET_KEY = './__root-target';
 function appDocRouteFor(pathname) {
   return APP_DOC_ROUTES.find((r) => r.paths.includes(pathname)) || null;
 }
@@ -110,13 +118,27 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          if (isCacheableAppDoc(response)) {
+          // 네비게이션의 리디렉션은 SW 안에서 opaqueredirect로 보인다(대상
+          // 주소는 못 읽음) — 이 앱의 배포에서 루트 리디렉션은 새 앱뿐이다.
+          if (response.type === 'opaqueredirect' || response.redirected) {
+            caches.open(CACHE).then((cache) => cache.put(ROOT_TARGET_KEY, new Response('design')));
+          } else if (isCacheableAppDoc(response)) {
             const forCache = response.clone();
-            caches.open(CACHE).then((cache) => cache.put(docKey, forCache));
+            caches.open(CACHE).then((cache) => {
+              cache.put(docKey, forCache);
+              cache.put(ROOT_TARGET_KEY, new Response('index'));
+            });
           }
           return response;
         })
-        .catch(() => caches.match(docKey))
+        .catch(async () => {
+          const marker = await caches.match(ROOT_TARGET_KEY);
+          const target = marker ? await marker.text() : 'index';
+          if (target === 'design' && await caches.match('./design/index.html')) {
+            return Response.redirect(`${SCOPE_PATH}design/`, 302);
+          }
+          return caches.match(docKey);
+        })
     );
     return;
   }

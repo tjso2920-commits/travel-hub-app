@@ -33,6 +33,7 @@ import { resolvePlaceLinkRoute } from './routes/place-link.mjs';
 import { classifyBatchRoute } from './routes/ai-classify.mjs';
 import { businessHoursRoute } from './routes/business-hours.mjs';
 import { serviceBreakdownSince } from './cost-ledger.mjs';
+import { serveStatic } from './static-site.mjs';
 import { recordEvent } from './routes/events.mjs';
 import { joinWaitlist } from './routes/waitlist.mjs';
 import { generateCourseRoute } from './routes/course-generation.mjs';
@@ -553,6 +554,9 @@ async function handle(req, res) {
         verified: getVerifiedStatus(),
       });
     }
+    // 2026-09-22(18차) 2·9절 — SERVE_STATIC=true면 화면 파일도 이 서버가
+    // 같은 주소로 내보낸다("/" → 새 앱). /api/… 는 여기 오지 않는다.
+    if (config.serveStatic && !pathname.startsWith('/api/') && serveStatic(req, res, url)) return;
     sendJson(res, 404, { ok: false, reason: 'not-found' });
   } catch (e) {
     sendJson(res, 500, { ok: false, reason: 'internal-error', message: !config.isProd ? String(e && e.message) : undefined });

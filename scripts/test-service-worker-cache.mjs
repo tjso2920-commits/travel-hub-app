@@ -42,7 +42,12 @@ function safeFile(urlPath) {
   const candidate = path.resolve(ROOT, relative);
   return candidate === ROOT || candidate.startsWith(`${ROOT}${path.sep}`) ? candidate : null;
 }
+// 2026-09-22(18차) — Playwright의 setOffline은 서비스워커 안의 fetch까지는
+// 막지 못한다(실측: 오프라인 설정 중에도 SW가 서버에서 302를 받아 옴). 진짜
+// "망 끊김"을 재현하려면 서버가 연결 자체를 끊어야 한다.
+let serverDown = false;
 const server = http.createServer((req, res) => {
+  if (serverDown) { req.socket.destroy(); return; }
   let pathname = (req.url || '/').split('?')[0];
   // 2026-09-22 최종검수 — 실제 배포 형태 두 가지를 그대로 흉내 낸다.
   // (1) 하위 경로 배포(GitHub Pages 프로젝트 사이트: /<repo>/...)를
@@ -361,12 +366,23 @@ t('서비스워커가 실제로 등록되고 이 페이지를 제어함(localhos
 // =====================================================================
 {
   await ctx.setOffline(true);
+  serverDown = true; // setOffline만으로는 SW 안의 요청이 안 막힌다(위 serverDown 주석) — 연결 자체를 끊는다.
   await page.goto(base + '/design/index.html').catch(() => {});
   const offlineDesignTitle = await page.title().catch(() => '');
   t('4) 오프라인에서도 디자인 앱 문서가 캐시로 정상 열림', offlineDesignTitle.includes(DESIGN_MARK));
   await page.goto(base + '/index.html').catch(() => {});
   const offlineClassicTitle = await page.title().catch(() => '');
   t('4) 오프라인에서도 기존 앱 문서가 캐시로 정상 열림', offlineClassicTitle.includes(CLASSIC_MARK));
+  // 2026-09-22(18차) 2절 — 재현: 루트가 새 앱으로 넘어가는 배포에서, 인터넷이
+  // 끊긴 채 대표 주소(/)를 열면 캐시된 옛 앱(사용자에게 API 키를 요구)이
+  // 떴다. 온라인일 때 루트가 어디로 갔는지 기억해 두고 오프라인에도 그대로
+  // 새 앱 주소로 보낸다(상대경로 자산이 맞게 풀리도록 내용이 아니라 주소를 옮김).
+  await page.goto(base + '/').catch(() => {});
+  await page.waitForTimeout(300);
+  const offlineRootTitle = await page.title().catch(() => '');
+  serverDown = false;
+  t('4-2) 오프라인에서 대표 주소(/)를 열어도 새 앱이 뜸(옛 앱 아님)', offlineRootTitle.includes(DESIGN_MARK) && !offlineRootTitle.includes(CLASSIC_MARK));
+  t('4-2) 주소도 /design/으로 옮겨져 화면 자산 경로가 맞음', new URL(page.url()).pathname === '/design/');
   await ctx.setOffline(false);
 }
 
