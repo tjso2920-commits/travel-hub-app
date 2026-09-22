@@ -14,6 +14,7 @@
  * 결과를 "어느 여행에" 저장할지만 다룬다.
  */
 import { openDb, uuid, nowIso } from '../db.mjs';
+import { stripCourseMeta } from './account-data.mjs';
 
 function ownedTrip(db, accountId, tripId) {
   const row = db.prepare('SELECT * FROM trips WHERE trip_id = ?').get(tripId);
@@ -92,8 +93,8 @@ export function getTripCourses(accountId, tripId) {
   const db = openDb();
   const trip = ownedTrip(db, accountId, tripId);
   if (!trip) return { ok: false, status: 404, reason: 'trip-not-found' };
-  const rows = db.prepare('SELECT date, data, updated_at FROM trip_courses WHERE trip_id = ? ORDER BY date').all(tripId);
-  return { ok: true, status: 200, courses: rows.map((r) => ({ date: r.date, ...JSON.parse(r.data), updatedAt: r.updated_at })) };
+  const rows = db.prepare('SELECT date, data, updated_at, version FROM trip_courses WHERE trip_id = ? AND deleted = 0 ORDER BY date').all(tripId);
+  return { ok: true, status: 200, courses: rows.map((r) => ({ date: r.date, ...JSON.parse(r.data), updatedAt: r.updated_at, version: r.version })) };
 }
 
 /* 코스 생성 성공 시 그 한 건만 upsert(course-generation.mjs가 부른다) —
@@ -104,11 +105,14 @@ export function upsertTripCourse(accountId, tripId, date, data) {
   const trip = ownedTrip(db, accountId, tripId);
   if (!trip) return { ok: false, status: 404, reason: 'trip-not-found' };
   const now = nowIso();
+  // 2026-09-22(18차 재검토) — 코스 생성 저장도 그 날짜의 버전을 올린다(다른
+  // 기기의 옛 기준 저장이 새로 만든 코스를 조용히 덮지 못하게). 여행 메타
+  // 버전은 올리지 않는다(코스만 바뀌었는데 여행 정보 충돌이 나지 않게).
   db.prepare(`
-    INSERT INTO trip_courses (trip_id, date, data, updated_at) VALUES (?, ?, ?, ?)
-    ON CONFLICT(trip_id, date) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
-  `).run(tripId, String(date), JSON.stringify(data), now);
-  db.prepare('UPDATE trips SET updated_at = ?, version = version + 1 WHERE trip_id = ?').run(now, tripId);
+    INSERT INTO trip_courses (trip_id, date, data, updated_at, version, deleted) VALUES (?, ?, ?, ?, 1, 0)
+    ON CONFLICT(trip_id, date) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at, deleted = 0, version = trip_courses.version + 1
+  `).run(tripId, String(date), JSON.stringify(stripCourseMeta(data)), now);
+  db.prepare('UPDATE trips SET updated_at = ? WHERE trip_id = ?').run(now, tripId);
   return { ok: true };
 }
 
@@ -185,15 +189,15 @@ export function syncTrips(accountId, incomingTrips) {
             .run(String(incoming.city), incoming.name || null, incoming.startDate || null, incoming.endDate || null, lodgingJson, now, fieldConflictsJson, incoming.tripId);
         }
       }
-      if (!conflicted && Array.isArray(incoming.courses)) {
-        for (const c of incoming.courses) {
-          if (!c || !c.date) continue;
-          db.prepare(`
-            INSERT INTO trip_courses (trip_id, date, data, updated_at) VALUES (?, ?, ?, ?)
-            ON CONFLICT(trip_id, date) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
-          `).run(incoming.tripId, String(c.date), JSON.stringify(c), now);
-        }
-      }
+      // 2026-09-22(18차 재검토) 2·3절 — 날짜별 코스는 여행 메타데이터와
+      // 따로 버전을 비교한다. 재현된 결함: 예전엔 메타데이터가 같으면 코스를
+      // 버전 확인 없이 덮어써, 두 기기가 같은 날짜를 고치면 나중 것이 조용히
+      // 이겼다(conflicts:[]). 또 upsert만 해서 되돌리기로 없어진 날짜를 서버에서
+      // 지울 수 없었다. 이제:
+      //   - 기준 버전이 서버와 같을 때만 반영(다르면 충돌로 보고, 서버 값 유지)
+      //   - 삭제는 deleted:true + 기준 버전으로만(배열에서 빠진 날짜는 안 지움)
+      //   - 서로 다른 날짜는 각자 독립적으로 반영
+      if (Array.isArray(incoming.courses)) applyTripCourses(db, incoming.tripId, incoming.courses, now, conflicts);
     }
     db.exec('COMMIT');
   } catch (e) {
@@ -201,7 +205,52 @@ export function syncTrips(accountId, incomingTrips) {
     return { ok: false, status: 500, reason: 'transaction-failed' };
   }
   const serverTrips = db.prepare('SELECT * FROM trips WHERE account_id = ? ORDER BY updated_at DESC').all(accountId).map(serializeTrip);
-  return { ok: true, status: 200, conflicts, trips: serverTrips };
+  // 날짜별 코스와 그 버전·삭제 표시를 같이 돌려준다 — 기기가 다음 저장의 기준
+  // 버전을 알고, 다른 기기가 만든·지운 날짜도 반영할 수 있게.
+  const courseRows = db.prepare('SELECT tc.trip_id, tc.date, tc.data, tc.version, tc.deleted FROM trip_courses tc JOIN trips t ON t.trip_id = tc.trip_id WHERE t.account_id = ? ORDER BY tc.trip_id, tc.date').all(accountId);
+  const courses = courseRows.filter((r) => !r.deleted).map((r) => ({ ...JSON.parse(r.data), tripId: r.trip_id, date: r.date, version: r.version }));
+  const deletedCourses = courseRows.filter((r) => r.deleted).map((r) => ({ tripId: r.trip_id, date: r.date, version: r.version }));
+  return { ok: true, status: 200, conflicts, trips: serverTrips, courses, deletedCourses };
+}
+
+/* 날짜별 코스 반영(syncTrips·putTripCourses 공용) — 18차 재검토 2·3절 규칙:
+   기준 버전이 같을 때만 반영, 명시적 삭제 표시로만 삭제, 빠진 날짜는 그대로. */
+function applyTripCourses(db, tripId, courses, now, conflicts) {
+  const getCourse = db.prepare('SELECT * FROM trip_courses WHERE trip_id = ? AND date = ?');
+  for (const c of courses) {
+    if (!c || !c.date) continue;
+    const date = String(c.date);
+    const row = getCourse.get(tripId, date);
+    const base = Number(c.version) || 0;
+    const serverCourse = row && !row.deleted ? { date, ...JSON.parse(row.data), version: row.version } : null;
+    if (c.deleted === true) {
+      if (!row || row.deleted) continue;
+      if (base === row.version) {
+        db.prepare('UPDATE trip_courses SET deleted = 1, updated_at = ?, version = version + 1 WHERE trip_id = ? AND date = ?').run(now, tripId, date);
+      } else {
+        conflicts.push({ tripId, date, reason: 'stale-base-version-course-delete', serverVersion: row.version, serverCourse });
+      }
+      continue;
+    }
+    const data = JSON.stringify(stripCourseMeta(c));
+    if (!row) {
+      db.prepare('INSERT INTO trip_courses (trip_id, date, data, updated_at, version, deleted) VALUES (?, ?, ?, ?, 1, 0)').run(tripId, date, data, now);
+      continue;
+    }
+    if (!row.deleted && sameCourseContent(row.data, c)) continue; // 실질 변화 없음 — 버전 유지
+    if (base === row.version) {
+      db.prepare('UPDATE trip_courses SET data = ?, deleted = 0, updated_at = ?, version = version + 1 WHERE trip_id = ? AND date = ?').run(data, now, tripId, date);
+    } else {
+      conflicts.push({ tripId, date, reason: row.deleted ? 'deleted-on-server' : 'stale-base-version-course', serverVersion: row.version, serverCourse });
+    }
+  }
+}
+
+function sameCourseContent(rowData, incoming) {
+  let stored = {};
+  try { stored = JSON.parse(rowData); } catch (e) { return false; }
+  const a = stripCourseMeta(stored), b = stripCourseMeta(incoming);
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 export function putTripCourses(accountId, tripId, courses) {
@@ -210,19 +259,18 @@ export function putTripCourses(accountId, tripId, courses) {
   const trip = ownedTrip(db, accountId, tripId);
   if (!trip) return { ok: false, status: 404, reason: 'trip-not-found' };
   const now = nowIso();
+  const conflicts = [];
+  // 2026-09-22(18차 재검토) — 예전엔 이 여행의 코스를 전부 지우고 다시 넣었다
+  // (버전 확인 없음 — 다른 기기의 날짜가 조용히 사라질 수 있었다). 이제 동기화와
+  // 같은 날짜별 버전 규칙을 따른다. 빠진 날짜는 지우지 않는다.
   db.exec('BEGIN');
   try {
-    db.prepare('DELETE FROM trip_courses WHERE trip_id = ?').run(tripId);
-    const stmt = db.prepare('INSERT INTO trip_courses (trip_id, date, data, updated_at) VALUES (?, ?, ?, ?)');
-    for (const c of courses) {
-      if (!c || !c.date) continue;
-      stmt.run(tripId, String(c.date), JSON.stringify(c), now);
-    }
-    db.prepare('UPDATE trips SET updated_at = ?, version = version + 1 WHERE trip_id = ?').run(now, tripId);
+    applyTripCourses(db, tripId, courses, now, conflicts);
+    db.prepare('UPDATE trips SET updated_at = ? WHERE trip_id = ?').run(now, tripId);
     db.exec('COMMIT');
   } catch (e) {
     db.exec('ROLLBACK');
     return { ok: false, status: 500, reason: 'transaction-failed' };
   }
-  return { ok: true, status: 200, count: courses.length };
+  return { ok: true, status: 200, count: courses.length, conflicts };
 }

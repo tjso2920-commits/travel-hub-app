@@ -173,9 +173,34 @@ export function syncCourses(accountId, incomingCourses) {
       const city = String(c.city), date = String(c.date);
       const existing = getStmt.get(accountId, city, date);
       const baseVersion = Number(c.version) || 0;
+      // 2026-09-22(18차 재검토) 2절 — 명시적 삭제 표시. 배열에서 빠진 것은
+      // 지우지 않고(다른 기기 보호), deleted:true + 기준 버전이 서버와 같을
+      // 때만 지운다(삭제 표시로 남겨 다른 기기도 지울 수 있게). 기준이 낡았으면
+      // 그 사이 다른 기기가 고친 것이므로 지우지 않고 충돌로 알린다.
+      if (c.deleted === true) {
+        if (!existing || existing.deleted) continue;
+        if (baseVersion === existing.version) {
+          db.prepare('UPDATE account_courses SET deleted = 1, updated_at = ?, version = ? WHERE account_id = ? AND city = ? AND date = ?')
+            .run(now, existing.version + 1, accountId, city, date);
+        } else {
+          conflicts.push({ city, date, reason: 'stale-base-version-delete', serverVersion: existing.version, serverCourse: serializeCourseRow(existing) });
+        }
+        continue;
+      }
       if (!existing) {
         db.prepare('INSERT INTO account_courses (account_id, city, date, data, deleted, updated_at, version) VALUES (?, ?, ?, ?, 0, ?, 1)')
-          .run(accountId, city, date, JSON.stringify(c), now);
+          .run(accountId, city, date, JSON.stringify(stripCourseMeta(c)), now);
+        continue;
+      }
+      if (existing.deleted) {
+        // 다른 기기가 지운 날짜를 이 기기가 (옛 기준으로) 다시 올리는 경우 —
+        // 삭제 사실을 알고(기준 버전이 삭제 뒤 버전과 같을 때)만 되살린다.
+        if (baseVersion === existing.version) {
+          db.prepare('UPDATE account_courses SET data = ?, deleted = 0, updated_at = ?, version = ? WHERE account_id = ? AND city = ? AND date = ?')
+            .run(JSON.stringify(stripCourseMeta(c)), now, existing.version + 1, accountId, city, date);
+        } else {
+          conflicts.push({ city, date, reason: 'deleted-on-server', serverVersion: existing.version, serverCourse: null });
+        }
         continue;
       }
       const existingData = serializeCourseRow(existing);
@@ -184,7 +209,7 @@ export function syncCourses(accountId, incomingCourses) {
       }
       if (baseVersion === existing.version) {
         db.prepare('UPDATE account_courses SET data = ?, deleted = 0, updated_at = ?, version = ? WHERE account_id = ? AND city = ? AND date = ?')
-          .run(JSON.stringify(c), now, existing.version + 1, accountId, city, date);
+          .run(JSON.stringify(stripCourseMeta(c)), now, existing.version + 1, accountId, city, date);
       } else {
         conflicts.push({ city, date, reason: 'stale-base-version', serverVersion: existing.version, serverCourse: existingData });
       }
@@ -195,7 +220,15 @@ export function syncCourses(accountId, incomingCourses) {
     return { ok: false, status: 500, reason: 'transaction-failed' };
   }
   const serverRows = db.prepare('SELECT city, date, data, version FROM account_courses WHERE account_id = ? AND deleted = 0').all(accountId);
-  return { ok: true, status: 200, count: incomingCourses.length, conflicts, courses: serverRows.map(serializeCourseRow) };
+  const deletedRows = db.prepare('SELECT city, date, version FROM account_courses WHERE account_id = ? AND deleted = 1').all(accountId);
+  return { ok: true, status: 200, count: incomingCourses.length, conflicts, courses: serverRows.map(serializeCourseRow), deletedCourses: deletedRows.map((r) => ({ city: r.city, date: r.date, version: r.version })) };
+}
+
+/* 저장할 코스 내용에서 동기화용 표시(버전·삭제 표시·충돌 기록 등)는 뺀다 —
+   버전은 행의 version 컬럼이 기준이다. */
+export function stripCourseMeta(c) {
+  const { version, updatedAt, deleted, ...rest } = c || {};
+  return rest;
 }
 
 /* 코스 생성이 성공했을 때 그 한 건만 upsert하는 용도(course-generation.mjs

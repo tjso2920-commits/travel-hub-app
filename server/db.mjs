@@ -524,6 +524,7 @@ function migrate(d) {
   addTripsFieldConflictsColumn(d);
   addCostLedgerActualCostColumn(d);
   addOrderTermsColumns(d);
+  addTripCourseVersionColumns(d);
 }
 
 /* 2026-09-11 재검토(11차) — ChatGPT가 실제 재현한 결함: trips는
@@ -576,6 +577,16 @@ function addOrderTermsColumns(d) {
   if (!cols.includes('place_lookup_limit')) d.exec('ALTER TABLE orders ADD COLUMN place_lookup_limit INTEGER');
   if (!cols.includes('course_limit')) d.exec('ALTER TABLE orders ADD COLUMN course_limit INTEGER');
   if (!cols.includes('cost_cap_micros')) d.exec('ALTER TABLE orders ADD COLUMN cost_cap_micros INTEGER');
+}
+
+/* 2026-09-22(18차 재검토) 2·3절 — 여행 날짜별 코스에 버전·삭제 표시를 둔다.
+   예전엔 여행 메타데이터 버전만 비교하고 코스는 버전 없이 덮어써, 두 기기가
+   같은 날짜를 고치면 나중 것이 조용히 이겼고(충돌 보고 없음), 되돌리기로
+   없어진 날짜를 서버에서 지울 방법도 없었다. 기존 행은 version 1로 시작한다. */
+function addTripCourseVersionColumns(d) {
+  const cols = d.prepare("PRAGMA table_info(trip_courses)").all().map((c) => c.name);
+  if (!cols.includes('version')) d.exec('ALTER TABLE trip_courses ADD COLUMN version INTEGER NOT NULL DEFAULT 1');
+  if (!cols.includes('deleted')) d.exec('ALTER TABLE trip_courses ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0');
 }
 
 function addCostLedgerActualCostColumn(d) {
