@@ -34,6 +34,7 @@ import { classifyBatchRoute } from './routes/ai-classify.mjs';
 import { businessHoursRoute } from './routes/business-hours.mjs';
 import { serviceBreakdownSince } from './cost-ledger.mjs';
 import { serveStatic } from './static-site.mjs';
+import { salesCapacitySummary } from './adapters/payment-toss.mjs';
 import { recordEvent } from './routes/events.mjs';
 import { joinWaitlist } from './routes/waitlist.mjs';
 import { generateCourseRoute } from './routes/course-generation.mjs';
@@ -444,7 +445,7 @@ async function handle(req, res) {
     if (req.method === 'GET' && pathname === '/api/admin/api-usage') {
       if (!requireAdmin(req, res)) return;
       const since = new Date().toISOString().slice(0, 7) + '-01T00:00:00.000Z';
-      return sendJson(res, 200, Object.assign({ ok: true }, serviceBreakdownSince(since)));
+      return sendJson(res, 200, Object.assign({ ok: true }, serviceBreakdownSince(since), { salesCapacity: salesCapacitySummary() }));
     }
     if (req.method === 'GET' && pathname === '/api/admin/feedback') {
       if (!requireAdmin(req, res)) return;

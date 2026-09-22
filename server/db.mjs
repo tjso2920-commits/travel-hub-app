@@ -523,6 +523,7 @@ function migrate(d) {
   addAccountTestAccessColumn(d);
   addTripsFieldConflictsColumn(d);
   addCostLedgerActualCostColumn(d);
+  addOrderTermsColumns(d);
 }
 
 /* 2026-09-11 재검토(11차) — ChatGPT가 실제 재현한 결함: trips는
@@ -565,6 +566,18 @@ function addAccountTestAccessColumn(d) {
    수 있으니 0원 처리 금지" 원칙과 동일). 예산 집계(cost-ledger.mjs의
    sumSince/periodCostMicros)는 COALESCE(actual_cost_micros,
    estimated_cost_micros)로 "알면 실제값, 모르면 보수적 견적"을 쓴다. */
+/* 2026-09-22(18차) 7절 — "기존 구매자의 기간·제공량·주문 시점 가격 보존."
+   주문에는 금액·기간만 있었고 제공량(위치 확인·코스 횟수)과 원가 안전상한은
+   매번 지금 설정값을 읽어, 상품 조건을 바꾸면 이미 산 사람 몫도 바뀌었다.
+   주문을 만들 때의 조건을 주문 행에 같이 남긴다(예전 주문은 NULL → 지금
+   설정값으로 동작 — 기존 동작 유지). */
+function addOrderTermsColumns(d) {
+  const cols = d.prepare("PRAGMA table_info(orders)").all().map((c) => c.name);
+  if (!cols.includes('place_lookup_limit')) d.exec('ALTER TABLE orders ADD COLUMN place_lookup_limit INTEGER');
+  if (!cols.includes('course_limit')) d.exec('ALTER TABLE orders ADD COLUMN course_limit INTEGER');
+  if (!cols.includes('cost_cap_micros')) d.exec('ALTER TABLE orders ADD COLUMN cost_cap_micros INTEGER');
+}
+
 function addCostLedgerActualCostColumn(d) {
   const cols = d.prepare("PRAGMA table_info(cost_ledger)").all();
   if (!cols.some((c) => c.name === 'actual_cost_micros')) {

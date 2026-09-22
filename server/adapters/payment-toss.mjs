@@ -125,14 +125,16 @@ export function orderName() {
 function totalCommittedRemainingMicros(excludeAccountId) {
   const db = openDb();
   const now = nowIso();
-  const rows = db.prepare("SELECT id, active_order_id FROM accounts WHERE plan = 'paid' AND (plan_expires_at IS NULL OR plan_expires_at > ?)").all(now);
+  const rows = db.prepare("SELECT a.id, a.active_order_id, o.cost_cap_micros FROM accounts a LEFT JOIN orders o ON o.order_id = a.active_order_id WHERE a.plan = 'paid' AND (a.plan_expires_at IS NULL OR a.plan_expires_at > ?)").all(now);
   let total = 0;
   const paidIds = new Set();
   for (const row of rows) {
     if (!row.active_order_id) continue;
     paidIds.add(row.id);
     const spent = periodCostMicros(row.id, row.active_order_id);
-    total += Math.max(0, config.costSafetyCap.paidEntitlementMicros - spent);
+    // 그 이용권을 살 때의 원가 상한(18차 7절). 예전 주문은 지금 설정값.
+    const passCap = row.cost_cap_micros != null ? row.cost_cap_micros : config.costSafetyCap.paidEntitlementMicros;
+    total += Math.max(0, passCap - spent);
   }
   const since = new Date(Date.now() - config.pendingOrderReserveMinutes * 60 * 1000).toISOString();
   const pending = db.prepare("SELECT DISTINCT account_id FROM orders WHERE status = 'pending' AND created_at >= ?").all(since);
@@ -161,6 +163,27 @@ function isServiceUnavailableForNewSales(accountId) {
   return false;
 }
 
+/* 2026-09-22(18차) 6절 — 운영자가 "지금 몇 명분을 더 팔 수 있는지"를
+   숫자로 보게 한다(관리자 전용 /api/admin/api-usage에 실림). ①내부 보수
+   추정(무료 구간 없다고 가정한 원가 한도) 기준이다 — 실제 Google 청구액
+   (②)과는 다르다(docs/BUSINESS_DECISIONS.md 0절). */
+export function salesCapacitySummary() {
+  const usage = usageSummary(null);
+  const cap = usage.caps.globalMonthlyMicros;
+  const committed = totalCommittedRemainingMicros(null);
+  const left = cap > 0 ? cap - usage.globalMonthlyMicros - committed : null;
+  const perPass = config.costSafetyCap.paidEntitlementMicros;
+  return {
+    globalMonthlyCapMicros: cap,
+    spentThisMonthMicros: usage.globalMonthlyMicros,
+    committedToActiveOrPendingPassesMicros: committed,
+    remainingForNewSalesMicros: left,
+    perPassReserveMicros: perPass,
+    additionalPassesSellableNow: left == null ? null : Math.max(0, Math.floor(left / perPass)),
+    newSalesOpen: !isServiceUnavailableForNewSales(null),
+  };
+}
+
 /* 2026-09-22(18차) 6절 — 막힐 때 "503"만 주지 않고 사람이 읽을 안내를
    같이 준다. 신규 판매 차단은 새 주문만 막는다 — 이미 결제한 사람의 승인
    재확인·이용권 복구(confirmPayment)는 이 판정을 아예 거치지 않는다. */
@@ -184,8 +207,10 @@ export function createOrder(accountId) {
     const orderId = 'order_' + uuid();
     const amount = config.price.amountKrw;
     const now = nowIso();
-    db.prepare('INSERT INTO orders (order_id, account_id, amount, status, entitlement_days, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(orderId, accountId, amount, 'pending', config.price.periodDays, now, now);
+    // 2026-09-22(18차) 7절 — 주문 시점의 제공량·원가 상한을 같이 남긴다.
+    db.prepare('INSERT INTO orders (order_id, account_id, amount, status, entitlement_days, created_at, updated_at, place_lookup_limit, course_limit, cost_cap_micros) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(orderId, accountId, amount, 'pending', config.price.periodDays, now, now,
+        config.entitlementUsage.paidPlaceLookupLimit, config.entitlementUsage.paidCourseLimit, config.costSafetyCap.paidEntitlementMicros);
     db.exec('COMMIT');
     return { ok: true, orderId, amount, orderName: orderName() };
   } catch (e) {

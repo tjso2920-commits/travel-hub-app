@@ -49,12 +49,19 @@ export function currentPeriod(accountId) {
     const db = openDb();
     const row = db.prepare('SELECT active_order_id FROM accounts WHERE id = ?').get(accountId);
     const periodId = (row && row.active_order_id) || 'paid-unknown';
+    // 2026-09-22(18차) 7절 — 이 이용권을 산 시점의 제공량·원가 상한을 쓴다
+    // (나중에 상품 조건이 바뀌어도 이미 산 사람 몫은 그대로). 조건이 저장되기
+    // 전의 예전 주문은 지금 설정값.
+    const terms = row && row.active_order_id
+      ? db.prepare('SELECT place_lookup_limit, course_limit, cost_cap_micros FROM orders WHERE order_id = ?').get(row.active_order_id)
+      : null;
+    const pick = (v, fallback) => (v != null ? v : fallback);
     return {
       kind: 'paid',
       periodId,
-      placeLookupLimit: config.entitlementUsage.paidPlaceLookupLimit,
-      courseLimit: config.entitlementUsage.paidCourseLimit,
-      costCapMicros: config.costSafetyCap.paidEntitlementMicros,
+      placeLookupLimit: pick(terms && terms.place_lookup_limit, config.entitlementUsage.paidPlaceLookupLimit),
+      courseLimit: pick(terms && terms.course_limit, config.entitlementUsage.paidCourseLimit),
+      costCapMicros: pick(terms && terms.cost_cap_micros, config.costSafetyCap.paidEntitlementMicros),
       expiresAt: ent.expiresAt,
     };
   }
