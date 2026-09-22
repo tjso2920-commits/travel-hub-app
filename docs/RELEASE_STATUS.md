@@ -32,7 +32,7 @@ Google 로그인부터 확인할 차례다(`docs/OPERATIONS_SETUP.md` 0절). 공
 Resend 호출과 실기기 확인은 이번에도 하지 않았다(공개 배포·실과금 금지 지시). 특정 모델의 추가 검토를 받았다고
 주장하지 않는다 — 이번 검수는 이 세션 안에서 한 것이다.
 
-**전체 회귀(최종)**: RESULT_PLACEHOLDER
+**전체 회귀(최종)**: 전부 통과 — 새 앱 화면 테스트 35개 파일(`scripts/test-*.mjs`, 실제 Chromium) + 디자인 통합 검사 + 옛 앱 기능 검사(`scripts/test/run-all.mjs`, 개인용·판매용 두 파일) + `scripts/verify.mjs` + 서버 테스트 52개 파일(`npm run server-test-all`). 서비스워커 검사는 이번에 실제 연결 끊김으로 바꾼 뒤 3회 연속 통과, 디자인 통합 검사는 간헐 실패 원인 보완 후 3회 연속 통과. 실행 환경: 원격 작업 환경(Linux, Node 22.22.2, 헤드리스 Chromium).
 
 
 ## -14. 17차 3차 독립검토 갱신 요약
