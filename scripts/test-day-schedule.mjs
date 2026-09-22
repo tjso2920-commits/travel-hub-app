@@ -100,7 +100,7 @@ const night = hoursOf(every((d) => [{ open: P(d, 18, 0), close: P((d + 1) % 7, 2
 t('자정 넘김: 새벽 01:00 도착(전날 밤 영업분) → 영업 중', BH.evaluateVisit(night, tue, 60, 40).state === 'open');
 t('자정 넘김: 당일 23:30 도착·40분 → 영업 중(다음날 02:00 종료)', BH.evaluateVisit(night, tue, 23 * 60 + 30, 40).state === 'open');
 t('자정 넘김: 다음날 01:50 도착·40분 → 종료 전 시간 부족', BH.evaluateVisit(night, tue, 1440 + 110, 40).state === 'closes-during');
-t('자정 넘김 표기', BH.describeDay(night, tue) === '18:00–다음날 02:00', BH.describeDay(night, tue));
+t('자정 넘김 표기(전날부터 이어지는 영업 포함)', BH.describeDay(night, tue) === '전날부터–02:00, 18:00–다음날 02:00', BH.describeDay(night, tue));
 
 const h24 = hoursOf([{ open: P(0, 0, 0) }]);
 t('24시간: 새벽 03:00도 영업', BH.evaluateVisit(h24, thu, 180, 40).state === 'open-24h' && BH.describeDay(h24, thu) === '24시간 영업');
@@ -128,6 +128,64 @@ t('이번 주 범위 안(금) → 이번 주 정보 우선(12–14시)', BH.eval
 t('이번 주 범위 밖(10월) → 정규 기준·재확인', BH.evaluateVisit(cur, '2026-10-08', 11 * 60 + 30, 40).basis === 'regular' && BH.evaluateVisit(cur, '2026-10-08', 11 * 60 + 30, 40).state === 'open');
 t('구글 지도 확인 링크는 장소 ID 포함', /query_place_id=ChIJabc/.test(BH.googleMapsUrl('가게', 'ChIJabc')));
 t('출처 표시', BH.sourceLabel({ source: 'google-places' }) === 'Google 지도 정보' && /합성/.test(BH.sourceLabel({ source: 'test-adapter' })));
+
+// ---- 18차 재검토: 어댑터가 실제로 돌려주는 current+regular 조합으로 검증
+process.env.DB_PATH = ':memory:'; process.env.APP_ENV = 'development';
+const { fetchBusinessHours, normalizePlaceDetails } = await import('../server/adapters/business-hours.mjs');
+const tokyoToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+const nowIso = new Date().toISOString();
+async function adapterHours(id) { const r = await fetchBusinessHours(id); return Object.assign({}, r.result, { fetchedAt: nowIso, source: r.source }); }
+{
+  // 재현 A(지적 원문): 24시간 + fetchedAt 2026-09-22T03:00Z → 09-23 12:00
+  const r = await fetchBusinessHours('test-hours-24h');
+  const h = Object.assign({}, r.result, { fetchedAt: '2026-09-22T03:00:00Z', source: r.source });
+  const ev = BH.evaluateVisit(h, '2026-09-23', 720, 40);
+  t('재현A) 어댑터 24시간(current 날짜 없음) → 24시간 영업(휴무 아님)', ev.state === 'open-24h', JSON.stringify(ev));
+  t('재현A) describeDay도 24시간', BH.describeDay(h, '2026-09-23') === '24시간 영업', BH.describeDay(h, '2026-09-23'));
+  const special = JSON.parse(JSON.stringify(h)); special.current.specialDays = ['2026-09-24'];
+  t('재현A-2) 24시간이라도 특별 휴무일은 특별 휴무(무조건 24시간 처리 안 함)', BH.evaluateVisit(special, '2026-09-24', 720, 40).state === 'closed-day' && BH.evaluateVisit(special, '2026-09-24', 720, 40).basis === 'special');
+  t('재현A-2) 특별 휴무 다음날은 다시 24시간', BH.evaluateVisit(special, '2026-09-25', 720, 40).state === 'open-24h');
+  t('재현A-3) 이번 주 범위 밖 날짜는 정규 24시간 + 재확인 표시', BH.evaluateVisit(h, '2026-10-20', 720, 40).state === 'open-24h' && BH.evaluateVisit(h, '2026-10-20', 720, 40).recheck === true);
+}
+{
+  const b = normalizePlaceDetails('closed', { businessStatus: 'CLOSED_PERMANENTLY' });
+  t('재현B) 시간표 없는 폐업 → 폐업 경고가 "정보 없음"보다 먼저', BH.evaluateVisit(b, '2026-09-23', 720, 40).state === 'closed-permanently');
+  const tmp = normalizePlaceDetails('tmp', { businessStatus: 'CLOSED_TEMPORARILY', regularOpeningHours: { periods: [{ open: { day: 3, hour: 9, minute: 0 }, close: { day: 3, hour: 18, minute: 0 } }] } });
+  t('재현B) 시간표 있는 임시 휴업 → 임시 휴업 경고(영업 중이라고 안 함)', BH.evaluateVisit(tmp, '2026-09-23', 720, 40).state === 'closed-temporarily');
+  const op = normalizePlaceDetails('op', { businessStatus: 'OPERATIONAL' });
+  t('재현B) 영업 중 표시인데 시간표 없음 → 정보 없음(휴무 아님)', BH.evaluateVisit(op, '2026-09-23', 720, 40).state === 'no-info');
+}
+{
+  const d = (n) => DS.addDaysYmd(tokyoToday, n);
+  const ov = await adapterHours('test-hours-overnight');
+  t('어댑터 자정넘김) 오늘 새벽 01:00은 전날 밤 영업분으로 영업 중(이번 주 기준)', BH.evaluateVisit(ov, d(1), 60, 30).state === 'open' && BH.evaluateVisit(ov, d(1), 60, 30).basis === 'current', JSON.stringify(BH.evaluateVisit(ov, d(1), 60, 30)));
+  const sp = await adapterHours('test-hours-special');
+  t('어댑터 특별휴무) 오늘은 특별 휴무', BH.evaluateVisit(sp, d(0), 720, 40).state === 'closed-day' && BH.evaluateVisit(sp, d(0), 720, 40).basis === 'special');
+  t('어댑터 특별휴무) 내일은 점심 영업', BH.evaluateVisit(sp, d(1), 720, 40).state === 'open');
+  const cm = await adapterHours('test-hours-closed-mon');
+  const monOff = [0, 1, 2, 3, 4, 5, 6].find((i) => DS.weekdayOf(d(i)) === 1);
+  t('어댑터 정기휴무) 이번 주 월요일은 휴무', BH.evaluateVisit(cm, d(monOff), 720, 40).state === 'closed-day');
+}
+{
+  const reg = { periods: [{ open: { day: 3, hour: 10, minute: 0 }, close: { day: 3, hour: 20, minute: 0 } }] };
+  const empty = { status: 'ok', fetchedAt: '2026-09-22T03:00:00Z', utcOffsetMinutes: 540, regular: reg, current: { periods: [], specialDays: [] } };
+  const ev = BH.evaluateVisit(empty, '2026-09-23', 720, 40);
+  t('빈 current periods → 휴무로 단정하지 않고 정규 기준·재확인', ev.state === 'open' && ev.recheck === true, JSON.stringify(ev));
+  // current가 23~24일만 있고 25일은 범위 안이지만 자료 없음 → 휴무 단정 금지
+  const partial = { status: 'ok', fetchedAt: '2026-09-22T03:00:00Z', utcOffsetMinutes: 540, regular: { periods: [4, 5].map((wd) => ({ open: { day: wd, hour: 10, minute: 0 }, close: { day: wd, hour: 20, minute: 0 } })) },
+    current: { periods: ['2026-09-23', '2026-09-24'].map((dt) => ({ open: { day: DS.weekdayOf(dt), hour: 10, minute: 0, date: dt }, close: { day: DS.weekdayOf(dt), hour: 20, minute: 0, date: dt } })), specialDays: [] } };
+  const e25 = BH.evaluateVisit(partial, '2026-09-25', 720, 40);
+  t('current 자료가 끝난 뒤 날짜 → 정규 기준·재확인(휴무 단정 안 함)', e25.state === 'open' && e25.recheck === true, JSON.stringify(e25));
+  // 확인 범위 끝에서 잘린 구간: 닫는 시각이 잘림 → "시간 부족" 단정 안 함
+  const trunc = { status: 'ok', fetchedAt: '2026-09-22T03:00:00Z', utcOffsetMinutes: 540, regular: null,
+    current: { periods: [{ open: { day: 1, hour: 22, minute: 0, date: '2026-09-28' }, close: { day: 2, hour: 0, minute: 0, date: '2026-09-29', truncated: true } }], specialDays: [] } };
+  const et = BH.evaluateVisit(trunc, '2026-09-28', 23 * 60 + 30, 90);
+  t('잘린 구간(닫는 시각 확인 범위 밖) → 종료 시각 미확인, 시간 부족 단정 안 함', et.state === 'open' && /확인 범위 밖/.test(et.text), JSON.stringify(et));
+  // 여러 날 이어지는 영업(이틀 전 열어 내일 닫음)
+  const multi = { status: 'ok', fetchedAt: '2026-09-22T03:00:00Z', utcOffsetMinutes: 540, regular: null,
+    current: { periods: [{ open: { day: 2, hour: 9, minute: 0, date: '2026-09-22' }, close: { day: 5, hour: 18, minute: 0, date: '2026-09-25' } }], specialDays: [] } };
+  t('전날 이전부터 이어지는 영업 → 영업 중', BH.evaluateVisit(multi, '2026-09-24', 720, 40).state === 'open');
+}
 
 if (fail) { console.log(`${fail} FAIL`); process.exit(1); }
 console.log('ok');

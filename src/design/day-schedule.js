@@ -171,44 +171,100 @@
     const cur = hours.current;
     return !!(cur && ((cur.periods && cur.periods.length) || (cur.specialDays && cur.specialDays.length)));
   }
+  /* 2026-09-22(18차 재검토) — 재현된 오류: 공급자는 24시간 영업을 이번 주
+     정보(current)에서도 "날짜 없는 일요일 0시 열림·닫힘 없음" 하나로 줄 수
+     있다. 예전 코드는 current가 "쓸 수 있다"고 본 뒤 날짜가 일치하는 구간만
+     골라 그 날을 통째로 휴무로 판정했다. 이제 current를 세 경우로 나눈다:
+       - dated: 날짜가 붙은 구간이 있다 → 그 날짜 범위 안에서만 current로 판정.
+       - always: 날짜 없는 24시간 표현 → 특별일이 아닌 날은 24시간.
+       - 그 외(날짜 없는 일반 구간 등): current로 날짜를 확정할 수 없음 → 정규로.
+     날짜 범위 밖이나 판단 근거가 없는 날은 "휴무"로 확정하지 않고 정규
+     영업시간 + "방문 전 재확인"으로 떨어진다. */
+  function currentShape(hours) {
+    if (!currentUsable(hours)) return { kind: 'none' };
+    const cur = hours.current;
+    const periods = cur.periods || [];
+    const dated = periods.filter((p) => p.open && p.open.date);
+    const specials = cur.specialDays || [];
+    if (dated.length) {
+      // 범위는 여는 날짜뿐 아니라 닫는 날짜까지(여러 날 이어지는 영업).
+      const dates = dated.map((p) => p.open.date).concat(dated.map((p) => p.close && p.close.date).filter(Boolean), specials).sort();
+      return { kind: 'dated', dated, from: dates[0], to: dates[dates.length - 1] };
+    }
+    if (is24hPeriods(periods)) return { kind: 'always' };
+    if (!periods.length && specials.length) return { kind: 'specials-only' };
+    return { kind: 'none' };
+  }
+  function closeMin(p, ymd, off) {
+    if (!p.close) return null;
+    if (p.close.date) return dayDiff(ymd, p.close.date) * 1440 + pointMin(p.close);
+    const openDayOff = p.open.date ? dayDiff(ymd, p.open.date) : off;
+    return openDayOff * 1440 + closeOffsetDays(p) * 1440 + pointMin(p.close);
+  }
   /* 방문일 기준 전날·당일·다음날의 영업 구간(분, 방문일 0시 기준). 날짜별로
-     "이번 주 정보(current)" 범위 안이면 그걸, 밖이면 정규(regular)를 쓴다. */
+     "이번 주 정보(current)"로 판정할 수 있으면 그걸, 아니면 정규(regular)를 쓴다.
+     여러 날에 걸친 구간(전날부터 이어지는 영업 포함)은 날짜로 직접 계산한다. */
   function intervalsAround(hours, ymd) {
     const out = [];
     const basisByOff = {};
     const start = currentUsable(hours) ? localFetchYmd(hours) : null;
+    const shape = currentShape(hours);
+    const specials = (hours.current && hours.current.specialDays) || [];
     const regular = (hours.regular && hours.regular.periods) || [];
+    const inWindow = (date) => start && dayDiff(start, date) >= 0 && dayDiff(start, date) <= 6;
+    const currentOffs = new Set();
     for (const off of [-1, 0, 1]) {
       const date = addDaysYmd(ymd, off);
-      const inCurrent = start && dayDiff(start, date) >= 0 && dayDiff(start, date) <= 6;
-      if (inCurrent) {
-        const special = (hours.current.specialDays || []).includes(date);
+      const special = specials.includes(date);
+      let useCurrent = false;
+      if (shape.kind === 'dated') useCurrent = (inWindow(date) || special) && ((date >= shape.from && date <= shape.to) || special);
+      else if (shape.kind === 'always') useCurrent = inWindow(date) || special;
+      else if (shape.kind === 'specials-only') useCurrent = special;
+      if (useCurrent) {
         basisByOff[off] = special ? 'special' : 'current';
-        (hours.current.periods || []).forEach((p) => {
-          if (!p.open || p.open.date !== date) return;
-          const o = off * 1440 + pointMin(p.open);
-          let c;
-          if (!p.close) c = o + 1440 * 7; // 닫는 시각이 없는 구간 = 계속 영업
-          else if (p.close.date) c = dayDiff(ymd, p.close.date) * 1440 + pointMin(p.close);
-          else c = off * 1440 + closeOffsetDays(p) * 1440 + pointMin(p.close);
-          out.push({ o, c, basis: basisByOff[off], truncated: !!(p.open.truncated || (p.close && p.close.truncated)) });
-        });
-      } else {
-        basisByOff[off] = 'regular';
-        // 24시간 영업은 공급자가 "일요일 0시에 열고 닫는 시각 없음" 하나로
-        // 준다 — 요일 일치로 거르면 일요일 말고는 전부 빠진다.
-        if (is24hPeriods(regular)) { out.push({ o: off * 1440, c: off * 1440 + 1440 * 7, basis: 'regular', truncated: false }); continue; }
-        const wd = weekdayOf(date);
-        regular.forEach((p) => {
-          if (!p.open || p.open.day !== wd) return;
-          const o = off * 1440 + pointMin(p.open);
-          const c = p.close ? off * 1440 + closeOffsetDays(p) * 1440 + pointMin(p.close) : o + 1440 * 7;
-          out.push({ o, c, basis: 'regular', truncated: false });
-        });
+        currentOffs.add(off);
+        if (shape.kind === 'always' && !special) {
+          out.push({ o: off * 1440, c: off * 1440 + 1440, basis: 'current', always: true });
+        }
+        continue;
       }
+      basisByOff[off] = 'regular';
+      if (is24hPeriods(regular)) { out.push({ o: off * 1440, c: off * 1440 + 1440, basis: 'regular', always: true }); continue; }
+      const wd = weekdayOf(date);
+      regular.forEach((p) => {
+        if (!p.open || p.open.day !== wd) return;
+        const o = off * 1440 + pointMin(p.open);
+        const c = p.close ? off * 1440 + closeOffsetDays(p) * 1440 + pointMin(p.close) : null;
+        if (c == null) out.push({ o, c: o + 1440 * 7, basis: 'regular', closeUnknown: true });
+        else out.push({ o, c, basis: 'regular' });
+      });
     }
-    out.sort((a, b) => a.o - b.o);
-    return { intervals: out, basisByOff };
+    // 날짜 붙은 current 구간 — 전날 이전에 시작해 오늘로 이어지는 것도 포함.
+    if (shape.kind === 'dated') {
+      shape.dated.forEach((p) => {
+        const openOff = dayDiff(ymd, p.open.date);
+        const o = openOff * 1440 + pointMin(p.open);
+        const c0 = closeMin(p, ymd, openOff);
+        const closeUnknown = c0 == null || !!(p.close && p.close.truncated);
+        const c = c0 == null ? o + 1440 * 7 : c0;
+        if (c <= -1440 || o >= 2880) return; // 판정 창(전날~다음날) 밖
+        // 구간이 걸친 날 중 current로 판정하는 날이 하나라도 있어야 쓴다.
+        const touches = [-1, 0, 1].some((off) => currentOffs.has(off) && o < (off + 1) * 1440 && c > off * 1440);
+        if (!touches) return;
+        out.push({ o, c, basis: 'current', openTruncated: !!p.open.truncated, closeUnknown });
+      });
+    }
+    // 정규 구간 중 current로 판정하는 날에 걸친 것은 뺀다(같은 날 이중 판정 방지).
+    const merged = out.filter((x) => x.basis !== 'regular' || ![-1, 0, 1].some((off) => currentOffs.has(off) && Math.floor(x.o / 1440) === off));
+    // 24시간(하루 단위) 조각은 이어 붙여 하나의 구간으로.
+    merged.sort((a, b) => a.o - b.o);
+    const joined = [];
+    for (const x of merged) {
+      const last = joined[joined.length - 1];
+      if (last && last.always && x.always && last.c >= x.o) { last.c = Math.max(last.c, x.c); continue; }
+      joined.push(Object.assign({}, x));
+    }
+    return { intervals: joined, basisByOff };
   }
   const BASIS_LABEL = {
     special: '특별 영업시간(그날 기준)',
@@ -224,13 +280,11 @@
   /* 그날(방문일 0시~24시에 여는 구간)의 영업시간을 사람이 읽는 한 줄로. */
   function describeDay(hours, ymd) {
     if (!hours || hours.status !== 'ok') return null;
-    if (is24hPeriods(hours.regular && hours.regular.periods) && !currentUsable(hours)) return '24시간 영업';
     const { intervals, basisByOff } = intervalsAround(hours, ymd);
-    const today = intervals.filter((x) => x.o >= 0 && x.o < 1440);
-    const always = intervals.some((x) => x.c - x.o >= 1440 * 7);
-    if (always) return '24시간 영업';
+    if (intervals.some((x) => x.always && x.o <= 0 && x.c >= 1440)) return '24시간 영업';
+    const today = intervals.filter((x) => x.o < 1440 && x.c > 0);
     if (!today.length) return basisByOff[0] === 'special' ? '특별 휴무' : '휴무';
-    return today.map((x) => `${clock(x.o)}–${clock(x.c)}`).join(', ');
+    return today.map((x) => `${x.o < 0 ? '전날부터' : clock(x.o)}–${x.closeUnknown ? '종료 미확인' : clock(x.c)}`).join(', ');
   }
   function evaluateVisit(hours, ymd, at, dwell) {
     const stay = Number.isFinite(dwell) && dwell > 0 ? dwell : DEFAULT_DWELL_MIN;
@@ -238,10 +292,14 @@
     if (hours.status === 'unverified-place') return { state: 'unverified', level: 'info', text: '위치 확인이 안 된 곳이라 영업시간을 불러올 수 없어요(휴무라는 뜻이 아니에요)' };
     if (hours.status === 'failed') return { state: 'failed', level: 'info', text: '영업시간을 불러오지 못했어요(휴무라는 뜻이 아니에요)' };
     if (hours.status === 'not-requested') return { state: 'limited', level: 'info', text: '이번에는 영업시간을 확인하지 못했어요(휴무라는 뜻이 아니에요)' };
+    // 2026-09-22(18차 재검토) — 폐업·임시 휴업은 시간표 유무와 별개 정보다.
+    // 시간표가 없어도(no-hours) 먼저 알린다(예전엔 "정보 없음"이 가렸다).
+    if (hours.status === 'ok' || hours.status === 'no-hours') {
+      if (hours.businessStatus === 'CLOSED_PERMANENTLY') return { state: 'closed-permanently', level: 'warn', text: '구글 지도에 폐업으로 표시된 곳이에요' };
+      if (hours.businessStatus === 'CLOSED_TEMPORARILY') return { state: 'closed-temporarily', level: 'warn', text: '구글 지도에 임시 휴업으로 표시된 곳이에요' };
+    }
     if (hours.status === 'no-hours') return { state: 'no-info', level: 'info', text: '등록된 영업시간 정보가 없어요(휴무라는 뜻이 아니에요)' };
     if (hours.status !== 'ok') return { state: 'no-info', level: 'info', text: '영업시간 정보가 없어요' };
-    if (hours.businessStatus === 'CLOSED_PERMANENTLY') return { state: 'closed-permanently', level: 'warn', text: '구글 지도에 폐업으로 표시된 곳이에요' };
-    if (hours.businessStatus === 'CLOSED_TEMPORARILY') return { state: 'closed-temporarily', level: 'warn', text: '구글 지도에 임시 휴업으로 표시된 곳이에요' };
     const { intervals, basisByOff } = intervalsAround(hours, ymd);
     const dayOff = Math.max(-1, Math.min(1, Math.floor(at / 1440)));
     const basis = basisByOff[dayOff] || 'regular';
@@ -249,7 +307,9 @@
     const leave = at + stay;
     const inside = intervals.find((x) => x.o <= at && at < x.c);
     if (inside) {
-      if (inside.c - inside.o >= 1440 * 7) return Object.assign(base, { state: 'open-24h', level: 'ok', text: '24시간 영업' });
+      if (inside.always) return Object.assign(base, { state: 'open-24h', level: 'ok', text: '24시간 영업' });
+      // 닫는 시각이 확인 범위 밖(잘림)이거나 없으면 "시간 부족"을 단정하지 않는다.
+      if (inside.closeUnknown) return Object.assign(base, { state: 'open', level: 'ok', text: '영업 중 도착 · 종료 시각은 확인 범위 밖이에요' });
       if (leave > inside.c) {
         return Object.assign(base, { state: 'closes-during', level: 'warn', text: `도착 ${inside.c - at}분 뒤 ${clock(inside.c)}에 영업 종료 — 머무는 ${stay}분보다 짧아요` });
       }
