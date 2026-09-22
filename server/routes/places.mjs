@@ -50,7 +50,7 @@ import { lookupPlace } from '../adapters/place-lookup.mjs';
 import { config } from '../config.mjs';
 import { openDb, nowIso } from '../db.mjs';
 import { checkAndIncrement, dayWindow } from '../rate-limit.mjs';
-import { chargeCost, describeCostFailure } from '../cost-ledger.mjs';
+import { chargeCost, describeCostFailure, recordApiOutcome } from '../cost-ledger.mjs';
 import { reservePlaceLookupSlot, finalizePlaceLookupResult, periodCostStatus } from '../entitlement-usage.mjs';
 
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10분 — 화면을 실수로 여러 번 눌러 생기는 중복만 줄인다. Google Places API(New)의 캐시·재사용 정책 범위 안으로 의도적으로 짧게 뒀다(RELEASE_STATUS.md 참고 — 정확한 공식 한도는 이 세션이 재확인 못함).
@@ -62,8 +62,17 @@ function cacheKeyFor(query, expectedArea) {
   return String(query).trim().toLowerCase() + '||area:' + String(expectedArea || '').trim().toLowerCase();
 }
 
+/* 2026-09-22(18차 최종검수) — 재현된 문제: 만료된 조회 결과가 "안 쓰일
+   뿐" DB(lookup_cache)에 계속 남아 있었다(10분 캐시라더니 실제로는 서버
+   디스크에 무기한 보관). Places 응답(이름·주소·후보 목록)은 약관상 장기
+   보관 예외가 place ID·좌표뿐이라, 만료분은 읽을 때·쓸 때 바로 지운다. */
+function purgeExpiredLookupCache(db) {
+  const cutoff = new Date(Date.now() - CACHE_TTL_MS).toISOString();
+  db.prepare('DELETE FROM lookup_cache WHERE created_at < ?').run(cutoff);
+}
 function cacheGet(key) {
   const db = openDb();
+  purgeExpiredLookupCache(db);
   const row = db.prepare('SELECT result, created_at FROM lookup_cache WHERE query_key = ?').get(key);
   if (!row) return null;
   if (Date.now() - new Date(row.created_at).getTime() > CACHE_TTL_MS) return null;
@@ -71,6 +80,7 @@ function cacheGet(key) {
 }
 function cacheSet(key, result) {
   const db = openDb();
+  purgeExpiredLookupCache(db);
   db.prepare(`
     INSERT INTO lookup_cache (query_key, result, created_at) VALUES (?, ?, ?)
     ON CONFLICT(query_key) DO UPDATE SET result = excluded.result, created_at = excluded.created_at
@@ -187,6 +197,7 @@ async function runOneLookup(accountId, query, expectedArea, placeId) {
       }
     }
     const result = await lookupPlace({ query, expectedArea });
+    recordApiOutcome('places-text-search', result && result.ok ? 'ok' : (result && result.reason === 'not-found' ? 'not-found' : 'fail'), 1);
     if (shouldCache(result)) cacheSet(cacheKey, result);
     return { ok: true, result };
   })();

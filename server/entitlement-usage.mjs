@@ -533,3 +533,10 @@ export function aiClassifyBudgetHeadroomMicros(accountId, period) {
   const headroomMicros = Math.max(0, capMicros - spentMicros - reservedForCoreMicros);
   return { headroomMicros, reservedForCoreMicros, spentMicros, capMicros, remainingLookups, remainingCourses, perCourseReserveMicros };
 }
+
+/* 2026-09-22(18차) 4·5절 — 영업시간 조회도 AI 분류와 똑같이 "기존 약속
+   (남은 위치확인·코스 생성) 몫을 먼저 떼고 남은 여유"만 쓸 수 있다.
+   계산식 자체는 위 함수 그대로다(이름만 AI 전용이라 일반 이름으로도
+   내보낸다 — 두 부가 기능이 같은 여유를 나눠 쓰고, 어느 쪽도 예약분은
+   못 건드린다). */
+export const optionalFeatureHeadroomMicros = aiClassifyBudgetHeadroomMicros;

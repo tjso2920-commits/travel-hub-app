@@ -67,6 +67,9 @@ function buildCostEstimateMicros(env) {
     placesTextSearchPro: Number(env.COST_PLACES_TEXT_SEARCH_PRO_USD_PER_1000 || 32),
     routesComputeEssentials: Number(env.COST_ROUTES_COMPUTE_ESSENTIALS_USD_PER_1000 || 5),
     routesComputePro: Number(env.COST_ROUTES_COMPUTE_PRO_USD_PER_1000 || 10),
+    // 2026-09-22(18차) — 영업시간 전용 Place Details(New). 아래
+    // costUsdPerThousand.placesDetailsEnterprise 주석 참고(미확인 보수값).
+    placesDetailsEnterprise: Number(env.COST_PLACES_DETAILS_ENTERPRISE_USD_PER_1000 || 35),
   };
   const fromUsdPer1000 = (usdPer1000) => Math.round((usdPer1000 / 1000) * fx * 1_000_000);
   return {
@@ -79,6 +82,9 @@ function buildCostEstimateMicros(env) {
     routesComputeHighVolumeMicros: env.COST_ROUTES_COMPUTE_HIGHVOLUME_KRW_MICROS != null
       ? Number(env.COST_ROUTES_COMPUTE_HIGHVOLUME_KRW_MICROS)
       : fromUsdPer1000(usd.routesComputePro),
+    placesDetailsEnterpriseMicros: env.COST_PLACES_DETAILS_ENTERPRISE_KRW_MICROS != null
+      ? Number(env.COST_PLACES_DETAILS_ENTERPRISE_KRW_MICROS)
+      : fromUsdPer1000(usd.placesDetailsEnterprise),
   };
 }
 
@@ -127,6 +133,14 @@ export function buildConfig(env) {
   const hasAnthropicKey = !!env.ANTHROPIC_API_KEY;
   const aiClassifyRealEnabled = env.AI_CLASSIFY_ENABLE_REAL === 'true' && hasAnthropicKey;
   const aiClassifyMode = aiClassifyRealEnabled ? 'real' : (isProd ? 'disabled' : (env.AI_CLASSIFY_ADAPTER === 'mock' ? 'mock' : 'disabled'));
+  // 2026-09-22(18차) 3·4절 — 코스에 담긴 장소의 영업시간(Place Details,
+  // Enterprise SKU). 제공량(무료/유료 몇 곳)이 아직 확정되지 않은 기능이라
+  // "판매 약속"으로 켜지지 않게 AI 분류와 같은 이중 게이트를 쓴다 —
+  // BUSINESS_HOURS_ENABLE_REAL=true와 실제 장소 키가 둘 다 있어야만
+  // real이다. 운영에서 둘 중 하나라도 없으면 'disabled'(가짜 응답 없음).
+  // 개발/테스트에서는 합성 데이터 어댑터('test')로 화면·계산을 검증한다.
+  const businessHoursRealEnabled = env.BUSINESS_HOURS_ENABLE_REAL === 'true' && hasPlaceKey && !forceTest;
+  const businessHoursMode = businessHoursRealEnabled ? 'real' : (isProd ? 'disabled' : 'test');
 
   let services;
   if (isProd) {
@@ -139,6 +153,7 @@ export function buildConfig(env) {
       email: hasEmailKey ? 'real' : 'unavailable',
       weather: hasWeatherKey ? 'real' : 'unavailable',
       aiClassify: aiClassifyMode,
+      businessHours: businessHoursMode,
       // 비용·과금과 무관한 순수 서명 검증이라 dev/test/prod 모두 "키가
       // 있으면 real"로 통일한다(가짜 응답을 만들 필요 자체가 없다 —
       // 실제 검증 로직을 그대로 쓰고, 테스트는 JWKS 조회 함수만
@@ -153,6 +168,7 @@ export function buildConfig(env) {
       email: serviceModeDev(forceTest, hasEmailKey, env.EMAIL_ADAPTER),
       weather: serviceModeDev(forceTest, hasWeatherKey, env.WEATHER_ADAPTER),
       aiClassify: aiClassifyMode,
+      businessHours: businessHoursMode,
       googleAuth: hasGoogleClientId ? 'real' : 'unavailable',
     };
   }
@@ -171,7 +187,9 @@ export function buildConfig(env) {
     // (real/unavailable 이분법뿐이라 GOOGLE_CLIENT_ID를 안 준 보통의
     // 테스트 환경에서 'unavailable'이 나오는 건 정상이지, "test 모드가
     // 아님"을 뜻하지 않는다).
-    testMode: !isProd && (forceTest || Object.entries(services).every(([k, m]) => k === 'aiClassify' || k === 'googleAuth' || m === 'test')),
+    // 2026-09-22(18차) — businessHours도 같은 이유로 제외한다(명시 스위치
+    // 없이는 real이 안 되는 부가 기능이라 "전부 test인지" 판정과 무관).
+    testMode: !isProd && (forceTest || Object.entries(services).every(([k, m]) => k === 'aiClassify' || k === 'googleAuth' || k === 'businessHours' || m === 'test')),
     port: Number(env.PORT || 8787),
     dbPath: env.DB_PATH || path.join(HERE, 'data', 'app.db'),
 
@@ -326,6 +344,15 @@ export function buildConfig(env) {
       placesTextSearchPro: Number(env.COST_PLACES_TEXT_SEARCH_PRO_USD_PER_1000 || 32),
       routesComputeEssentials: Number(env.COST_ROUTES_COMPUTE_ESSENTIALS_USD_PER_1000 || 5),
       routesComputePro: Number(env.COST_ROUTES_COMPUTE_PRO_USD_PER_1000 || 10),
+      // 2026-09-22(18차) 4절 — Place Details(New) Enterprise SKU. 영업시간
+      // 필드(regularOpeningHours/currentOpeningHours)가 이 등급을 부른다
+      // (검색으로 교차 확인 — 요청은 필드마스크 중 가장 높은 SKU 하나로
+      // 청구). 단가는 **미확인**: 이 세션은 developers.google.com·
+      // mapsplatform.google.com 직접 열람이 막혀 있고, 검색 결과끼리
+      // $20/1,000과 $35/1,000이 엇갈렸다. 비용 한도는 과소평가보다
+      // 과대평가가 안전하므로 높은 쪽(35)을 기본값으로 둔다 — 운영 전
+      // 공식 가격표에서 확인한 값으로 환경변수를 바꾼다.
+      placesDetailsEnterprise: Number(env.COST_PLACES_DETAILS_ENTERPRISE_USD_PER_1000 || 35),
     },
     // 계산용 환율 — **실시간 환율이 아니라 예산 산정을 위한 가정치다.**
     // 실제 카드·PG 결제는 이 값과 무관하게 그때그때의 실제 환율로
@@ -461,6 +488,22 @@ export function buildConfig(env) {
       // 스팸이 몰리면 그 자체가 운영 부담이다).
       perAccountDailyLimit: Number(env.FEEDBACK_PER_ACCOUNT_DAILY_LIMIT || 10),
       perIpDailyLimit: Number(env.FEEDBACK_PER_IP_DAILY_LIMIT || 20),
+    },
+
+    // 2026-09-22(18차) 3·4·5절 — 영업시간 조회(코스에 담긴 장소만).
+    // **여기 숫자는 소비자 약속이 아니라 내부 안전 상한이다** — 무료/유료
+    // 제공량은 아직 확정되지 않았다(docs/BUSINESS_DECISIONS.md 18차 절에
+    // 시나리오별 계산을 남긴다). 실제로 몇 곳까지 되는지는 이 횟수보다
+    // 먼저 "이용권 원가 상한에서 기존 약속(남은 위치확인·코스 생성)
+    // 몫을 떼고 남은 여유"가 결정한다(entitlement-usage.mjs의
+    // optionalFeatureHeadroomMicros) — 새 기능이 기존 약속 예산을 절대
+    // 먹지 않게 하는 것이 먼저고, 이 횟수는 그 위의 보조 안전판이다.
+    businessHours: {
+      maxPlacesPerCall: Number(env.BUSINESS_HOURS_MAX_PLACES_PER_CALL || 10),
+      freePeriodPlaceCap: Number(env.BUSINESS_HOURS_FREE_PERIOD_PLACE_CAP || 5),
+      paidPeriodPlaceCap: Number(env.BUSINESS_HOURS_PAID_PERIOD_PLACE_CAP || 40),
+      perAccountDailyPlaceLimit: Number(env.BUSINESS_HOURS_PER_ACCOUNT_DAILY_LIMIT || 30),
+      globalDailyPlaceCap: Number(env.BUSINESS_HOURS_GLOBAL_DAILY_CAP || 300),
     },
 
     // 2026-09-11 재검토(10차) 5·6절 — AI 보조 분류 비용 통제.

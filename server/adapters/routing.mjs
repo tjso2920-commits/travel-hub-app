@@ -43,7 +43,7 @@
 import { config } from '../config.mjs';
 import { markVerified } from '../status.mjs';
 import { fetchWithTimeout } from '../net.mjs';
-import { chargeCostBatch } from '../cost-ledger.mjs';
+import { chargeCostBatch, recordApiOutcome } from '../cost-ledger.mjs';
 import { currentPeriod } from '../entitlement-usage.mjs';
 import { splitIntoSegments, skuForSegment } from '../route-segments.mjs';
 
@@ -206,8 +206,10 @@ async function callGoogleRoutesAll(origin, ordered, accountId) {
     try {
       result = await callGoogleRoutesSegment(seg);
     } catch (e) {
+      recordApiOutcome('routes', 'fail', 1);
       return { ok: false, reason: 'network-error' };
     }
+    recordApiOutcome('routes', result.ok ? 'ok' : 'fail', 1);
     if (!result.ok) return { ok: false, reason: result.reason };
     if (!legsAreWalkPlausible(result.legs)) return { ok: false, reason: 'implausible-speed' };
     allLegs.push(...result.legs.map((l) => ({ distanceMeters: l.distanceMeters, seconds: parseDurationSeconds(l.duration) })));

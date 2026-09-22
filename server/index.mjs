@@ -31,6 +31,8 @@ import { handleTossWebhook } from './routes/webhook-toss.mjs';
 import { lookupPlaceRoute, lookupPlacesBatchRoute } from './routes/places.mjs';
 import { resolvePlaceLinkRoute } from './routes/place-link.mjs';
 import { classifyBatchRoute } from './routes/ai-classify.mjs';
+import { businessHoursRoute } from './routes/business-hours.mjs';
+import { serviceBreakdownSince } from './cost-ledger.mjs';
 import { recordEvent } from './routes/events.mjs';
 import { joinWaitlist } from './routes/waitlist.mjs';
 import { generateCourseRoute } from './routes/course-generation.mjs';
@@ -386,6 +388,15 @@ async function handle(req, res) {
     // 메모(note)는 11차부터 기본 입력에서 아예 뺐다. 비활성/예산부족/
     // 일일한도 등은 200으로 사유를 그대로 돌려주고(서버 오류 아님),
     // 클라이언트는 그 사유를 보고 규칙 결과·수동 편집으로 계속 쓴다.
+    // 2026-09-22(18차) 3·4절 — 코스에 담긴(위치 확인된) 장소의 영업시간.
+    // 사용자가 "영업시간 확인"을 눌렀을 때만 불린다. 결과는 저장하지
+    // 않는다(routes/business-hours.mjs 상단).
+    if (req.method === 'POST' && pathname === '/api/places/hours') {
+      const accountId = requireAccount(req, res); if (!accountId) return;
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const result = await businessHoursRoute(accountId, body);
+      return sendJson(res, result.status, result);
+    }
     if (req.method === 'POST' && pathname === '/api/places/classify-batch') {
       const accountId = requireAccount(req, res); if (!accountId) return;
       const body = JSON.parse((await readBody(req)) || '{}');
@@ -427,6 +438,13 @@ async function handle(req, res) {
 
     // 소규모 관리자 화면(src/design/admin.html) 전용 API — 전부
     // requireAdmin을 거친다(ADMIN_TOKEN 미설정 시 501로 정직하게 막힘).
+    // 2026-09-22(18차) 4절 — 검색·영업시간·경로(·AI) 요청 수·비용과
+    // 성공/실패/재시도 건수를 서비스별로 따로 본다(운영자 전용, 이번 달).
+    if (req.method === 'GET' && pathname === '/api/admin/api-usage') {
+      if (!requireAdmin(req, res)) return;
+      const since = new Date().toISOString().slice(0, 7) + '-01T00:00:00.000Z';
+      return sendJson(res, 200, Object.assign({ ok: true }, serviceBreakdownSince(since)));
+    }
     if (req.method === 'GET' && pathname === '/api/admin/feedback') {
       if (!requireAdmin(req, res)) return;
       const result = adminListFeedback({ status: url.searchParams.get('status') || undefined, type: url.searchParams.get('type') || undefined });

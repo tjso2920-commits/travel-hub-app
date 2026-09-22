@@ -80,6 +80,10 @@ export function skuCostMicros(sku) {
     // periodId/periodCapMicros로 호출하기만 하면 됨). 단가 자체가
     // 미검증 자리표시자라는 점은 config.mjs의 aiClassify 주석 참고.
     'ai-classify-batch': config.aiClassify.placeholderPerItemMicros,
+    // 2026-09-22(18차) 4절 — 영업시간 전용 Place Details(New) Enterprise.
+    // 검색('places-text-search')과 SKU를 분리해 기록한다 — 원가 보고에서
+    // "검색 몇 건 / 영업시간 몇 건 / 경로 몇 건"이 섞이지 않게.
+    'places-details-enterprise': config.costEstimate.placesDetailsEnterpriseMicros,
   };
   const v = map[sku];
   if (v == null) throw new Error('unknown-cost-sku:' + sku);
@@ -241,6 +245,31 @@ export function describeCostFailure(reason) {
     return { reason: 'entitlement-cost-cap-reached', transient: false };
   }
   return { reason: 'cost-budget-exceeded', transient: true };
+}
+
+/* 2026-09-22(18차) 4절 — "검색·영업시간·경로 요청 수·비용·실패·재시도를
+   분리해 기록하라." 비용·요청 건수는 위 cost_ledger에 service/sku별로
+   이미 따로 남는다(serviceBreakdownSince). 성공/실패/재시도 같은 결과
+   건수는 비용과 성격이 달라 원장에 섞지 않고, 기존 rate_counters 표를
+   'stats:<서비스>:<결과>' 범위·날짜 창으로 재사용해 센다(내용·장소명·
+   응답 본문은 전혀 남기지 않는다 — 건수만). */
+export function recordApiOutcome(service, outcome, n) {
+  const by = Math.max(0, Number(n) || 0);
+  if (!by) return;
+  const db = openDb();
+  const day = new Date().toISOString().slice(0, 10);
+  db.prepare(`
+    INSERT INTO rate_counters (scope, window_key, count) VALUES (?, ?, ?)
+    ON CONFLICT(scope, window_key) DO UPDATE SET count = count + excluded.count
+  `).run(`stats:${service}:${outcome}`, day, by);
+}
+export function serviceBreakdownSince(sinceIso) {
+  const db = openDb();
+  const costs = db.prepare(`SELECT service, sku, COALESCE(SUM(count),0) AS requests, COALESCE(SUM(${COST_COLUMN_EXPR}),0) AS micros FROM cost_ledger WHERE created_at >= ? GROUP BY service, sku ORDER BY service, sku`).all(sinceIso);
+  const sinceDay = String(sinceIso).slice(0, 10);
+  const outcomes = db.prepare("SELECT scope, COALESCE(SUM(count),0) AS count FROM rate_counters WHERE scope LIKE 'stats:%' AND window_key >= ? GROUP BY scope ORDER BY scope").all(sinceDay)
+    .map((r) => { const [, service, outcome] = r.scope.split(':'); return { service, outcome, count: r.count }; });
+  return { since: sinceIso, costs, outcomes };
 }
 
 export function usageSummary(accountId) {

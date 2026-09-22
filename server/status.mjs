@@ -7,7 +7,7 @@
  * 맞다("이 프로세스가 뜬 뒤로 실제로 확인됐는지"를 보여주는 것이지
  * 영구 기록이 아니다).
  */
-const lastVerifiedAt = { placeLookup: null, routing: null, payment: null, email: null };
+const lastVerifiedAt = { placeLookup: null, routing: null, payment: null, email: null, businessHours: null };
 
 export function markVerified(service) {
   if (service in lastVerifiedAt) lastVerifiedAt[service] = new Date().toISOString();
