@@ -4,6 +4,11 @@
 
 외부 라이브러리·CDN 의존이 하나도 없는 단일 HTML 웹앱이다. 데이터는 전부 사용자 기기의 브라우저 저장소에만 있고 서버로 나가지 않는다.
 
+> **2026-09-22(18차) 먼저 읽기** — 위 설명은 옛 앱(`src/index.html`) 기준이다. **판매 대상은 새 앱(`src/design/`)** 이고,
+> 로그인·결제·동기화를 위해 서버(`server/`)가 필요하다. 내 PC에서 켜는 법: **`start-windows.cmd` 더블클릭**
+> (macOS·Linux는 `node scripts/start-local.mjs`) → `http://localhost:8787/`. 자세한 순서는 `docs/OPERATIONS_SETUP.md` 0절,
+> 지금 상태는 `docs/전달문서_통합본.md` 맨 앞 요약. 서버 테스트 전체: `npm run server-test-all`.
+
 ---
 
 ## 저장소 구조
