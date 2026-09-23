@@ -96,6 +96,43 @@ t('이미 있는 곳을 그 날짜로 옮기기는 거부(중복 방지)', DS.mo
   t('4) 앞뒤 좌표가 있으면 추정으로 바뀌고 미확인 해제', fixedC.course.stops[1].walkEstimated === true && !fixedC.course.stops[1].walkUnknown);
 }
 
+// ---- 18차 재검토 2차 3절 — 이동시간 미확인이면 이후 장소 도착 시각·영업 판정 보류
+{
+  const c = { date: '2026-10-05', departureMinutes: 600, stops: [{ id: 'A', walk: 5, dwell: 30 }, { id: 'B', walk: null, walkUnknown: true, dwell: 30 }, { id: 'C', walk: 8, dwell: 30 }] };
+  const r = DS.recompute(c);
+  t('3) 미확인 구간 앞 장소는 도착 확정', !r.stops[0].arrivalUncertain);
+  t('3) 미확인 구간 장소와 그 뒤 장소 모두 도착 미확인', r.stops[1].arrivalUncertain === true && r.stops[2].arrivalUncertain === true);
+  // 11:00~12:00만 여는 가게에 "가장 이른 도착"(10:35·11:13)을 넘기면 예전엔 확정 판정이 나왔다
+  const hrs = { status: 'ok', source: 'test-adapter', fetchedAt: '2026-01-01T00:00:00Z', utcOffsetMinutes: 540, regular: { periods: [{ open: { day: 1, hour: 11, minute: 0 }, close: { day: 1, hour: 12, minute: 0 } }], specialDays: [], weekdayDescriptions: [] }, current: null };
+  const raw = BH.evaluateVisit(hrs, '2026-10-05', r.stops[2].at, 30);
+  const held = BH.evaluateStop(hrs, '2026-10-05', r.stops[2]);
+  t('3) 도착 미확인 장소는 "영업 중 도착" 같은 확정 대신 판단 보류', raw.state === 'open' && held.state === 'arrival-unknown' && /판단 보류/.test(held.text), JSON.stringify({ raw: raw.state, held }));
+  const closedDay = BH.evaluateStop(hrs, '2026-10-06', Object.assign({}, r.stops[2]));
+  t('3) 시각과 무관한 판정(그날 휴무)은 보류하지 않고 그대로', closedDay.state === 'closed-day');
+  t('3) 확정 도착 장소는 기존 판정 그대로', BH.evaluateStop(hrs, '2026-10-05', { at: 670, dwell: 30 }).state === 'open');
+}
+
+// ---- 18차 재검토 2차 2절 — 24시간 영업 + 다음 날 특별 휴무 경계
+{
+  const p24 = [{ open: { day: 0, hour: 0, minute: 0 } }];
+  const mk = (specialDays) => ({ status: 'ok', source: 'test-adapter', fetchedAt: '2026-09-22T03:00:00Z', utcOffsetMinutes: 540, regular: { periods: p24, specialDays: [], weekdayDescriptions: [] }, current: { periods: p24, specialDays, weekdayDescriptions: [] } });
+  const h = mk(['2026-09-23']);
+  const night = BH.evaluateVisit(h, '2026-09-22', 1430, 40);
+  t('2) 재현: 특별 휴무 전날 23:50 도착·40분 → 자정 영업 종료 경고(24시간 영업 아님)', night.state === 'closes-during' && /다음날 00:00/.test(night.text) && /특별 휴무/.test(night.text), JSON.stringify(night));
+  const noon = BH.evaluateVisit(h, '2026-09-22', 720, 40);
+  t('2) 특별 휴무 전날 낮 → 영업, 자정까지·다음 날 특별 휴무 안내', noon.state === 'open-24h' && /다음날 00:00까지\(다음 날 특별 휴무\)/.test(noon.text), noon.text);
+  t('2) 특별 휴무 당일 → 특별 휴무', BH.evaluateVisit(h, '2026-09-23', 720, 40).state === 'closed-day');
+  t('2) 특별 휴무 다음 날 밤 23:50 → 24시간 영업(다음 날도 영업)', BH.evaluateVisit(h, '2026-09-24', 1430, 40).state === 'open-24h');
+  const plain = mk([]);
+  const pn = BH.evaluateVisit(plain, '2026-09-22', 1430, 40);
+  t('2) 일반 24시간(특별일 없음) 자정 넘는 체류 → 24시간 영업, 경계 문구 없음', pn.state === 'open-24h' && pn.text === '24시간 영업', JSON.stringify(pn));
+  // 정규 영업이 자정에 끊겨 다음 날 00:00부터 이어지면(22:00~24:00, 00:00~02:00) 자정에 닫힌다고 경고하지 않는다
+  const split = { status: 'ok', source: 'test-adapter', fetchedAt: '2026-01-01T00:00:00Z', utcOffsetMinutes: 540, current: null,
+    regular: { periods: [{ open: { day: 2, hour: 22, minute: 0 }, close: { day: 3, hour: 0, minute: 0 } }, { open: { day: 3, hour: 0, minute: 0 }, close: { day: 3, hour: 2, minute: 0 } }], specialDays: [], weekdayDescriptions: [] } };
+  const sp = BH.evaluateVisit(split, '2026-09-22', 1410, 60); // 화 23:30 도착 60분
+  t('2) 자정에 끊겨 이어지는 영업은 이어서 판단(다음날 02:00 종료)', sp.state === 'open' && /다음날 02:00/.test(sp.text), JSON.stringify(sp));
+}
+
 // ---- 영업시간 판정
 const P = (day, h, m, date) => (date ? { day, hour: h, minute: m, date } : { day, hour: h, minute: m });
 const every = (fn) => { const o = []; for (let d = 0; d < 7; d++) o.push(...fn(d)); return o; };

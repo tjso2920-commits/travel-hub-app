@@ -2599,7 +2599,7 @@ function showSavedCourse() {
     ].filter(Boolean).join(' · ');
     const lateNote = s.lateForFixed ? `<p class="sched-warn">정해 둔 방문 시각(${clock(s.fixedAt)})보다 늦게 도착해요 — 앞 일정을 줄이거나 시각을 바꿔 주세요.</p>` : '';
     const memo = s.userHoursNote ? `<p class="sched-memo">내 메모: ${A.esc(s.userHoursNote)}</p>` : '';
-    return `<div class="route-row sched-row"><span>${i + 1}</span>${photoHTML(p, '')}<div class="sched-main"><b>${A.esc(p.name)}</b><p>${clock(s.at)} 도착 · ${extra}</p>${lateNote}${memo}` +
+    return `<div class="route-row sched-row"><span>${i + 1}</span>${photoHTML(p, '')}<div class="sched-main"><b>${A.esc(p.name)}</b><p>${s.arrivalUncertain ? `도착 시각 미확인(빨라야 ${clock(s.at)})` : `${clock(s.at)} 도착`} · ${extra}</p>${lateNote}${memo}` +
       `<div class="hours-line" data-hours-stop="${A.esc(s.id)}"></div>${links}` +
       `<div class="sched-actions"><button data-stop-edit="${A.esc(s.id)}" aria-label="${A.esc(p.name)} 시간·날짜 바꾸기">시간·날짜 바꾸기</button>` +
       `<a href="${A.esc(BH.googleMapsUrl(p.name, p.placeId))}" target="_blank" rel="noopener noreferrer">구글 지도에서 확인 ↗</a></div></div></div>`;
@@ -2638,7 +2638,7 @@ function showSavedCourse() {
     `<div class="sched-head"><b>${A.esc(DS.dateLabel(c.date))}</b><span class="sched-tz">${daTzNoteHTML(city)}</span>` +
     `<div class="sched-depart">출발 ${clock(c.departureMinutes)}<button data-sched-depart>출발 시각 바꾸기</button></div></div>` +
     `<h2>${c.stops.length}곳 · 도보 이동 ${hours ? hours + '시간 ' : ''}${mins}분</h2>` +
-    `<p>${routeLine}${lastStop ? ` · 마지막 장소 도착 예정 ${clock(lastStop.at)}` : ''}</p>` +
+    `<p>${routeLine}${lastStop ? (lastStop.arrivalUncertain ? ` · 마지막 장소 도착 시각 미확인(빨라야 ${clock(lastStop.at)})` : ` · 마지막 장소 도착 예정 ${clock(lastStop.at)}`) : ''}</p>` +
     (c.stops.length ? '' : '<p class="inline-note">이 날짜에 남은 장소가 없어요. 다른 날짜에서 옮겨 오거나 새로 만들 수 있어요.</p>') +
     hoursBox + undoBtn +
     stopViews +
@@ -2665,7 +2665,7 @@ function daRenderHoursLines() {
     const p = s && daPlaceById(s.id);
     const mem = p && daHoursGet(p.placeId);
     if (!s || !mem) { el.innerHTML = ''; return; }
-    const ev = BH.evaluateVisit(mem, c.date, s.at, s.dwell);
+    const ev = BH.evaluateStop(mem, c.date, s); // 도착 시각 미확인이면 시각 판정은 보류(18차 재검토 2차 3절)
     const day = BH.describeDay(mem, c.date);
     const meta = [day ? `그날 영업: ${day}` : '', ev.basisLabel || '', BH.sourceLabel(mem), mem.fetchedAt ? `${daFormatFetched(mem.fetchedAt)} 확인` : ''].filter(Boolean).join(' · ');
     const tzWarn = (mem.timeZone && tz && mem.timeZone !== tz) ? `<p class="hours-info">이 장소 시간대(${A.esc(mem.timeZone)})가 코스 기준 시간대와 달라 시각 비교가 정확하지 않을 수 있어요.</p>` : '';

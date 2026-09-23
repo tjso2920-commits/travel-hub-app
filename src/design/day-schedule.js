@@ -75,7 +75,12 @@
     const out = JSON.parse(JSON.stringify(c));
     let t = departureOf(out);
     out.departureMinutes = t;
+    // 2026-09-23(18차 재검토 2차) 3절 — 이동시간 미확인 구간이 있으면 그 장소와
+    // 뒤 장소들의 도착 시각은 "가장 이른 값"일 뿐 확정이 아니다. 끝까지 추적한다.
+    let uncertain = false;
     (out.stops || []).forEach((s) => {
+      if (s.walkUnknown) uncertain = true;
+      if (uncertain) s.arrivalUncertain = true; else delete s.arrivalUncertain;
       // 이동시간 미확인(walkUnknown)은 0분으로 "확정"하지 않는다 — 계산에는 0을
       // 넣되(가장 이른 도착) 화면이 "미확인·재계산 필요"로 표시한다.
       const arrive = t + (s.walkUnknown ? 0 : (s.walk || 0));
@@ -324,13 +329,29 @@
     const leave = at + stay;
     const inside = intervals.find((x) => x.o <= at && at < x.c);
     if (inside) {
-      if (inside.always) return Object.assign(base, { state: 'open-24h', level: 'ok', text: '24시간 영업' });
-      // 닫는 시각이 확인 범위 밖(잘림)이거나 없으면 "시간 부족"을 단정하지 않는다.
-      if (inside.closeUnknown) return Object.assign(base, { state: 'open', level: 'ok', text: '영업 중 도착 · 종료 시각은 확인 범위 밖이에요' });
-      if (leave > inside.c) {
-        return Object.assign(base, { state: 'closes-during', level: 'warn', text: `도착 ${inside.c - at}분 뒤 ${clock(inside.c)}에 영업 종료 — 머무는 ${stay}분보다 짧아요` });
+      // 2026-09-23(18차 재검토 2차) — 도착한 구간에 바로 이어지는 구간(자정에 끊겨
+      // 들어온 다음 날 구간 등)까지 이어 "실제로 문이 닫히는 시각"을 구한다.
+      // 예전엔 24시간 구간이면 끝을 안 보고 곧바로 "24시간 영업"을 돌려줘,
+      // 다음 날 특별 휴무로 자정에 끝나는데도 23:50 도착·40분 체류를 통과시켰다.
+      let end = inside.c, closeUnknown = !!inside.closeUnknown, allAlways = !!inside.always;
+      for (;;) {
+        const next = intervals.find((x) => x !== inside && x.o <= end && x.c > end);
+        if (!next) break;
+        end = next.c; closeUnknown = closeUnknown || !!next.closeUnknown; allAlways = allAlways && !!next.always;
       }
-      return Object.assign(base, { state: 'open', level: 'ok', text: `영업 중 도착 · ${clock(inside.c)} 영업 종료` });
+      const WINDOW_END = 2880; // 판정 창(전날~다음날) 끝 — 그 뒤는 모른다.
+      const endOff = Math.floor((end - 1) / 1440) + 1; // 닫힌 뒤 날(휴무 사유 안내용)
+      const nextDayNote = basisByOff[endOff] === 'special' ? '(다음 날 특별 휴무)' : '';
+      // 닫는 시각이 확인 범위 밖(잘림)이거나 없으면 "시간 부족"을 단정하지 않는다.
+      if (closeUnknown) return Object.assign(base, { state: 'open', level: 'ok', text: '영업 중 도착 · 종료 시각은 확인 범위 밖이에요' });
+      if (leave > end && end < WINDOW_END) {
+        return Object.assign(base, { state: 'closes-during', level: 'warn', text: `도착 ${end - at}분 뒤 ${clock(end)}에 영업 종료${nextDayNote} — 머무는 ${stay}분보다 짧아요` });
+      }
+      if (allAlways) {
+        const endsSoon = end < WINDOW_END && end <= (dayOff + 1) * 1440;
+        return Object.assign(base, { state: 'open-24h', level: 'ok', text: endsSoon ? `24시간 영업 · ${clock(end)}까지${nextDayNote}` : '24시간 영업' });
+      }
+      return Object.assign(base, { state: 'open', level: 'ok', text: `영업 중 도착 · ${clock(end)} 영업 종료` });
     }
     const dayStart = dayOff * 1440, dayEnd = dayStart + 1440;
     const sameDay = intervals.filter((x) => x.o < dayEnd && x.c > dayStart);
@@ -343,6 +364,16 @@
     if (later) return Object.assign(base, { state: 'before-open', level: 'warn', text: `${clock(later.o)}에 문을 열어요 — ${later.o - at}분 일찍 도착해요` });
     return Object.assign(base, { state: 'after-close', level: 'warn', text: `${clock(earlier.c)}에 영업이 끝나요 — 도착이 늦어요` });
   }
+  /* 코스의 한 장소 판정 — 도착 시각이 확정되지 않았으면(앞 구간 이동시간 미확인)
+     시각에 따라 달라지는 판정(영업 중·종료 전·쉬는 시간 등)은 보류한다. 그날
+     휴무·폐업·정보 없음처럼 시각과 무관한 판정은 그대로 알린다. */
+  const TIME_DEPENDENT = new Set(['open', 'open-24h', 'closes-during', 'break', 'before-open', 'after-close']);
+  function evaluateStop(hours, ymd, stop) {
+    const ev = evaluateVisit(hours, ymd, stop.at, stop.dwell);
+    if (!stop.arrivalUncertain || !TIME_DEPENDENT.has(ev.state)) return ev;
+    return Object.assign({}, ev, { state: 'arrival-unknown', level: 'info', decided: ev.state,
+      text: '도착 시각 미확인(앞 구간 이동시간을 몰라요) — 방문 가능 여부 판단 보류' });
+  }
   function googleMapsUrl(name, placeId) {
     return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(name || '') + (placeId ? '&query_place_id=' + encodeURIComponent(placeId) : '');
   }
@@ -351,5 +382,5 @@
     WD, DEFAULT_DWELL_MIN, parseYmd, weekdayOf, addDaysYmd, dayDiff, dateLabel, clock, parseClock,
     defaultDepartureFor, departureOf, recompute, estimateWalk, removeStop, moveStop,
   };
-  root.BusinessHours = { evaluateVisit, describeDay, sourceLabel, googleMapsUrl, BASIS_LABEL, intervalsAround };
+  root.BusinessHours = { evaluateVisit, evaluateStop, describeDay, sourceLabel, googleMapsUrl, BASIS_LABEL, intervalsAround };
 })(typeof window !== 'undefined' ? window : globalThis);
