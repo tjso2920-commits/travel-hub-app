@@ -125,6 +125,22 @@ const byDate = (list) => Object.fromEntries(list.map((c) => [c.date, c]));
   t('PUT: 옛 기준으로 기존 날짜를 덮지 않고 충돌로 보고', now['2026-12-01'].stops[0] === 'a' && r.conflicts.some((c) => c.date === '2026-12-01'));
 }
 
+// 18차 재검토 2차 — 같은 내용을 키 순서만 바꿔 다시 보내면 버전을 올리지 않는다(거짓 충돌 방지)
+{
+  const acc = account('key-order@example.test');
+  const trip = createTrip(acc, { city: '후쿠오카' }).trip;
+  let r = syncTrips(acc, [{ tripId: trip.tripId, city: '후쿠오카', version: trip.version, courses: [{ city: '후쿠오카', date: '2026-12-05', stops: stopsOf('a'), memo: 'm' }] }]);
+  const v = byDate(r.courses)['2026-12-05'].version;
+  r = syncTrips(acc, [{ tripId: trip.tripId, city: '후쿠오카', version: trip.version, courses: [{ memo: 'm', stops: stopsOf('a'), date: '2026-12-05', city: '후쿠오카', version: v }] }]);
+  t('여행 코스: 키 순서만 다른 재전송은 버전 그대로', byDate(r.courses)['2026-12-05'].version === v && r.conflicts.length === 0, JSON.stringify(r.conflicts));
+  r = syncTrips(acc, [{ tripId: trip.tripId, city: '후쿠오카', version: trip.version, courses: [{ memo: 'm', stops: stopsOf('a'), date: '2026-12-05', city: '후쿠오카', version: v - 1 }] }]);
+  t('여행 코스: 옛 기준이라도 내용이 같으면 충돌 아님', r.conflicts.length === 0);
+  let l = syncCourses(acc, [{ city: '후쿠오카', date: '2026-12-06', stops: stopsOf('b'), memo: 'x' }]);
+  const lv = byDate(l.courses)['2026-12-06'].version;
+  l = syncCourses(acc, [{ memo: 'x', date: '2026-12-06', stops: stopsOf('b'), city: '후쿠오카', version: lv }]);
+  t('레거시 코스: 키 순서만 다른 재전송은 버전 그대로', byDate(l.courses)['2026-12-06'].version === lv);
+}
+
 // 다른 계정 여행에는 아무 영향 없음
 {
   const owner = account('owner@example.test');

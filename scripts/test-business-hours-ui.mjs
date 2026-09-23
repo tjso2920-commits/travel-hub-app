@@ -241,6 +241,19 @@ await page.waitForTimeout(200);
   t('8) 코스에서 빠지고 장소 목록엔 남음', !st.ids.includes('p2') && st.stillSaved, JSON.stringify(st));
 }
 
+// 8-2) 18차 재검토 2차 3절 — 앞 구간 이동시간 미확인이면 그 뒤 장소 영업 판정은 보류(화면)
+{
+  const saved = await page.evaluate(() => JSON.parse(JSON.stringify(foodMap.course)));
+  await page.evaluate(() => { const s3 = foodMap.course.stops.find((s) => s.id === 'p3'); s3.walk = null; s3.walkUnknown = true; delete s3.walkEstimated; showSavedCourse(); });
+  await page.waitForTimeout(150);
+  const line = await page.textContent('[data-hours-stop="p3"]');
+  const row = await page.$eval('[data-hours-stop="p3"]', (el) => el.closest('.sched-row').textContent);
+  t('8-2) 도착 미확인 장소: 영업시간은 보이되 방문 가능 여부는 판단 보류', /판단 보류/.test(line) && /그날 영업/.test(line), line);
+  t('8-2) 도착 시각도 "미확인(빨라야 …)"으로 표시', /도착 시각 미확인\(빨라야/.test(row), row.slice(0, 120));
+  t('8-2) 유료 재계산 요청 없음', generateBodies.length === 0);
+  await page.evaluate((c) => { foodMap.course = c; const i = foodMap.courses.findIndex((x) => x.date === c.date && !x.tripId); foodMap.courses[i] = c; A.saveFoodMap(foodMap); showSavedCourse(); }, saved);
+}
+
 // 9) 저장 실패 → 되돌림
 {
   const before = await page.evaluate(() => foodMap.course.departureMinutes);

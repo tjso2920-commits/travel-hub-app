@@ -204,8 +204,8 @@ export function syncCourses(accountId, incomingCourses) {
         continue;
       }
       const existingData = serializeCourseRow(existing);
-      if (placeContentEqual(c, existingData)) {
-        continue; // 실질적으로 안 바뀐 재전송 — 버전을 올리지 않는다.
+      if (courseContentEqual(c, existingData)) {
+        continue; // 실질적으로 안 바뀐 재전송 — 버전을 올리지 않는다(키 순서 무관).
       }
       if (baseVersion === existing.version) {
         db.prepare('UPDATE account_courses SET data = ?, deleted = 0, updated_at = ?, version = ? WHERE account_id = ? AND city = ? AND date = ?')
@@ -226,6 +226,19 @@ export function syncCourses(accountId, incomingCourses) {
 
 /* 저장할 코스 내용에서 동기화용 표시(버전·삭제 표시·충돌 기록 등)는 뺀다 —
    버전은 행의 version 컬럼이 기준이다. */
+/* 2026-09-23(18차 재검토 2차) — 키 순서와 무관한 비교. 서버가 돌려주는 코스는 date가
+   앞에 오는 등 키 순서만 다른데, 순서까지 비교해 "내용이 바뀌었다"고 오판했다 —
+   그 결과 같은 내용 재전송에도 버전이 올라가 다른 기기에 거짓 충돌이 났다. */
+export function stableStringify(v) {
+  if (Array.isArray(v)) return '[' + v.map(stableStringify).join(',') + ']';
+  if (v && typeof v === 'object') return '{' + Object.keys(v).filter((k) => v[k] !== undefined).sort().map((k) => JSON.stringify(k) + ':' + stableStringify(v[k])).join(',') + '}';
+  return JSON.stringify(v === undefined ? null : v);
+}
+export function courseContentEqual(a, b) {
+  const { tripId: ta, ...ra } = stripCourseMeta(a);
+  const { tripId: tb, ...rb } = stripCourseMeta(b);
+  return stableStringify(ra) === stableStringify(rb);
+}
 export function stripCourseMeta(c) {
   const { version, updatedAt, deleted, ...rest } = c || {};
   return rest;

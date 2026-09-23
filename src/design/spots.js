@@ -311,7 +311,9 @@ function daRemergeGenericConflict(mine, base, theirs, identityKeys) {
   const fieldConflicts = {};
   const skipKeys = new Set([...identityKeys, 'version', 'updatedAt', '_fieldConflicts']);
   const has = (o, k) => o != null && Object.prototype.hasOwnProperty.call(o, k);
-  const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  // 18차 재검토 2차 — 키 순서와 무관하게 비교(서버·기준선·로컬의 키 순서가 달라
+  // 같은 값을 "내가 고친 값"으로 오인해 옛 내용을 다시 올리던 문제).
+  const eq = (a, b) => A.stableStringify(a) === A.stableStringify(b);
   // base가 있으면 mine과 base 양쪽 키를 모두 훑는다(삭제 판정에 필요).
   // base가 없으면 예전과 동일하게 mine의 키만 훑는다 — 기준 스냅샷이
   // 없을 때는 "원래 없던 필드"와 "지운 필드"를 구분할 방법이 없다.
@@ -2714,50 +2716,82 @@ function daCommitCourseEdits(entries, label) {
     courses: JSON.parse(JSON.stringify(foodMap.courses || [])),
     current: foodMap.course ? JSON.parse(JSON.stringify(foodMap.course)) : null,
   };
+  // 2026-09-23(18차 재검토 2차) 1절 — 되돌리기는 "이 편집이 바꾼 날짜"만 다룬다.
+  // 바꾼 날짜마다 편집 전 내용(없었으면 null)을 남기고, 저장 뒤 편집 후 내용을 남긴다.
+  const touched = entries.map((e) => {
+    const key = daCourseSyncKey(e);
+    const prev = daFindCourseByKey(key);
+    return { key, before: prev ? JSON.parse(JSON.stringify(prev)) : null };
+  });
+  const deletedBefore = JSON.parse(JSON.stringify(foodMap.deletedCourses || []));
   entries.forEach((e) => daUpsertCourse(e));
   const saved = A.saveFoodMap(foodMap);
   if (!saved) {
     daRestoreCourses(before);
+    foodMap.deletedCourses = deletedBefore;
     alert('이 기기에 저장하지 못해 바꾸기 전 일정으로 되돌렸어요. 저장 공간을 확인한 뒤 다시 시도해 주세요.');
     showSavedCourse();
     return false;
   }
-  daLastCourseUndo = { epoch: sessionEpoch, before, label };
+  touched.forEach((t) => { const cur = daFindCourseByKey(t.key); t.after = cur ? JSON.parse(JSON.stringify(cur)) : null; });
+  daLastCourseUndo = { epoch: sessionEpoch, touched, current: before.current, label };
   daSyncPushSafe();
   showSavedCourse();
   return true;
 }
+function daFindCourseByKey(key) { return (foodMap.courses || []).find((c) => daCourseSyncKey(c) === key) || null; }
 function daRestoreCourses(before) {
   foodMap.courses = before.courses;
   const cur = before.current;
   foodMap.course = cur ? (foodMap.courses.find((x) => x.city === cur.city && x.date === cur.date && x.tripId === cur.tripId) || cur) : foodMap.course;
 }
-/* 2026-09-22(18차 재검토) 2절 — 되돌리기를 서버까지 반영하는 준비.
-   예전엔 로컬 배열만 옛 상태로 돌렸다 — 서버는 upsert만 하므로 "새 날짜로
-   옮기기 → 동기화 → 되돌리기" 뒤에도 새 날짜 코스가 서버에 남아, 새로고침·
-   재로그인·다른 기기에서 다시 나타났다. 이제:
-   - 되돌리기 전에는 있었는데 되돌린 뒤엔 없는 날짜 → 명시적 삭제 표시.
-   - 되돌린 코스는 지금 알고 있는 서버 버전을 기준으로 삼는다(옛 버전으로
-     올리면 "옛 기준" 충돌이 나 되돌리기가 반영되지 않는다). */
-function daPrepareCourseRestore(before, currentCourses) {
-  const nowByKey = new Map((currentCourses || []).map((c) => [daCourseSyncKey(c), c]));
-  const restored = (before.courses || []).map((c) => {
-    const cur = nowByKey.get(daCourseSyncKey(c));
-    return cur && cur.version != null ? { ...c, version: cur.version } : { ...c };
+/* 2026-09-23(18차 재검토 2차) 1절 — 되돌리기는 내가 방금 한 편집만 취소한다.
+   예전(18차 재검토 1차)엔 편집 전 스냅샷 전체를 복원하면서 지금 서버 버전을
+   붙이고, 스냅샷에 없던 날짜를 전부 지웠다 — 그 사이 다른 기기가 추가한 날짜가
+   지워지고, 다른 기기가 고친 날짜가 옛 내용으로 덮였다(서버도 충돌로 못 잡음).
+   이제:
+   - 이 편집이 바꾼 날짜(touched)만 되돌린다. 다른 날짜·다른 여행은 건드리지 않는다.
+   - 바꾼 날짜가 편집 직후 모습 그대로일 때만 되돌린다. 그 사이 다른 기기가 바꿨으면
+     (내용이 다르거나 지워졌거나 새로 생겼으면) 되돌리기 전체를 보류하고 알린다 —
+     날짜 옮기기처럼 두 날짜가 한 묶음인 편집을 반쯤만 되돌려 장소가 겹치거나
+     사라지는 일을 막는다. 보류한 기록은 버린다(같은 버튼으로 덮어쓰지 않게).
+   - 되돌린 날짜는 지금 알고 있는 서버 버전을 기준으로 올린다(내용이 편집 직후와
+     같으니 그 버전 위의 정당한 수정이다). 편집으로 새로 생긴 날짜는 삭제 표시로. */
+function daUndoConflicts(u) {
+  return u.touched.filter((t) => {
+    const cur = daFindCourseByKey(t.key);
+    if (!t.after) return !!cur;
+    return !cur || daCourseBodyKey(cur) !== daCourseBodyKey(t.after);
   });
-  const keep = new Set(restored.map(daCourseSyncKey));
-  const toDelete = (currentCourses || []).filter((c) => !keep.has(daCourseSyncKey(c)));
-  return { courses: restored, current: before.current, toDelete };
 }
 function daUndoCourseEdit() {
   const u = daLastCourseUndo;
   if (!u || u.epoch !== sessionEpoch) return;
+  const changed = daUndoConflicts(u);
+  if (changed.length) {
+    daLastCourseUndo = null;
+    const dates = [...new Set(changed.map((t) => window.DaySchedule.dateLabel((t.after || t.before).date)))].join(', ');
+    daToast(`다른 기기에서 ${dates} 일정이 바뀌어 되돌리지 않았어요. 지금 일정을 확인한 뒤 필요하면 직접 고쳐 주세요.`);
+    showSavedCourse();
+    return;
+  }
   const snapshot = { courses: JSON.parse(JSON.stringify(foodMap.courses || [])), current: foodMap.course ? JSON.parse(JSON.stringify(foodMap.course)) : null };
   const deletedBefore = JSON.parse(JSON.stringify(foodMap.deletedCourses || []));
-  const plan = daPrepareCourseRestore(u.before, snapshot.courses);
-  daRestoreCourses(plan);
-  plan.courses.forEach((c) => daTakeCourseDeletion(c));
-  plan.toDelete.forEach((c) => daQueueCourseDeletion(c));
+  for (const t of u.touched) {
+    const idx = (foodMap.courses || []).findIndex((c) => daCourseSyncKey(c) === t.key);
+    const cur = idx >= 0 ? foodMap.courses[idx] : null;
+    if (t.before) {
+      const restored = JSON.parse(JSON.stringify(t.before));
+      if (cur && cur.version != null) restored.version = cur.version; else delete restored.version;
+      daTakeCourseDeletion(restored);
+      if (idx >= 0) foodMap.courses[idx] = restored; else foodMap.courses.push(restored);
+    } else if (cur) {
+      foodMap.courses.splice(idx, 1);
+      daQueueCourseDeletion(cur);
+    }
+  }
+  const want = u.current;
+  if (want) foodMap.course = (foodMap.courses || []).find((x) => x.city === want.city && x.date === want.date && x.tripId === want.tripId) || foodMap.course;
   if (!A.saveFoodMap(foodMap)) {
     foodMap.deletedCourses = deletedBefore;
     daRestoreCourses(snapshot);

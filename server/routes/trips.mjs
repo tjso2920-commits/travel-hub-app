@@ -14,7 +14,7 @@
  * 결과를 "어느 여행에" 저장할지만 다룬다.
  */
 import { openDb, uuid, nowIso } from '../db.mjs';
-import { stripCourseMeta } from './account-data.mjs';
+import { stripCourseMeta, courseContentEqual } from './account-data.mjs';
 
 function ownedTrip(db, accountId, tripId) {
   const row = db.prepare('SELECT * FROM trips WHERE trip_id = ?').get(tripId);
@@ -249,8 +249,7 @@ function applyTripCourses(db, tripId, courses, now, conflicts) {
 function sameCourseContent(rowData, incoming) {
   let stored = {};
   try { stored = JSON.parse(rowData); } catch (e) { return false; }
-  const a = stripCourseMeta(stored), b = stripCourseMeta(incoming);
-  return JSON.stringify(a) === JSON.stringify(b);
+  return courseContentEqual(stored, incoming); // 키 순서 무관(18차 재검토 2차)
 }
 
 export function putTripCourses(accountId, tripId, courses) {

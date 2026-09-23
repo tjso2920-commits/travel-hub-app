@@ -183,7 +183,14 @@ function _getCourseBaseline(city, date) {
 let _tripCoursesVersionSnapshot = null; // Map<'tripId__date', JSON 문자열>
 function _tripCourseContentKey(c) {
   const { version, updatedAt, deleted, tripId, ...rest } = c || {};
-  return JSON.stringify(rest);
+  return _stableStringify(rest);
+}
+/* 2026-09-23(18차 재검토 2차) — 키 순서와 무관한 비교용 문자열. 서버가 돌려준 코스는
+   date가 맨 앞에 오는 등 키 순서만 달라, 내용이 같아도 "바뀜"으로 오판했다. */
+function _stableStringify(v) {
+  if (Array.isArray(v)) return '[' + v.map(_stableStringify).join(',') + ']';
+  if (v && typeof v === 'object') return '{' + Object.keys(v).filter((k) => v[k] !== undefined).sort().map((k) => JSON.stringify(k) + ':' + _stableStringify(v[k])).join(',') + '}';
+  return JSON.stringify(v === undefined ? null : v);
 }
 function _setTripCourseBaselines(entries, removeKeys) {
   if (!_tripCoursesVersionSnapshot) _tripCoursesVersionSnapshot = new Map();
@@ -1446,6 +1453,7 @@ window.DesignAdapter = {
   setTripCourseBaselines: _setTripCourseBaselines,
   getTripCourseBaseline: _getTripCourseBaseline,
   tripCourseContentKey: _tripCourseContentKey,
+  stableStringify: _stableStringify,
   courseContentKey: _courseContentKey,
   resyncTripsBaseline: _resetTripsSnapshot,
   getTripBaseline: _getTripBaseline,
