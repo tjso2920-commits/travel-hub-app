@@ -176,6 +176,26 @@ function _getCourseBaseline(city, date) {
   if (!_coursesVersionSnapshot || !_coursesVersionSnapshot.has(key)) return null;
   try { return JSON.parse(_coursesVersionSnapshot.get(key)); } catch (e) { return null; }
 }
+/* 2026-09-22(18차 재검토) 2·3절 — 여행에 딸린 날짜별 코스(tripId+date)의
+   기준선. "마지막으로 서버와 맞춘 내용"과 지금 로컬이 같으면 이 기기에서
+   안 고친 것 — 다른 기기가 지운 날짜를 이 기기에서도 지워도 되는지,
+   충돌 때 어느 필드를 내가 고쳤는지 판단하는 데 쓴다. */
+let _tripCoursesVersionSnapshot = null; // Map<'tripId__date', JSON 문자열>
+function _tripCourseContentKey(c) {
+  const { version, updatedAt, deleted, tripId, ...rest } = c || {};
+  return JSON.stringify(rest);
+}
+function _setTripCourseBaselines(entries, removeKeys) {
+  if (!_tripCoursesVersionSnapshot) _tripCoursesVersionSnapshot = new Map();
+  for (const c of (entries || [])) if (c && c.tripId && c.date) _tripCoursesVersionSnapshot.set(`${c.tripId}__${c.date}`, _tripCourseContentKey(c));
+  for (const k of (removeKeys || [])) _tripCoursesVersionSnapshot.delete(k);
+  _persistBaselines();
+}
+function _getTripCourseBaseline(tripId, date) {
+  const key = `${tripId}__${date}`;
+  if (!_tripCoursesVersionSnapshot || !_tripCoursesVersionSnapshot.has(key)) return null;
+  try { return JSON.parse(_tripCoursesVersionSnapshot.get(key)); } catch (e) { return null; }
+}
 let _tripsVersionSnapshot = null; // Map<tripId, JSON 문자열(version/updatedAt/courses 제외)>
 function _tripContentKey(t) {
   const { version, updatedAt, courses, ...rest } = t; // courses는 daSyncPush가 별도로 붙이는 파생 필드 — 본문 비교에서 제외.
@@ -237,24 +257,27 @@ function _getTagBaseline(id) {
    수 있어 특히 중요). */
 const BASELINE_STORAGE_KEY = 'sync_baseline_v1';
 function _persistBaselines() {
-  const places = {}, courses = {}, trips = {}, tags = {};
+  const places = {}, courses = {}, trips = {}, tags = {}, tripCourses = {};
+  if (_tripCoursesVersionSnapshot) for (const [k, v] of _tripCoursesVersionSnapshot) tripCourses[k] = v;
   if (_placesVersionSnapshot) for (const [k, v] of _placesVersionSnapshot) places[k] = v;
   if (_coursesVersionSnapshot) for (const [k, v] of _coursesVersionSnapshot) courses[k] = v;
   if (_tripsVersionSnapshot) for (const [k, v] of _tripsVersionSnapshot) trips[k] = v;
   if (_tagsVersionSnapshot) for (const [k, v] of _tagsVersionSnapshot) tags[k] = v;
-  daSave(BASELINE_STORAGE_KEY, { places, courses, trips, tags });
+  daSave(BASELINE_STORAGE_KEY, { places, courses, trips, tags, tripCourses });
 }
 function _restoreBaselinesFromStorage() {
   const persisted = daLoad(BASELINE_STORAGE_KEY, null);
   _placesVersionSnapshot = new Map(Object.entries((persisted && persisted.places) || {}));
   _coursesVersionSnapshot = new Map(Object.entries((persisted && persisted.courses) || {}));
   _tripsVersionSnapshot = new Map(Object.entries((persisted && persisted.trips) || {}));
+  _tripCoursesVersionSnapshot = new Map(Object.entries((persisted && persisted.tripCourses) || {}));
   _tagsVersionSnapshot = new Map(Object.entries((persisted && persisted.tags) || {}));
 }
 function _clearSyncBaselines() {
   _placesVersionSnapshot = new Map();
   _coursesVersionSnapshot = new Map();
   _tripsVersionSnapshot = new Map();
+  _tripCoursesVersionSnapshot = new Map();
   _tagsVersionSnapshot = new Map();
   try { localStorage.removeItem(PFX + BASELINE_STORAGE_KEY); } catch (e) { /* 무시 */ }
 }
@@ -1420,6 +1443,10 @@ window.DesignAdapter = {
   placeContentKey: _placeContentKey,
   resyncCoursesBaseline: _resetCoursesSnapshot,
   getCourseBaseline: _getCourseBaseline,
+  setTripCourseBaselines: _setTripCourseBaselines,
+  getTripCourseBaseline: _getTripCourseBaseline,
+  tripCourseContentKey: _tripCourseContentKey,
+  courseContentKey: _courseContentKey,
   resyncTripsBaseline: _resetTripsSnapshot,
   getTripBaseline: _getTripBaseline,
   resyncTagsBaseline: _resetTagsSnapshot,

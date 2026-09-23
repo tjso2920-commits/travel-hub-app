@@ -375,6 +375,119 @@ function daFieldConflictBlockHTML(conflicts, resolveAttrName, idForAttr) {
   }).join('');
 }
 
+/* 2026-09-22(18차 재검토) 2·3절 — 날짜별 코스 삭제 표시(tombstone).
+   되돌리기로 없어진 날짜는 "배열에서 빠졌다"가 아니라 명시적 삭제 표시
+   {deleted:true, 기준 버전}로 서버에 알린다(서버는 배열에서 빠진 날짜를
+   절대 지우지 않는다 — 다른 기기 보호). 표시에는 지울 당시 내용(snapshotKey)
+   도 남겨, 서버의 버전이 달라도 내용이 내가 알던 그대로면(= 방금 이 기기가
+   올린 것) 새 버전으로 한 번 더 지우고, 내용이 다르면(다른 기기가 고침)
+   지우지 않고 서버 내용을 되살린다. */
+function daCourseSyncKey(c) { return c.tripId ? `t:${c.tripId}__${c.date}` : `c:${c.city}__${c.date}`; }
+function daCourseBodyKey(c) { return A.tripCourseContentKey(c); }
+function daQueueCourseDeletion(course) {
+  if (!course || !course.date) return;
+  const key = daCourseSyncKey(course);
+  foodMap.deletedCourses = (foodMap.deletedCourses || []).filter((d) => daCourseSyncKey(d) !== key);
+  foodMap.deletedCourses.push({ tripId: course.tripId, city: course.city, date: course.date, version: Number(course.version) || 0, snapshotKey: daCourseBodyKey(course) });
+}
+/* 같은 날짜에 다시 코스를 만들면 대기 중인 삭제 표시는 거둔다 — 그 표시가
+   알던 서버 버전을 새 코스의 기준 버전으로 이어받는다(안 그러면 서버에 그
+   날짜가 아직 남아 있을 때 "옛 기준" 충돌이 난다). */
+function daTakeCourseDeletion(entry) {
+  const key = daCourseSyncKey(entry);
+  const list = foodMap.deletedCourses || [];
+  const hit = list.find((d) => daCourseSyncKey(d) === key);
+  if (!hit) return;
+  foodMap.deletedCourses = list.filter((d) => d !== hit);
+  if (entry.version == null) entry.version = hit.version;
+}
+/* 보낸 삭제 표시의 결과 반영. 반려(옛 기준)됐는데 서버 내용이 내가 지울
+   때 알던 그대로면 새 버전으로 다시 시도, 내용이 다르면 지우지 않고(표시
+   거둠) 서버 내용이 그대로 남게 한다. 반환: { retry, kept } */
+function daResolveCourseDeletes(sent, conflicts) {
+  let retry = false, kept = false;
+  for (const d of sent) {
+    const key = daCourseSyncKey(d);
+    const cur = (foodMap.deletedCourses || []).find((x) => daCourseSyncKey(x) === key);
+    if (!cur || cur.version !== d.version) continue; // 그 사이 다시 만들었거나 새로 지움 — 최신 표시가 알아서 간다.
+    const c = conflicts.find((x) => x && x.date === d.date && (d.tripId ? x.tripId === d.tripId : (!x.tripId && x.city === d.city))
+      && /delete$/.test(String(x.reason || '')));
+    if (c && c.serverCourse && daCourseBodyKey(c.serverCourse) === d.snapshotKey) { cur.version = c.serverVersion; retry = true; continue; }
+    foodMap.deletedCourses = (foodMap.deletedCourses || []).filter((x) => x !== cur);
+    if (c) kept = true;
+  }
+  return { retry, kept };
+}
+/* 18차 재검토 2·3절 — 여행 동기화 응답의 날짜별 코스(courses·deletedCourses·
+   날짜 충돌)를 로컬에 반영한다. 원칙:
+   - 같은 날짜 충돌(옛 기준)은 조용히 덮지 않고 기준선 3-way 재병합 후 서버
+     버전을 이어받아 다시 올린다.
+   - 다른 기기가 만든 날짜는 들여오고, 다른 기기가 지운 날짜는 이 기기에서 안
+     고쳤을 때만 따라 지운다(고쳤으면 남겨서 다시 올림).
+   - 요청 뒤 이 기기에서 새로 만들거나 고친 코스는 그대로 둔다.
+   반환: 다시 올려야 하는지(true/false). */
+function daApplyTripCoursesResponse(json, conflicts, pendingCourseDeletes, courseRequestSnapshot) {
+  let retry = false;
+  const delRes = daResolveCourseDeletes(pendingCourseDeletes.filter((d) => d.tripId), conflicts);
+  if (delRes.retry) retry = true;
+  if (delRes.kept) daToast('다른 기기에서 고친 코스라 서버에서 지우지 않았어요. 그 날짜 코스를 다시 확인해 주세요.');
+  const pendingDelKeys = new Set((foodMap.deletedCourses || []).map(daCourseSyncKey));
+  const courseConflicts = new Map(conflicts.filter((c) => c && c.tripId && c.date && !/delete$/.test(String(c.reason || ''))).map((c) => [`t:${c.tripId}__${c.date}`, c]));
+  const locals = new Map((foodMap.courses || []).filter((c) => c.tripId).map((c) => [daCourseSyncKey(c), c]));
+  const next = [];
+  const baselineEntries = [];
+  const seen = new Set();
+  let conflictToast = false;
+  for (const sc of json.courses) {
+    if (!sc || !sc.tripId || !sc.date) continue;
+    const k = daCourseSyncKey(sc);
+    seen.add(k);
+    if (pendingDelKeys.has(k)) continue; // 이 기기가 지운 날짜 — 삭제 표시가 곧 올라간다.
+    const mine = locals.get(k);
+    const conflict = courseConflicts.get(k);
+    if (conflict && conflict.serverCourse && mine) {
+      const theirs = { ...conflict.serverCourse, tripId: sc.tripId };
+      const merged = daRemergeGenericConflict(mine, A.getTripCourseBaseline(sc.tripId, sc.date), theirs, ['tripId', 'date']);
+      merged.version = sc.version;
+      next.push(merged); baselineEntries.push(sc);
+      retry = true; conflictToast = true;
+      continue;
+    }
+    if (mine) {
+      const sentKey = courseRequestSnapshot.get(k);
+      if (sentKey === undefined) {
+        // 요청 뒤 이 기기에서 처음 만든 날짜인데 서버엔 다른 기기가 만든 코스가 있다 — 덮지 않고 합친다.
+        const merged = daRemergeGenericConflict(mine, null, sc, ['tripId', 'date']);
+        merged.version = sc.version;
+        next.push(merged); baselineEntries.push(sc); retry = true; conflictToast = true;
+        continue;
+      }
+      if (daCourseBodyKey(mine) !== sentKey) { next.push({ ...mine, version: sc.version }); baselineEntries.push(sc); continue; }
+    }
+    next.push(sc); baselineEntries.push(sc);
+  }
+  const removedBaselines = [];
+  const deletedOnServer = new Map((Array.isArray(json.deletedCourses) ? json.deletedCourses : []).map((d) => [`t:${d.tripId}__${d.date}`, d]));
+  for (const [k, mine] of locals) {
+    if (seen.has(k) || pendingDelKeys.has(k)) continue;
+    const gone = deletedOnServer.get(k);
+    if (gone) {
+      const base = A.getTripCourseBaseline(mine.tripId, mine.date);
+      if (base && A.tripCourseContentKey(base) === daCourseBodyKey(mine)) { removedBaselines.push(`${mine.tripId}__${mine.date}`); continue; } // 안 고친 코스 — 따라 지운다.
+      next.push({ ...mine, version: gone.version }); retry = true; conflictToast = true; // 고친 코스 — 지우지 않고 다시 올린다.
+      continue;
+    }
+    next.push(mine); // 아직 서버에 없는 새 코스(요청 뒤 생성 등) — 그대로 둔다.
+  }
+  foodMap.courses = [...(foodMap.courses || []).filter((c) => !c.tripId), ...next];
+  if (foodMap.course && foodMap.course.tripId) {
+    const cur = foodMap.course;
+    foodMap.course = foodMap.courses.find((c) => c.tripId === cur.tripId && c.date === cur.date) || cur;
+  }
+  A.setTripCourseBaselines(baselineEntries, removedBaselines);
+  if (conflictToast) daToast('다른 기기와 날짜별 코스가 달라 자동으로 합쳐졌어요.');
+  return retry;
+}
 async function daSyncPush(token) {
   if (!token) return { placesOk: true, coursesOk: true, tripsOk: true, visitsOk: true, tagsOk: true, allOk: true, hasUnresolvedConflicts: false, fullySynced: true };
   const epochAtStart = sessionEpoch;
@@ -387,9 +500,21 @@ async function daSyncPush(token) {
   // 시작됐으면(mySeq가 더 이상 최신이 아니면) 이 응답은 적용하지 않고
   // 버린다 — 항상 "가장 나중에 시작한 요청"의 결과만 신뢰한다.
   const mySeq = ++daSyncPushSeq;
+  // 날짜별 코스 삭제 표시와, 요청 시점의 코스 내용(저장 중 추가 수정 판별용).
+  const pendingCourseDeletes = (foodMap.deletedCourses || []).map((d) => ({ ...d }));
+  const courseRequestSnapshot = new Map((foodMap.courses || []).map((c) => [daCourseSyncKey(c), daCourseBodyKey(c)]));
+  const tombstoneOut = (d) => ({ ...(d.tripId ? { tripId: d.tripId } : {}), city: d.city, date: d.date, deleted: true, version: d.version });
   const tripsPayload = (foodMap.trips || []).map((t) => ({
-    ...t, courses: (foodMap.courses || []).filter((c) => c.tripId === t.tripId),
+    ...t,
+    courses: [
+      ...(foodMap.courses || []).filter((c) => c.tripId === t.tripId),
+      ...pendingCourseDeletes.filter((d) => d.tripId === t.tripId).map(tombstoneOut),
+    ],
   }));
+  const legacyCoursesPayload = [
+    ...(foodMap.courses || []).filter((c) => !c.tripId),
+    ...pendingCourseDeletes.filter((d) => !d.tripId).map(tombstoneOut),
+  ];
   const pendingDeleted = (foodMap.deletedPlaceIds || []).slice(); // [{id, baseVersion}]
   // 2026-09-10 재검토(8차) — "저장 중 추가 수정" 보호: 이 요청을 보내는
   // 바로 이 순간의 장소 내용을 스냅샷으로 고정해 둔다. await 하는 동안
@@ -413,7 +538,7 @@ async function daSyncPush(token) {
   const tagRequestSnapshot = new Map(outgoingTags.map((tg) => [tg.id, A.tagContentKey(tg)]));
   const [placesRes, coursesRes, tripsRes, visitsRes, tagsRes] = await Promise.all([
     A.api('/api/places', { method: 'PUT', token, body: { places: outgoingPlaces, deletedIds: pendingDeleted } }),
-    A.api('/api/courses', { method: 'PUT', token, body: { courses: (foodMap.courses || []).filter((c) => !c.tripId) } }),
+    A.api('/api/courses', { method: 'PUT', token, body: { courses: legacyCoursesPayload } }),
     A.api('/api/trips/sync', { method: 'POST', token, body: { trips: tripsPayload } }),
     A.api('/api/visits/sync', { method: 'POST', token, body: { visits: foodMap.visits || [] } }),
     A.api('/api/tags', { method: 'PUT', token, body: { tags: outgoingTags, deletedIds: pendingDeletedTags } }),
@@ -539,8 +664,13 @@ async function daSyncPush(token) {
   // visits는 서버가 충돌 시에도 합집합으로 병합해 돌려주므로(날짜를
   // 절대 버리지 않음) 그대로 대입해도 안전하다 — 여기서 손대지 않는다.
   let coursesRemergedAny = false;
+  let courseDeletesKept = false;
   if (coursesOk) {
     const conflicts = Array.isArray(coursesRes.json.conflicts) ? coursesRes.json.conflicts : [];
+    const delRes = daResolveCourseDeletes(pendingCourseDeletes.filter((d) => !d.tripId), conflicts);
+    if (delRes.retry) coursesRemergedAny = true;
+    if (delRes.kept) courseDeletesKept = true;
+    const pendingDelKeys = new Set((foodMap.deletedCourses || []).map(daCourseSyncKey));
     const courseKey = (c) => `${c.city}__${c.date}`;
     const conflictByKey = new Map(conflicts.filter((c) => c.city && c.date && c.serverCourse).map((c) => [courseKey(c), c]));
     const mineByKey = new Map((foodMap.courses || []).filter((c) => !c.tripId).map((c) => [courseKey(c), c]));
@@ -553,10 +683,16 @@ async function daSyncPush(token) {
     // 건드렸을 수 있는 모든 필드는 병합, 서로 다른 필드는 양쪽 값을
     // _fieldConflicts에 보존"하는 안전한 경로를 그대로 재사용한다.
     const courseBaselineOverrides = new Map();
-    const mergedLegacy = coursesRes.json.courses.map((serverCourse) => {
+    const mergedLegacy = coursesRes.json.courses.filter((sc) => !pendingDelKeys.has(daCourseSyncKey(sc))).map((serverCourse) => {
       const conflict = conflictByKey.get(courseKey(serverCourse));
-      if (!conflict) return serverCourse;
       const mine = mineByKey.get(courseKey(serverCourse));
+      if (!conflict) {
+        // 18차 재검토 — 요청 뒤에 이 기기에서 또 고친 코스는 서버 값으로 덮지 않는다
+        // (서버는 방금 보낸 내용을 받았으므로 버전만 이어받는다).
+        const sentKey = courseRequestSnapshot.get(daCourseSyncKey(serverCourse));
+        if (mine && sentKey !== undefined && daCourseBodyKey(mine) !== sentKey) return { ...mine, version: serverCourse.version };
+        return serverCourse;
+      }
       if (!mine) return serverCourse;
       coursesRemergedAny = true;
       const base = A.getCourseBaseline(serverCourse.city, serverCourse.date);
@@ -567,7 +703,25 @@ async function daSyncPush(token) {
     // 딸린 코스(foodMap.courses 중 tripId 있는 것)는 그대로 두고, 그
     // 부분만 서버의 병합 결과로 맞춘다.
     const tripCourses = (foodMap.courses || []).filter((c) => c.tripId);
-    foodMap.courses = [...mergedLegacy, ...tripCourses];
+    // 18차 재검토 — 다른 기기가 지운 날짜(deleted-on-server): 이 기기에서 안 고친
+    // 코스면 따라 지우고(서버 목록에 없으므로 자연히 빠짐), 고친 게 있으면 지우지
+    // 않고 남겨 새 기준 버전으로 다시 올린다(수정 보존). 요청 뒤 새로 만든 코스도 남긴다.
+    const serverLegacyKeys = new Set(mergedLegacy.map(courseKey));
+    const keepLocal = [];
+    for (const mine of mineByKey.values()) {
+      const k = courseKey(mine);
+      if (serverLegacyKeys.has(k) || pendingDelKeys.has(daCourseSyncKey(mine))) continue;
+      const gone = conflicts.find((c) => c.reason === 'deleted-on-server' && courseKey(c) === k);
+      if (gone) {
+        const base = A.getCourseBaseline(mine.city, mine.date);
+        if (base && A.courseContentKey(base) === A.courseContentKey(mine)) continue;
+        keepLocal.push({ ...mine, version: gone.serverVersion });
+        coursesRemergedAny = true;
+        continue;
+      }
+      if (!courseRequestSnapshot.has(daCourseSyncKey(mine))) keepLocal.push(mine);
+    }
+    foodMap.courses = [...mergedLegacy, ...keepLocal, ...tripCourses];
     // 2026-09-11 재검토(11차) — foodMap.course는 foodMap.courses 안의
     // 한 항목을 "가리키는 포인터"일 뿐인데, 위에서 배열을 통째로 새
     // 객체로 갈아 끼웠으므로 옛 포인터는 이제 배열 밖의 낡은 객체를
@@ -581,6 +735,7 @@ async function daSyncPush(token) {
     // 결과가 아니라) — places와 동일한 이유(9차 재검토 버그 재발 방지).
     A.resyncCoursesBaseline(mergedLegacy, courseBaselineOverrides);
     if (conflictByKey.size) { daToast('다른 기기와 코스 정보가 달라 자동으로 합쳐졌어요.'); daScheduleConflictRetry(); }
+    else if (coursesRemergedAny) daScheduleConflictRetry();
   }
   let tripsRemergedAny = false;
   if (tripsOk) {
@@ -608,7 +763,12 @@ async function daSyncPush(token) {
     }
     // 서버가 지금 실제로 확정한 값을 다음 기준선으로 남긴다 — courses와 동일.
     A.resyncTripsBaseline(foodMap.trips, tripBaselineOverrides);
+    if (Array.isArray(tripsRes.json.courses) && daApplyTripCoursesResponse(tripsRes.json, conflicts, pendingCourseDeletes, courseRequestSnapshot)) {
+      tripsRemergedAny = true;
+      daScheduleConflictRetry();
+    }
   }
+  if (courseDeletesKept) daToast('다른 기기에서 고친 코스라 서버에서 지우지 않았어요. 그 날짜 코스를 다시 확인해 주세요.');
   if (visitsOk) foodMap.visits = visitsRes.json.visits;
   // 2026-09-11 재검토(11차, 12차에서 재현·수정) — 태그 레지스트리 동기화
   // 응답 반영. **12차 지적(ChatGPT 실제 재현) — "태그 충돌은 드물어서
@@ -840,6 +1000,7 @@ async function daLogout() {
   delete foodMap.visits;
   delete foodMap.currentTripByCity;
   delete foodMap.deletedPlaceIds;
+  delete foodMap.deletedCourses; // 18차 재검토 — 날짜별 코스 삭제 표시도 계정별 데이터.
   // 2026-09-15 신규 — 자전거 공유 반납 포트 안내 진행 상태(목적지·고른
   // 포트·단계)도 계정별 데이터다. 로그아웃 후 다음 계정 화면에 이전
   // 계정이 보던 목적지·포트가 그대로 남으면 안 된다(3절 "계정 전환 시
@@ -1448,11 +1609,24 @@ async function daSyncTripCourses(tripId) {
   const r = await A.api('/api/trips/' + encodeURIComponent(tripId) + '/courses', { token });
   if (!r.ok || !r.json || !Array.isArray(r.json.courses)) return;
   foodMap.courses = foodMap.courses || [];
+  // 18차 재검토 — 이 기기에서 아직 안 올린 수정·삭제는 덮지 않는다: 지운 날짜(삭제
+  // 표시 대기)는 되살리지 않고, 기준선과 달라진(=이 기기에서 고친) 코스는 그대로 둔다.
+  const pendingDel = new Set((foodMap.deletedCourses || []).map(daCourseSyncKey));
+  const fresh = [];
   r.json.courses.forEach((sc) => {
-    const idx = foodMap.courses.findIndex((c) => c.tripId === tripId && c.date === sc.date);
     const entry = { ...sc, tripId };
-    if (idx >= 0) foodMap.courses[idx] = entry; else foodMap.courses.push(entry);
+    if (pendingDel.has(daCourseSyncKey(entry))) return;
+    const idx = foodMap.courses.findIndex((c) => c.tripId === tripId && c.date === sc.date);
+    if (idx >= 0) {
+      const mine = foodMap.courses[idx];
+      const base = A.getTripCourseBaseline(tripId, sc.date);
+      const untouched = base && A.tripCourseContentKey(base) === daCourseBodyKey(mine);
+      if (!untouched && daCourseBodyKey(mine) !== daCourseBodyKey(entry)) return; // 이 기기 수정 보존 — 다음 동기화가 버전으로 가린다.
+      foodMap.courses[idx] = entry;
+    } else foodMap.courses.push(entry);
+    fresh.push(entry);
   });
+  A.setTripCourseBaselines(fresh);
   A.saveFoodMap(foodMap);
 }
 function chooseTrip(cityName, tripId) {
@@ -1693,6 +1867,7 @@ function daShowBatchQueueStep() {
    구현할 필요가 없다. */
 function daUpsertCourse(entry) {
   foodMap.courses = foodMap.courses || [];
+  daTakeCourseDeletion(entry); // 같은 날짜에 대기 중인 삭제 표시가 있으면 거두고 기준 버전을 잇는다.
   const idx = foodMap.courses.findIndex((c) => c.city === entry.city && c.date === entry.date && c.tripId === entry.tripId);
   if (idx >= 0) foodMap.courses[idx] = entry; else foodMap.courses.push(entry);
   foodMap.course = entry;
@@ -2439,11 +2614,10 @@ function showSavedCourse() {
   const totalKm = ((c.totalMeters || 0) / 1000).toFixed(1);
   const hours = Math.floor(c.walkTotal / 60), mins = c.walkTotal % 60;
   const surveyTrip = currentTripForCity(city);
-  // 2026-09-11 재검토(11차) — 코스 필드 충돌 안내. trip에 딸린 코스는
-  // 날짜별 upsert만 하고 아직 필드 병합을 안 하므로(daRemergeGenericConflict
-  // 미적용) 여기서는 레거시(tripId 없음) 코스만 해당된다 — 없으면
-  // c._fieldConflicts 자체가 애초에 안 생긴다.
-  const courseConflictHTML = daFieldConflictBlockHTML(stored._fieldConflicts, 'course-conflict-resolve', `${c.city}::${c.date}`);
+  // 2026-09-11 재검토(11차) — 코스 필드 충돌 안내. 18차 재검토부터 여행에
+  // 딸린 코스도 날짜별 버전 충돌 때 재병합되므로(_fieldConflicts가 생김)
+  // tripId도 같이 넘겨 어느 코스인지 정확히 찾는다.
+  const courseConflictHTML = daFieldConflictBlockHTML(stored._fieldConflicts, 'course-conflict-resolve', `${c.city}::${c.date}::${c.tripId || ''}`);
   const lastStop = c.stops[c.stops.length - 1];
   const routeLine = c.edited
     ? '직접 바꾼 일정이에요. 일부 이동시간은 직선거리로 추정했어요(실제와 다를 수 있어요).'
@@ -2557,12 +2731,34 @@ function daRestoreCourses(before) {
   const cur = before.current;
   foodMap.course = cur ? (foodMap.courses.find((x) => x.city === cur.city && x.date === cur.date && x.tripId === cur.tripId) || cur) : foodMap.course;
 }
+/* 2026-09-22(18차 재검토) 2절 — 되돌리기를 서버까지 반영하는 준비.
+   예전엔 로컬 배열만 옛 상태로 돌렸다 — 서버는 upsert만 하므로 "새 날짜로
+   옮기기 → 동기화 → 되돌리기" 뒤에도 새 날짜 코스가 서버에 남아, 새로고침·
+   재로그인·다른 기기에서 다시 나타났다. 이제:
+   - 되돌리기 전에는 있었는데 되돌린 뒤엔 없는 날짜 → 명시적 삭제 표시.
+   - 되돌린 코스는 지금 알고 있는 서버 버전을 기준으로 삼는다(옛 버전으로
+     올리면 "옛 기준" 충돌이 나 되돌리기가 반영되지 않는다). */
+function daPrepareCourseRestore(before, currentCourses) {
+  const nowByKey = new Map((currentCourses || []).map((c) => [daCourseSyncKey(c), c]));
+  const restored = (before.courses || []).map((c) => {
+    const cur = nowByKey.get(daCourseSyncKey(c));
+    return cur && cur.version != null ? { ...c, version: cur.version } : { ...c };
+  });
+  const keep = new Set(restored.map(daCourseSyncKey));
+  const toDelete = (currentCourses || []).filter((c) => !keep.has(daCourseSyncKey(c)));
+  return { courses: restored, current: before.current, toDelete };
+}
 function daUndoCourseEdit() {
   const u = daLastCourseUndo;
   if (!u || u.epoch !== sessionEpoch) return;
   const snapshot = { courses: JSON.parse(JSON.stringify(foodMap.courses || [])), current: foodMap.course ? JSON.parse(JSON.stringify(foodMap.course)) : null };
-  daRestoreCourses(u.before);
+  const deletedBefore = JSON.parse(JSON.stringify(foodMap.deletedCourses || []));
+  const plan = daPrepareCourseRestore(u.before, snapshot.courses);
+  daRestoreCourses(plan);
+  plan.courses.forEach((c) => daTakeCourseDeletion(c));
+  plan.toDelete.forEach((c) => daQueueCourseDeletion(c));
   if (!A.saveFoodMap(foodMap)) {
+    foodMap.deletedCourses = deletedBefore;
     daRestoreCourses(snapshot);
     alert('되돌리기를 저장하지 못했어요. 지금 일정은 그대로예요.');
     showSavedCourse();
@@ -3305,7 +3501,7 @@ $('#sheetContent').onclick = (e) => {
   if (b.dataset.dupMerge) { const [x, y] = b.dataset.dupMerge.split('|'); return resolveDup(x, y, 'merge'); }
   if (b.dataset.dupDismiss) { const [x, y] = b.dataset.dupDismiss.split('|'); return resolveDup(x, y, 'dismiss'); }
   if (b.dataset.conflictResolve) { const [pid, key] = b.dataset.conflictResolve.split('|'); return resolveFieldConflict(pid, key); }
-  if (b.dataset.courseConflictResolve) { const [cd, key] = b.dataset.courseConflictResolve.split('|'); const [cCity, cDate] = cd.split('::'); return resolveCourseFieldConflict(cCity, cDate, key); }
+  if (b.dataset.courseConflictResolve) { const [cd, key] = b.dataset.courseConflictResolve.split('|'); const [cCity, cDate, cTrip] = cd.split('::'); return resolveCourseFieldConflict(cCity, cDate, key, cTrip || undefined); }
   if (b.dataset.tripConflictResolve) { const [tid, key] = b.dataset.tripConflictResolve.split('|'); return resolveTripFieldConflict(tid, key); }
   if (b.dataset.tagConflictResolve) { const [forId, tid, key] = b.dataset.tagConflictResolve.split('|'); return resolveTagFieldConflict(forId, tid, key); }
   /* 2026-09-10 재검토(3차): 샘플은 로그인 없이 곧바로 buildCourseSheet로
@@ -3405,14 +3601,14 @@ function resolveFieldConflict(placeId, key) {
    foodMap.course는 foodMap.courses 안의 같은 객체를 가리키는
    포인터이므로 별도로 안 고쳐도 되지만, 동기화가 배열을 통째로
    새 객체로 갈아 끼우는 경우를 대비해 포인터도 다시 맞춘다. */
-function resolveCourseFieldConflict(cityName, date, key) {
-  const c = (foodMap.courses || []).find((x) => !x.tripId && x.city === cityName && x.date === date);
+function resolveCourseFieldConflict(cityName, date, key, tripId) {
+  const c = (foodMap.courses || []).find((x) => (tripId ? x.tripId === tripId : !x.tripId) && x.city === cityName && x.date === date);
   if (!c || !c._fieldConflicts || !c._fieldConflicts[key]) return;
   if (c._fieldConflicts[key].theirs === undefined) delete c[key];
   else c[key] = c._fieldConflicts[key].theirs;
   delete c._fieldConflicts[key];
   if (!Object.keys(c._fieldConflicts).length) delete c._fieldConflicts;
-  if (foodMap.course && !foodMap.course.tripId && foodMap.course.city === cityName && foodMap.course.date === date) foodMap.course = c;
+  if (foodMap.course && (foodMap.course.tripId || undefined) === (tripId || undefined) && foodMap.course.city === cityName && foodMap.course.date === date) foodMap.course = c;
   const saved = A.saveFoodMap(foodMap);
   if (!saved) { foodMap = A.loadFoodMap(); alert('저장에 실패했어요. 브라우저 저장 공간을 확인해 주세요.'); return; }
   daSyncPushSafe();
