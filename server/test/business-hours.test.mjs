@@ -23,7 +23,7 @@ process.env.COST_SAFETY_CAP_FREE_KRW_MICROS = String(700_000_000);
 
 const { config, buildConfig } = await import('../config.mjs');
 const { openDb, uuid, nowIso } = await import('../db.mjs');
-const { businessHoursRoute, _inFlightSizeForTest } = await import('../routes/business-hours.mjs');
+const { businessHoursRoute, _inFlightSizeForTest, admissionUnitMicros } = await import('../routes/business-hours.mjs');
 const { currentPeriod, optionalFeatureHeadroomMicros } = await import('../entitlement-usage.mjs');
 const { periodCostMicros, skuCostMicros, chargeCostBatch, serviceBreakdownSince } = await import('../cost-ledger.mjs');
 const { planWorstCaseSkus } = await import('../route-segments.mjs');
@@ -54,7 +54,8 @@ const unit = skuCostMicros('places-details-enterprise');
   t('1) 운영 + 스위치만 있음 → disabled', prodFlagNoKey.services.businessHours === 'disabled');
   t('1) 운영 + 스위치+키 → real', prodBoth.services.businessHours === 'real');
   t('1) 개발 기본 → 합성 test', config.services.businessHours === 'test');
-  t('1) 단가 기본값은 보수값($35/1,000 → 49원)', unit === 49_000_000, String(unit));
+  t('1) 단가 기본값은 공식 단가($20/1,000 → 1,400원 가정 28원)', unit === 28_000_000, String(unit));
+  t('1) 환율·요금 여유는 단가와 별도 값(여유 판정 단가 28×1.15=32.2원)', config.businessHours.costBufferRatio === 0.15 && admissionUnitMicros() === 32_200_000, String(admissionUnitMicros()));
 }
 
 // 2) 미확인 placeId
@@ -111,7 +112,10 @@ const unit = skuCostMicros('places-details-enterprise');
   confirmPlaces(acc, ids);
   const period = currentPeriod(acc);
   const h = optionalFeatureHeadroomMicros(acc, period);
-  const expectAffordable = Math.floor(h.headroomMicros / unit);
+  // 18차 재검토 5절 — 단가 $20(28원)+여유 15%(32.2원)로 바로잡은 뒤에는 여유(217원 → 6곳)보다
+  // 무료 기간 상한(5곳)이 먼저 걸린다. 둘 중 작은 값이 실제로 허용되는 수다.
+  const budgetAffordable = Math.floor(h.headroomMicros / admissionUnitMicros());
+  const expectAffordable = Math.min(budgetAffordable, config.businessHours.freePeriodPlaceCap);
   // 동시 요청 두 개(3곳 + 3곳)가 같은 여유를 두고 경쟁
   const [r1, r2] = await Promise.all([
     businessHoursRoute(acc, { placeIds: ids.slice(0, 3) }),
@@ -119,7 +123,7 @@ const unit = skuCostMicros('places-details-enterprise');
   ]);
   const okCount = [...r1.results, ...r2.results].filter((x) => x.status === 'ok').length;
   const cut = [...r1.results, ...r2.results].filter((x) => x.status === 'not-requested');
-  t('6) 무료 기본값 여유 = 700원 − (10곳×44.8 + 코스 예약) → 영업시간 ' + expectAffordable + '곳', expectAffordable >= 1 && expectAffordable < 6, `headroom=${h.headroomMicros / 1e6}원 reserved=${h.reservedForCoreMicros / 1e6}원`);
+  t('6) 무료 기본값 여유 = 700원 − (10곳×44.8 + 코스 예약) → 여유로는 ' + budgetAffordable + '곳, 무료 상한 5곳 → 실제 ' + expectAffordable + '곳', budgetAffordable >= 5 && expectAffordable === 5, `headroom=${h.headroomMicros / 1e6}원 reserved=${h.reservedForCoreMicros / 1e6}원`);
   t('6) 동시 요청 합계가 여유를 넘지 않음', okCount === expectAffordable, `ok=${okCount}`);
   t('6) 넘친 요청은 예약분 보호 사유로 잘림', cut.length === 6 - expectAffordable && cut.every((x) => x.reason === 'business-hours-budget-reserved-for-core' || x.reason === 'business-hours-period-cap-reached'), JSON.stringify(cut.map((x) => x.reason)));
   // 남은 약속(위치확인 10곳 + 코스 1회 최악 경우)이 실제로 기록 가능한지

@@ -68,8 +68,8 @@ function buildCostEstimateMicros(env) {
     routesComputeEssentials: Number(env.COST_ROUTES_COMPUTE_ESSENTIALS_USD_PER_1000 || 5),
     routesComputePro: Number(env.COST_ROUTES_COMPUTE_PRO_USD_PER_1000 || 10),
     // 2026-09-22(18차) — 영업시간 전용 Place Details(New). 아래
-    // costUsdPerThousand.placesDetailsEnterprise 주석 참고(미확인 보수값).
-    placesDetailsEnterprise: Number(env.COST_PLACES_DETAILS_ENTERPRISE_USD_PER_1000 || 35),
+    // costUsdPerThousand.placesDetailsEnterprise 주석 참고($20 공식 단가).
+    placesDetailsEnterprise: Number(env.COST_PLACES_DETAILS_ENTERPRISE_USD_PER_1000 || 20),
   };
   const fromUsdPer1000 = (usdPer1000) => Math.round((usdPer1000 / 1000) * fx * 1_000_000);
   return {
@@ -354,13 +354,14 @@ export function buildConfig(env) {
       routesComputePro: Number(env.COST_ROUTES_COMPUTE_PRO_USD_PER_1000 || 10),
       // 2026-09-22(18차) 4절 — Place Details(New) Enterprise SKU. 영업시간
       // 필드(regularOpeningHours/currentOpeningHours)가 이 등급을 부른다
-      // (검색으로 교차 확인 — 요청은 필드마스크 중 가장 높은 SKU 하나로
-      // 청구). 단가는 **미확인**: 이 세션은 developers.google.com·
-      // mapsplatform.google.com 직접 열람이 막혀 있고, 검색 결과끼리
-      // $20/1,000과 $35/1,000이 엇갈렸다. 비용 한도는 과소평가보다
-      // 과대평가가 안전하므로 높은 쪽(35)을 기본값으로 둔다 — 운영 전
-      // 공식 가격표에서 확인한 값으로 환경변수를 바꾼다.
-      placesDetailsEnterprise: Number(env.COST_PLACES_DETAILS_ENTERPRISE_USD_PER_1000 || 35),
+      // (요청은 필드마스크 중 가장 높은 SKU 하나로 청구).
+      // 2026-09-22(18차 재검토) 5절 — 단가 정정: 공식 가격표
+      // (developers.google.com/maps/billing-and-pricing/pricing)의 Place
+      // Details Enterprise는 $20/1,000(월 1,000건 무료). 예전 기본값 $35는
+      // Text Search Enterprise 단가와 섞인 값이었다. 원가는 공식 단가 그대로
+      // 두고(1,400원 가정 → 28원), 환율·요금 변동 여유는 단가에 섞지 않고
+      // businessHours.costBufferRatio로 따로 둔다.
+      placesDetailsEnterprise: Number(env.COST_PLACES_DETAILS_ENTERPRISE_USD_PER_1000 || 20),
     },
     // 계산용 환율 — **실시간 환율이 아니라 예산 산정을 위한 가정치다.**
     // 실제 카드·PG 결제는 이 값과 무관하게 그때그때의 실제 환율로
@@ -512,6 +513,10 @@ export function buildConfig(env) {
       paidPeriodPlaceCap: Number(env.BUSINESS_HOURS_PAID_PERIOD_PLACE_CAP || 40),
       perAccountDailyPlaceLimit: Number(env.BUSINESS_HOURS_PER_ACCOUNT_DAILY_LIMIT || 30),
       globalDailyPlaceCap: Number(env.BUSINESS_HOURS_GLOBAL_DAILY_CAP || 300),
+      // 2026-09-22(18차 재검토) 5절 — 환율·요금 변동 여유(단가와 별도 값).
+      // "남는 여유로 몇 곳을 조회할 수 있나"를 판정할 때만 단가×(1+비율)로
+      // 보수적으로 본다. 원가 원장 기록·원가표는 공식 단가(28원) 그대로다.
+      costBufferRatio: Number(env.BUSINESS_HOURS_COST_BUFFER_RATIO || 0.15),
     },
 
     // 2026-09-11 재검토(10차) 5·6절 — AI 보조 분류 비용 통제.

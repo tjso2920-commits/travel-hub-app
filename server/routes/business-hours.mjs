@@ -61,6 +61,13 @@ function toItem(placeId, outcome, fetchedAt) {
   return { placeId, status: 'failed', reason: outcome.reason || 'failed', fetchedAt };
 }
 
+/* 여유 판정용 단가 — 공식 단가(원장에 기록되는 값)에 환율·요금 변동 여유를
+   따로 곱한다(18차 재검토 5절: 여유를 단가에 섞지 않는다). */
+export function admissionUnitMicros() {
+  const unit = skuCostMicros(SKU);
+  const ratio = Math.max(0, Number(config.businessHours.costBufferRatio) || 0);
+  return Math.ceil(unit * (1 + ratio));
+}
 export async function businessHoursRoute(accountId, body) {
   const mode = config.services.businessHours;
   if (mode !== 'real' && mode !== 'test') {
@@ -109,7 +116,7 @@ export async function businessHoursRoute(accountId, body) {
       toCall = toCall.slice(0, allow);
     }
     if (toCall.length) {
-      const unit = skuCostMicros(SKU);
+      const unit = admissionUnitMicros();
       const headroom = optionalFeatureHeadroomMicros(accountId, period);
       const affordable = unit > 0 ? Math.floor(headroom.headroomMicros / unit) : toCall.length;
       if (affordable < toCall.length) {
