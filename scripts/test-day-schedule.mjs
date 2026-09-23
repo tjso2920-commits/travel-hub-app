@@ -74,6 +74,28 @@ t('코스가 없는 날짜로 옮기면 한 곳짜리 새 코스', mvNew.ok && m
 t('같은 날짜로 옮기기는 거부', DS.moveStop(course, 'a', course, '2026-09-24', coordsOf).ok === false);
 t('이미 있는 곳을 그 날짜로 옮기기는 거부(중복 방지)', DS.moveStop(course, 'a', { date: '2026-09-25', stops: [{ id: 'a' }] }, '2026-09-25', coordsOf).reason === 'already-in-target');
 
+// ---- 18차 재검토 4절 — 좌표가 없어 이동시간을 정할 수 없을 때
+{
+  const cs = { A: null, B: { lat: 33.59, lng: 130.42 }, C: { lat: 33.6, lng: 130.43 } };
+  const co = (id) => cs[id];
+  const base = { date: '2026-10-05', departureMinutes: 600, origin: { lat: 33.58, lng: 130.41 }, stops: [{ id: 'A', walk: 5, dwell: 30 }, { id: 'B', walk: 12, dwell: 30 }, { id: 'C', walk: 9, dwell: 30 }] };
+  const r = DS.removeStop(base, 'B', co);
+  const c2 = r.course.stops[1];
+  t('4) A 좌표 없음 → B 빼기: C에 옛 B→C 9분을 남기지 않음', c2.walk !== 9 && c2.walkUnknown === true && !c2.walkEstimated, JSON.stringify(c2));
+  t('4) 미확인 구간은 합계에 0분으로 확정하지 않고 개수로 알림', r.course.walkUnknownCount === 1 && r.course.walkTotal === 5);
+  const tg = { date: '2026-10-06', departureMinutes: 600, stops: [{ id: 'A', walk: 5, dwell: 30 }] };
+  const m = DS.moveStop(base, 'C', tg, '2026-10-06', co);
+  t('4) 도착 날짜 마지막 장소 좌표 없음 → 옮긴 곳 0분 추정이 아니라 미확인', m.target.stops[1].walkUnknown === true && m.target.stops[1].walk == null, JSON.stringify(m.target.stops[1]));
+  const m2 = DS.moveStop(base, 'A', null, '2026-10-07', co);
+  t('4) 좌표 없는 곳을 새 날짜로 → 미확인(옛 출발점과의 거리 모름)', m2.target.stops[0].walkUnknown === true);
+  const m3 = DS.moveStop(base, 'C', null, '2026-10-08', co);
+  t('4) 좌표 있는 곳을 새 날짜로 → 그곳에서 출발(0분, 사실)', m3.target.stops[0].walk === 0 && !m3.target.stops[0].walkUnknown);
+  t('4) estimateWalk: 경도 없음·범위 밖은 null(NaN 금지)', DS.estimateWalk({ lat: 1, lng: NaN }, { lat: 1, lng: 2 }) === null && DS.estimateWalk({ lat: 91, lng: 0 }, { lat: 1, lng: 2 }) === null && DS.estimateWalk({ lat: 33.59, lng: 130.42 }, { lat: 33.6, lng: 130.43 }) > 0);
+  // 다시 좌표가 생기면(추정 가능) 미확인 표시가 풀린다
+  const fixedC = DS.removeStop({ ...base, stops: [{ id: 'B', walk: 5, dwell: 30 }, { id: 'A', walk: 3, dwell: 30 }, { id: 'C', walk: null, walkUnknown: true, dwell: 30 }] }, 'A', co);
+  t('4) 앞뒤 좌표가 있으면 추정으로 바뀌고 미확인 해제', fixedC.course.stops[1].walkEstimated === true && !fixedC.course.stops[1].walkUnknown);
+}
+
 // ---- 영업시간 판정
 const P = (day, h, m, date) => (date ? { day, hour: h, minute: m, date } : { day, hour: h, minute: m });
 const every = (fn) => { const o = []; for (let d = 0; d < 7; d++) o.push(...fn(d)); return o; };

@@ -76,7 +76,9 @@
     let t = departureOf(out);
     out.departureMinutes = t;
     (out.stops || []).forEach((s) => {
-      const arrive = t + (s.walk || 0);
+      // 이동시간 미확인(walkUnknown)은 0분으로 "확정"하지 않는다 — 계산에는 0을
+      // 넣되(가장 이른 도착) 화면이 "미확인·재계산 필요"로 표시한다.
+      const arrive = t + (s.walkUnknown ? 0 : (s.walk || 0));
       if (Number.isFinite(s.fixedAt) && s.fixedAt >= arrive) { s.at = s.fixedAt; s.lateForFixed = false; }
       else { s.at = arrive; s.lateForFixed = Number.isFinite(s.fixedAt); }
       s.wait = s.at - arrive;
@@ -84,7 +86,8 @@
       t = s.at + dwell;
     });
     out.endAt = t;
-    out.walkTotal = (out.stops || []).reduce((a, s) => a + (s.walk || 0), 0);
+    out.walkTotal = (out.stops || []).reduce((a, s) => a + (s.walkUnknown ? 0 : (s.walk || 0)), 0);
+    out.walkUnknownCount = (out.stops || []).filter((s) => s.walkUnknown).length;
     return out;
   }
   function gpsMeters(a, b) {
@@ -94,9 +97,22 @@
   }
   /* 직선거리 × 1.3(길 굴곡 보정) ÷ 분당 75m(시속 4.5km). 유료 경로 계산을
      새로 부르지 않고 "추정"으로 표시한다. */
+  function validLatLng(p) {
+    return !!p && Number.isFinite(p.lat) && Number.isFinite(p.lng) && Math.abs(p.lat) <= 90 && Math.abs(p.lng) <= 180;
+  }
   function estimateWalk(a, b) {
-    if (!a || !b || !Number.isFinite(a.lat) || !Number.isFinite(b.lat)) return null;
+    // 2026-09-22(18차 재검토) 4절 — 위도만 보던 검사를 위도·경도 둘 다로(경도가
+    // 없으면 NaN 분이 나왔다).
+    if (!validLatLng(a) || !validLatLng(b)) return null;
     return Math.max(1, Math.round((gpsMeters(a, b) * 1.3) / 75));
+  }
+  /* 18차 재검토 4절 — 이동시간을 새로 정할 수 없을 때(앞뒤 장소 좌표 없음)
+     예전 구간의 시간(예: B→C)이나 0분을 확정값처럼 남기지 않는다. walk는
+     비우고 walkUnknown으로 "미확인·재계산 필요"를 표시한다. 유료 경로 계산은
+     자동으로 부르지 않는다(사용자가 "새로 만들기"를 눌러야 이용권 1회로 다시 계산). */
+  function setWalk(stop, est) {
+    if (est != null) { stop.walk = est; stop.walkEstimated = true; delete stop.walkUnknown; }
+    else { stop.walk = null; stop.walkUnknown = true; delete stop.walkEstimated; }
   }
   function removeStop(c, stopId, coordsOf) {
     const out = JSON.parse(JSON.stringify(c));
@@ -106,8 +122,7 @@
     const next = out.stops[idx + 1];
     if (next) {
       const from = idx > 0 ? coordsOf(out.stops[idx - 1].id) : out.origin;
-      const est = estimateWalk(from, coordsOf(next.id));
-      if (est != null) { next.walk = est; next.walkEstimated = true; }
+      setWalk(next, estimateWalk(from, coordsOf(next.id)));
     }
     out.stops.splice(idx, 1);
     out.edited = true;
@@ -129,13 +144,15 @@
       t = JSON.parse(JSON.stringify(target));
       const last = t.stops[t.stops.length - 1];
       const from = last ? coordsOf(last.id) : t.origin;
-      const est = estimateWalk(from, coordsOf(moved.id));
-      moved.walk = est != null ? est : 0;
+      setWalk(moved, estimateWalk(from, coordsOf(moved.id)));
       t.stops.push(moved);
       if (Array.isArray(t.excludedIds)) t.excludedIds = t.excludedIds.filter((x) => x !== moved.id);
       t.edited = true;
     } else {
       const here = coordsOf(moved.id);
+      // 새 코스: 출발점을 이 장소로 두면 이동 0분이 사실이다. 좌표가 없어 옛
+      // 출발점을 쓰면 그 거리는 모르므로 미확인.
+      if (validLatLng(here)) { moved.walk = 0; moved.walkEstimated = true; } else setWalk(moved, null);
       t = {
         made: (extras && extras.today) || null,
         date: targetDate, city: src.city, tripId: src.tripId,

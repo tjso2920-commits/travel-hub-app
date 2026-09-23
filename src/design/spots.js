@@ -2593,7 +2593,7 @@ function showSavedCourse() {
     const dwell = Number.isFinite(s.dwell) && s.dwell > 0 ? s.dwell : DS.DEFAULT_DWELL_MIN;
     const extra = [
       `${dwell}분 머무름`,
-      `도보 ${s.walk}분${s.walkEstimated ? '(직선거리 추정)' : ''} 이동`,
+      s.walkUnknown ? '이동시간 미확인 · 재계산 필요(도착 시각은 이동 없이 계산한 가장 이른 값)' : `도보 ${s.walk}분${s.walkEstimated ? '(직선거리 추정)' : ''} 이동`,
       s.wait > 0 ? `${s.wait}분 기다림` : '',
       Number.isFinite(s.fixedAt) ? '방문 시각 지정' : '',
     ].filter(Boolean).join(' · ');
@@ -2620,7 +2620,8 @@ function showSavedCourse() {
   const courseConflictHTML = daFieldConflictBlockHTML(stored._fieldConflicts, 'course-conflict-resolve', `${c.city}::${c.date}::${c.tripId || ''}`);
   const lastStop = c.stops[c.stops.length - 1];
   const routeLine = c.edited
-    ? '직접 바꾼 일정이에요. 일부 이동시간은 직선거리로 추정했어요(실제와 다를 수 있어요).'
+    ? '직접 바꾼 일정이에요. 일부 이동시간은 직선거리로 추정했어요(실제와 다를 수 있어요).' +
+      (c.walkUnknownCount ? ` 위치를 몰라 이동시간을 정하지 못한 구간이 ${c.walkUnknownCount}곳 있어요 — 그 뒤 도착 시각은 실제보다 이를 수 있어요. 정확히 하려면 "새로 만들기"로 다시 계산해 주세요(코스 생성 1회 사용).` : '')
     : `${c.routedReal ? '실제 도보 경로 기준으로 계산했습니다.' : '실제 경로 연결에 실패해 직선거리 기준으로 추정했습니다(실제와 다를 수 있어요).'} 총 이동 거리 약 ${totalKm}km`;
   const placeIds = daCourseStopPlaceIds(c);
   const loggedIn = !!A.sessionToken(foodMap);
