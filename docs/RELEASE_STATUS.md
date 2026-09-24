@@ -52,7 +52,7 @@
   `sushi_restaurant` 같은 세부 식당 이름은 직접 확인하지 못했다(모르는 이름은 무시되므로 오분류로 이어지지 않는다).
   Windows·iPhone·Android 실기기 확인 안 함.
 
-**전체 검증(최종, 1회)**: __REGRESSION3__
+**전체 검증(최종, 1회)**: 전부 통과, 실패 0건 — `scripts/verify.mjs` + 옛 앱 기능 검사(`scripts/test/run-all.mjs`) + 디자인 통합 검사 + 서버 테스트 53개 파일 + 새 앱 화면 테스트 38개 파일(`scripts/test-*.mjs`, 새 자동 분류 검사 포함). 실행 환경: 원격 작업 환경(Linux, Node 22.22.2, 헤드리스 Chromium) — 실기기·Windows·실제 외부 서비스 아님.
 
 
 ## -17. 18차 재검토 2차(c97f16a 독립 검토) 수정 요약 (2026-09-23)
