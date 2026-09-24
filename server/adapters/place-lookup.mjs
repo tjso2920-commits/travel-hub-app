@@ -49,8 +49,18 @@ function testAdapter({ query }) {
   // 분류 경로를 실제로 태워 볼 수 있게, 결정론적인 가짜 types를 준다
   // (실제 Google 응답의 자유형 문자열 형태를 흉내낸 것일 뿐 실제
   // 값이 아니다).
-  const fakeTypes = /역|타워|station|tower/i.test(q) ? ['transit_station'] : ['restaurant', 'food'];
-  return { ok: true, lat, lng, name: q, address: q, source: 'test-adapter', placeId: 'test-' + Math.abs(hash), ambiguous: false, candidates: [], types: fakeTypes, primaryType: fakeTypes[0] };
+  // 2026-09-24 자동 분류 — 테스트 모드 전용 흉내: 실제 응답처럼 구체 업종 +
+  // 포괄 업종(store·food·point_of_interest·establishment)을 함께 준다. primaryType은
+  // 실제 API처럼 비어 있을 수도 있다(합성 "무명" 질의).
+  const T = (list, primary) => ({ types: list, primaryType: primary === undefined ? list[0] : primary });
+  const pick = /역|타워|station|tower/i.test(q) ? T(['transit_station', 'point_of_interest', 'establishment'])
+    : /의류|옷가게|clothing|apparel|古着/i.test(q) ? T(['clothing_store', 'store', 'point_of_interest', 'establishment'], 'store')
+    : /카페|cafe|coffee/i.test(q) ? T(['cafe', 'food', 'store', 'point_of_interest', 'establishment'])
+    : /박물관|museum/i.test(q) ? T(['museum', 'tourist_attraction', 'point_of_interest', 'establishment'])
+    : /무명|unknown/i.test(q) ? T(['point_of_interest', 'establishment'], null)
+    : T(['restaurant', 'food', 'point_of_interest', 'establishment']);
+  const fakeTypes = pick.types;
+  return { ok: true, lat, lng, name: q, address: q, source: 'test-adapter', placeId: 'test-' + Math.abs(hash), ambiguous: false, candidates: [], types: fakeTypes, primaryType: pick.primaryType || undefined };
 }
 
 /* candidates 중 expectedArea(도시·동네 등 힌트 문자열)와 formattedAddress

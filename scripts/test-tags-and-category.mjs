@@ -119,7 +119,8 @@ await p.waitForTimeout(100);
 const countAfterToggleOff = await p.locator('#count').innerText();
 t('6) 다시 누르면 태그 필터가 해제되고 전체가 돌아옴', countAfterToggleOff === '3');
 // 상위분류(category) 단일 필터는 여전히 그대로 동작해야 한다.
-await p.click('.filters button:has-text("바·이자카야")');
+// 2026-09-24 — 저장값 '바·이자카야'는 그대로, 화면 표시명만 '바·주점'(내부 id bar).
+await p.click('.filters button[data-filter="bar"]:has-text("바·주점")');
 await p.waitForTimeout(100);
 const cardsAfterCat = await p.locator('#grid .spot h3').allInnerTexts();
 t('6) 기존 상위분류 단일 필터도 그대로 동작함(제거되지 않음)', cardsAfterCat.length === 1 && cardsAfterCat[0] === '스미비 야키토리');

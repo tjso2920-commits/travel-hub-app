@@ -38,7 +38,9 @@ await p.evaluate(() => {
   foodMap.places = [
     // 링크·좌표가 전혀 없어 needsLookup=true, lookupState='no-evidence' —
     // 그래도 이름만으로 서버 조회를 시도할 수 있어야 한다.
-    { id: 'nf1', name: '테스트카페', address: '후쿠오카', cat: '카페·디저트', sourceLists: [] },
+    // 2026-09-24 — 테스트 어댑터가 이름에 맞춘 업종을 주게 바뀌어, "이름 짐작(술집→바)과
+    // 공급자 업종(restaurant)이 다른" 상황을 유지하려고 이름을 바꿨다(테스트 취지 동일).
+    { id: 'nf1', name: '테스트 술집', address: '후쿠오카', cat: '바·이자카야', sourceLists: [] },
     { id: 'nf2', name: '이상한장소', address: '어딘가', cat: '기타', sourceLists: [] },
   ];
   A.saveFoodMap(foodMap);

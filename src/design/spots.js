@@ -1055,6 +1055,10 @@ function photoHTML(p, cls) {
   const initial = A.esc((p.category || '?').slice(0, 1));
   return `<div class="${cls} photo-empty" role="img" aria-label="사진 없음">${initial}</div>`;
 }
+/* 2026-09-24 자동 분류 — 큰 분류는 내부 id로 묶고(저장값은 그대로) 표시명은
+   따로 쓴다. 샘플 장소처럼 id가 없으면 저장값에서 계산한다. */
+function catIdOf(p) { return p.categoryId || A.categoryId(p.category); }
+function catLabelOf(p) { return p.categoryLabel || A.categoryLabel(p.category); }
 function render() {
   const q = $('#search').value.trim().toLowerCase();
   // 6-2절 — 세부 태그 칩은 상위분류(filter)까지만 반영된 목록을 보고
@@ -1062,18 +1066,25 @@ function render() {
   // 원칙 — 존재하지도 않는 태그를 미리 늘어놓지 않는다).
   const tagFiltersEl = $('#tagFilters');
   if (tagFiltersEl) {
-    const catBase = usingSample ? [] : spots.filter((p) => p.city === city && (filter === '전체' || p.category === filter));
-    const availableTags = Array.from(new Set(catBase.flatMap((p) => Array.isArray(p.tags) ? p.tags : []))).sort();
+    const catBase = usingSample ? [] : spots.filter((p) => p.city === city && (filter === '전체' || catIdOf(p) === filter));
+    // 2026-09-24 — 큰 분류를 고르면 그 분류에 속한 세부 분류(과 개인 태그)만
+    // 보여 준다(식당을 보는데 의류가 섞이지 않게). 실제로 많이 쓰인 것부터.
+    const tagCount = new Map();
+    catBase.forEach((p) => (Array.isArray(p.tags) ? p.tags : []).forEach((t) => {
+      if (filter !== '전체' && !A.tagFitsCategory(t, filter)) return;
+      tagCount.set(t, (tagCount.get(t) || 0) + 1);
+    }));
+    const availableTags = Array.from(tagCount.keys()).sort((a, b) => (tagCount.get(b) - tagCount.get(a)) || a.localeCompare(b));
     for (const t of Array.from(activeTags)) if (!availableTags.includes(t)) activeTags.delete(t);
     tagFiltersEl.hidden = !availableTags.length;
     if (availableTags.length) {
       tagFiltersEl.innerHTML = availableTags.map((t) => `<button data-tagfilter="${A.esc(t)}" class="${activeTags.has(t) ? 'active' : ''}" aria-pressed="${activeTags.has(t)}">${A.esc(t)}</button>`).join('');
     }
   }
-  let list = spots.filter((p) => p.city === city && (filter === '전체' || p.category === filter)
+  let list = spots.filter((p) => p.city === city && (filter === '전체' || catIdOf(p) === filter)
     && (usingSample || visitFilter === '전체' || visitStatusFor(p.id) === visitFilter)
     && (activeTags.size === 0 || Array.from(activeTags).every((t) => Array.isArray(p.tags) && p.tags.includes(t)))
-    && [p.name, p.area, p.category, p.memo].some((v) => String(v || '').toLowerCase().includes(q)));
+    && [p.name, p.area, p.category, catLabelOf(p), p.memo].some((v) => String(v || '').toLowerCase().includes(q)));
   // 6-1절 — 정렬은 이미 필터링된 목록 위에서만 적용한다(도시·유형·검색
   // 조건은 그대로 유지). 2026-09-11 재검토(10차) 7절 — 거리순·코스
   // 출발점·내 주변 날씨가 전부 같은 기준을 쓰도록 daLocationBasis()로
@@ -1120,7 +1131,7 @@ function render() {
       : '<h3>이 조건에 맞는 곳이 없어요</h3><p>다른 이름이나 유형으로 찾아보세요.</p><button class="primary" id="reset">전체 스팟 보기</button>';
     const r = $('#reset'); if (r) r.onclick = resetSearch;
   }
-  $('#grid').innerHTML = list.map((p) => `<article class="spot ${selected.has(p.id) ? 'selected' : ''}"><button class="spot-open" data-detail="${p.id}" aria-label="${A.esc(p.name)} 상세 보기">${photoHTML(p, 'photo')}<div class="spot-info"><span class="category">${A.esc(p.category)}</span><h3>${A.esc(p.name)}</h3><p class="area">${A.esc(p.area) || '&nbsp;'}</p>${p.memo ? `<p class="memo">${A.esc(p.memo)}</p>` : ''}</div></button><button class="pick" data-pick="${p.id}" aria-label="${A.esc(p.name)} 선택" aria-pressed="${selected.has(p.id)}">${selected.has(p.id) ? '✓' : '＋'}</button></article>`).join('');
+  $('#grid').innerHTML = list.map((p) => `<article class="spot ${selected.has(p.id) ? 'selected' : ''}"><button class="spot-open" data-detail="${p.id}" aria-label="${A.esc(p.name)} 상세 보기">${photoHTML(p, 'photo')}<div class="spot-info"><span class="category">${A.esc(catLabelOf(p))}</span><h3>${A.esc(p.name)}</h3><p class="area">${A.esc(p.area) || '&nbsp;'}</p>${p.memo ? `<p class="memo">${A.esc(p.memo)}</p>` : ''}</div></button><button class="pick" data-pick="${p.id}" aria-label="${A.esc(p.name)} 선택" aria-pressed="${selected.has(p.id)}">${selected.has(p.id) ? '✓' : '＋'}</button></article>`).join('');
   const activeSelected = spots.filter((p) => p.city === city && selected.has(p.id)).length;
   $('#selectionbar').hidden = !activeSelected;
   $('#selectedCount').textContent = activeSelected;
@@ -1208,7 +1219,7 @@ function detail(id) {
   // 확정되지 않은 장소·샘플 장소·활성 지역이 아닌 도시에서는 버튼
   // 자체를 안 보여준다(bike-ports.js의 daBikeEntryButtonHTML 참고).
   const bikeBlock = (!usingSample && typeof BikePorts !== 'undefined') ? BikePorts.entryButtonHTML(p) : '';
-  open(usingSample ? '샘플 장소' : '내 장소', `<div class="detail">${photoHTML(p, 'detail-photo')}<h2>${A.esc(p.name)}</h2><span class="category">${A.esc(p.category)}${!usingSample && !p.catConfirmed ? '(짐작)' : ''}</span>${catBlock}${!usingSample ? ` <span class="category">${A.esc(p.city)}${p.cityKnown && !p.cityConfirmed ? '(짐작)' : ''}</span>` : ''}${tagsBlock}<p>${A.esc(p.area) || '위치 정보 없음'}</p>${p.memo ? `<p>“${A.esc(p.memo)}”</p>` : ''}<button class="primary" data-detail-pick="${id}">${selected.has(id) ? '선택에서 빼기' : '오늘 갈 곳으로 선택'}</button>${mapHref ? `<a target="_blank" rel="noopener noreferrer" href="${mapHref}">${mapLabel}</a>` : ''}${phraseBlock}${bikeBlock}${visitBlockHTML(id)}${cityBlock}${notes.map((n) => `<small>${n}</small>`).join('')}</div>`);
+  open(usingSample ? '샘플 장소' : '내 장소', `<div class="detail">${photoHTML(p, 'detail-photo')}<h2>${A.esc(p.name)}</h2><span class="category">${A.esc(catLabelOf(p))}${usingSample ? '' : ({ provider: '(구글 지도 업종 기준)', text: '(이름으로 짐작)', none: '(근거 부족)' }[p.categorySource] || '')}</span>${catBlock}${!usingSample ? ` <span class="category">${A.esc(p.city)}${p.cityKnown && !p.cityConfirmed ? '(짐작)' : ''}</span>` : ''}${tagsBlock}<p>${A.esc(p.area) || '위치 정보 없음'}</p>${p.memo ? `<p>“${A.esc(p.memo)}”</p>` : ''}<button class="primary" data-detail-pick="${id}">${selected.has(id) ? '선택에서 빼기' : '오늘 갈 곳으로 선택'}</button>${mapHref ? `<a target="_blank" rel="noopener noreferrer" href="${mapHref}">${mapLabel}</a>` : ''}${phraseBlock}${bikeBlock}${visitBlockHTML(id)}${cityBlock}${notes.map((n) => `<small>${n}</small>`).join('')}</div>`);
   const phraseBtn = document.getElementById('sheetContent').querySelector('[data-open-phrasebook]');
   if (phraseBtn) phraseBtn.onclick = () => phrasebookSheet();
   const bikeBtn = document.getElementById('sheetContent').querySelector('[data-open-bike-guide]');
@@ -1227,10 +1238,14 @@ function detail(id) {
    범용 유형 목록을 그대로 쓴다). */
 function catAssignSheet(id) {
   const p = spots.find((s) => s.id === id); if (!p) return;
-  const cats = A.knownCats;
+  // 2026-09-24 — 큰 분류 목록은 레지스트리에서(표시명은 따로, 저장값은 예전
+  // 그대로). 지금 분류가 레지스트리에 없는 값이어도 목록에 남겨 둔다.
+  const cats = A.categoryEntries();
+  const curId = catIdOf(p);
+  if (!cats.some((c) => c.id === curId)) cats.unshift({ id: curId, stored: p.category, label: catLabelOf(p) });
   open('유형 지정', `<div class="detail"><h2>이 장소는 어떤 유형인가요?</h2>` +
     `<p>${A.esc(p.name)}</p>` +
-    `<div class="city-options">${cats.map((c) => `<button class="city-option" data-assign-cat="${A.esc(c)}"><span><b>${A.esc(c)}</b></span><span class="city-check">${p.category === c ? '✓' : '›'}</span></button>`).join('')}</div></div>`);
+    `<div class="city-options">${cats.map((c) => `<button class="city-option" data-assign-cat="${A.esc(c.stored)}"><span><b>${A.esc(c.label)}</b></span><span class="city-check">${curId === c.id ? '✓' : '›'}</span></button>`).join('')}</div></div>`);
   $('#sheetContent').querySelectorAll('[data-assign-cat]').forEach((b) => {
     b.onclick = () => finishCatAssign(id, b.dataset.assignCat);
   });
@@ -1267,8 +1282,14 @@ function tagsEditSheet(id) {
   // 아직 동기화되기 전에 장소만 먼저 동기화된 경우)도 놓치지 않고
   // 토글 칩으로 보여준다.
   const known = Array.from(new Set([...A.knownTags, ...freq.keys()]));
-  const frequent = known.filter((t) => freq.has(t)).sort((a, b) => (freq.get(b) - freq.get(a)) || a.localeCompare(b));
-  const rest = known.filter((t) => !freq.has(t));
+  // 2026-09-24 — 이 장소의 큰 분류에 속한 세부 항목을 맨 앞에(몇 번 안 눌러도
+  // 고칠 수 있게), 다른 분류의 세부 항목은 "더 보기"로.
+  const catId = catIdOf(p);
+  const ownCat = (t) => A.tagFitsCategory(t, catId);
+  const catTags = known.filter((t) => A.tagParent(t) === catId);
+  const frequent = [...catTags, ...known.filter((t) => freq.has(t) && ownCat(t) && !catTags.includes(t)).sort((a, b) => (freq.get(b) - freq.get(a)) || a.localeCompare(b))];
+  (p.tags || []).forEach((t) => { if (!frequent.includes(t)) frequent.push(t); }); // 지금 붙은 태그는 항상 보이게
+  const rest = known.filter((t) => !frequent.includes(t));
   const chipHTML = (t) => `<button data-tag-toggle="${A.esc(t)}" class="${current.has(t) ? 'active' : ''}" aria-pressed="${current.has(t)}">${A.esc(t)}</button>`;
   // 태그 이름 바꾸기·삭제 — 커스텀 태그(사용자가 만든 것)만 삭제
   // 버튼을 보여준다(기본 태그는 이름만 바꿀 수 있고, 이 계정만의
@@ -1463,10 +1484,10 @@ async function daLookupCandidateSheet(id) {
   const ambiguousNote = cand.ambiguous ? ' 이 이름의 장소가 여러 곳 있을 수 있어요 —' : '';
   open('위치 확인', `<div class="detail"><h2>이 위치가 맞나요?</h2><p><b>${A.esc(cand.name || p.name)}</b>${cand.address ? `<br>${A.esc(cand.address)}` : ''}<br>위도 ${cand.lat.toFixed(5)}, 경도 ${cand.lng.toFixed(5)}</p>` +
     `<p class="inline-note">이름으로 찾은 후보일 뿐 확정된 위치가 아닙니다 —${ambiguousNote} 실제로 저장하신 곳이 맞는지 꼭 확인한 뒤에만 저장해 주세요.</p>` +
-    `<button class="primary" data-lookup-confirm="${A.esc(id)}|${cand.lat}|${cand.lng}|${A.esc(cand.placeId || '')}|${A.esc((cand.types || []).join(','))}">맞아요 · 이 위치로 저장</button>` +
+    `<button class="primary" data-lookup-confirm="${A.esc(id)}|${cand.lat}|${cand.lng}|${A.esc(cand.placeId || '')}|${A.esc((cand.types || []).join(','))}|${A.esc(cand.primaryType || '')}">맞아요 · 이 위치로 저장</button>` +
     `<button class="text-button" data-dismiss>아니에요 · 취소</button></div>`);
 }
-function finishLookupConfirm(id, lat, lng, placeId, types) {
+function finishLookupConfirm(id, lat, lng, placeId, types, primaryType) {
   const p = foodMap.places.find((x) => x.id === id); if (!p) return;
   p.lat = lat; p.lng = lng;
   if (placeId && !p.placeId) p.placeId = placeId; // 이미 있던 강한 식별자는 절대 안 덮는다(daMerge 규칙과 일관).
@@ -1474,7 +1495,9 @@ function finishLookupConfirm(id, lat, lng, placeId, types) {
   // "이미 확보한 신뢰 가능한 장소 유형"(방금 이 확인으로 얻은 공급자의
   // types) > 이름 기반 규칙. 사용자가 이미 직접 고른(catConfirmed/
   // tagsConfirmed=true) 값은 이 확인이 있어도 절대 덮지 않는다.
-  if (Array.isArray(types) && types.length) A.applyConfirmedTypes(p, types);
+  // 2026-09-24 — primaryType을 먼저 보고, 구체 업종(clothing_store 등)을 포괄
+  // 업종(store)보다 우선한다. 분류만을 위한 추가 조회는 없다(이 확인에서 받은 값만).
+  if (Array.isArray(types) && types.length) A.applyConfirmedTypes(p, types, primaryType || null);
   const saved = A.saveFoodMap(foodMap);
   if (!saved) {
     foodMap = A.loadFoodMap();
@@ -1840,7 +1863,7 @@ function daShowBatchQueueStep() {
   const ambiguousNote = cand.ambiguous ? ' 이 이름의 장소가 여러 곳 있을 수 있어요 —' : '';
   open(`위치 확인 (${idx + 1}/${items.length})`, `<div class="detail"><h2>이 위치가 맞나요?</h2><p><b>${A.esc(cand.name || (p && p.name) || '')}</b>${cand.address ? `<br>${A.esc(cand.address)}` : ''}<br>위도 ${cand.lat.toFixed(5)}, 경도 ${cand.lng.toFixed(5)}</p>` +
     `<p class="inline-note">이름으로 찾은 후보일 뿐 확정된 위치가 아닙니다 —${ambiguousNote} 실제로 저장하신 곳이 맞는지 꼭 확인한 뒤에만 저장해 주세요.</p>` +
-    `<button class="primary" data-batch-confirm="${A.esc(item.id)}|${cand.lat}|${cand.lng}|${A.esc(cand.placeId || '')}|${A.esc((cand.types || []).join(','))}">맞아요 · 이 위치로 저장</button>` +
+    `<button class="primary" data-batch-confirm="${A.esc(item.id)}|${cand.lat}|${cand.lng}|${A.esc(cand.placeId || '')}|${A.esc((cand.types || []).join(','))}|${A.esc(cand.primaryType || '')}">맞아요 · 이 위치로 저장</button>` +
     `<button class="text-button" data-batch-skip>건너뛰기</button></div>`);
 }
 /* ── 짧은 구매 흐름(로드맵 ⑨) ────────────────────────────────────────
@@ -3051,8 +3074,12 @@ function updateCity() {
   $('#cityName').textContent = city;
   const c = cities.find((x) => x.name === city);
   $('#albumCity').textContent = c ? (c.label || c.name).toUpperCase() : '';
-  $('.filters').innerHTML = ['전체', ...new Set(spots.filter((p) => p.city === city).map((p) => p.category))]
-    .map((c2) => `<button data-filter="${A.esc(c2)}" class="${c2 === filter ? 'active' : ''}" aria-pressed="${c2 === filter}">${A.esc(c2)}</button>`).join('');
+  // 2026-09-24 — 큰 분류 칩은 내부 id로(예전 저장값 사우나·온천과 마사지·스파는
+  // 한 칩 "휴식·미용"으로), 이 도시에 실제로 있는 분류만.
+  const catSeen = new Map();
+  spots.filter((p) => p.city === city).forEach((p) => { const cid = catIdOf(p); if (!catSeen.has(cid)) catSeen.set(cid, catLabelOf(p)); });
+  $('.filters').innerHTML = [['전체', '전체'], ...catSeen.entries()]
+    .map(([cid, label]) => `<button data-filter="${A.esc(cid)}" class="${cid === filter ? 'active' : ''}" aria-pressed="${cid === filter}">${A.esc(label)}</button>`).join('');
   // 2026-09-10 재검토(6차) 3-③ — 방문 상태 필터. 방문·다시가고싶음
   // 기록이 하나도 없으면 아예 안 보여준다(첫 화면에 안 쓰는 설정을
   // 미리 늘어놓지 않는다 — 실제로 기록이 생겼을 때만 나타난다).
@@ -3519,13 +3546,13 @@ $('#sheetContent').onclick = (e) => {
   if (b.dataset.tagsEdit) return tagsEditSheet(b.dataset.tagsEdit);
   if (b.dataset.lookupPlace) return daLookupCandidateSheet(b.dataset.lookupPlace);
   if (b.dataset.lookupConfirm) {
-    const [pid, lat, lng, placeId, typesStr] = b.dataset.lookupConfirm.split('|');
-    return finishLookupConfirm(pid, +lat, +lng, placeId, typesStr ? typesStr.split(',').filter(Boolean) : []);
+    const [pid, lat, lng, placeId, typesStr, primaryType] = b.dataset.lookupConfirm.split('|');
+    return finishLookupConfirm(pid, +lat, +lng, placeId, typesStr ? typesStr.split(',').filter(Boolean) : [], primaryType);
   }
   if (b.hasAttribute('data-batch-lookup')) return daBatchLookupFlow();
   if (b.dataset.batchConfirm) {
-    const [pid, lat, lng, placeId, typesStr] = b.dataset.batchConfirm.split('|');
-    finishLookupConfirm(pid, +lat, +lng, placeId, typesStr ? typesStr.split(',').filter(Boolean) : []);
+    const [pid, lat, lng, placeId, typesStr, primaryType] = b.dataset.batchConfirm.split('|');
+    finishLookupConfirm(pid, +lat, +lng, placeId, typesStr ? typesStr.split(',').filter(Boolean) : [], primaryType);
     if (daBatchQueue) { daBatchQueue.idx += 1; daShowBatchQueueStep(); }
     return;
   }

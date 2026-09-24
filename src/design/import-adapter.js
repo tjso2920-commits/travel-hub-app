@@ -537,30 +537,58 @@ function daInfer(s) {
    내부적으로 동의어 연결·향후 다국어 표시명 분리(영어 지원 구조,
    10차 8절)에 쓰기 위한 안정적인 키일 뿐, 지금 저장 형식은 그대로다. */
 const TAG_REGISTRY_BUILTIN = [
-  { id: 'yakitori', label: '야키토리', pattern: /焼き?鳥|やきとり|야키토리|닭꼬치|yakitori|chicken ?skewer/, synonyms: [] },
-  { id: 'sushi', label: '스시', pattern: /寿司|鮨|스시|초밥|\bsushi\b/, synonyms: [] },
-  { id: 'ramen', label: '라멘', pattern: /ラーメン|라멘|\bramen\b/, synonyms: [] },
-  { id: 'udon_soba', label: '우동·소바', pattern: /うどん|そば|蕎麦|우동|소바|\budon\b|\bsoba\b/, synonyms: [] },
-  { id: 'izakaya', label: '이자카야', pattern: /居酒屋|이자카야|\bizakaya\b/, synonyms: [] },
+  // 2026-09-24 자동 분류 — 세부 태그마다 속한 큰 분류(parent: 카테고리 내부 id,
+  // 아래 CATEGORY_REGISTRY)를 붙였다. 필터는 고른 큰 분류에 속한 세부만 보여
+  // 준다(식당을 보는데 의류 태그가 섞이지 않게). 패턴은 업종을 뜻하는 일반
+  // 낱말만 쓴다 — 브랜드명만으로 업종을 단정하지 않는다.
+  { id: 'yakitori', parent: 'restaurant', label: '야키토리', pattern: /焼き?鳥|やきとり|야키토리|닭꼬치|yakitori|chicken ?skewer/, synonyms: [] },
+  { id: 'sushi', parent: 'restaurant', label: '스시', pattern: /寿司|鮨|스시|초밥|\bsushi\b/, synonyms: [] },
+  { id: 'ramen', parent: 'restaurant', label: '라멘', pattern: /ラーメン|라멘|\bramen\b/, synonyms: [] },
+  { id: 'udon_soba', parent: 'restaurant', label: '우동·소바', pattern: /うどん|そば|蕎麦|우동|소바|\budon\b|\bsoba\b/, synonyms: [] },
+  { id: 'izakaya', parent: 'bar', label: '이자카야', pattern: /居酒屋|이자카야|\bizakaya\b/, synonyms: [] },
   // 2026-09-11 재검토(10차) — 酒屋 앞이 居가 아닐 때만 매칭(居酒屋의
   // 부분 문자열로 잘못 겹쳐 잡히는 것 방지). 룩비하인드 대신 문자
   // 클래스 제외를 써서 오래된 브라우저에서도 동작한다.
-  { id: 'liquor_shop', label: '주류샵', pattern: /(?:^|[^居])酒屋|주류샵|주판점|리커샵|리큐어\s?샵|사케샵|와인샵|liquor ?store|bottle ?shop|off-licen[cs]e|wine ?shop/, synonyms: [] },
-  { id: 'okonomiyaki', label: '오코노미야키', pattern: /お好み焼き|오코노미야키|okonomiyaki/, synonyms: [] },
-  { id: 'takoyaki', label: '타코야키', pattern: /たこ焼き|타코야키|takoyaki/, synonyms: [] },
-  { id: 'tonkatsu', label: '돈카츠', pattern: /とんかつ|돈카츠|tonkatsu|\bkatsu\b/, synonyms: [] },
-  { id: 'tempura', label: '텐푸라', pattern: /天ぷら|텐푸라|튀김|tempura/, synonyms: [] },
-  { id: 'thai_food', label: '타이음식', pattern: /타이음식|타이푸드|팟타이|똠얌|thai food|pad ?thai|tom ?yum/, synonyms: [] },
-  { id: 'italian', label: '이탈리안', pattern: /이탈리안|이태리 ?음식|ristorante|trattoria|osteria|파스타|\bpasta\b|피자|pizzeria/, synonyms: [] },
-  { id: 'cafe', label: '카페', pattern: /카페|커피|coffee|caf[eé]/, synonyms: [] },
-  { id: 'bakery_dessert', label: '베이커리·디저트', pattern: /베이커리|제과|빵집|디저트|bakery|p[aâ]tisserie|dessert/, synonyms: [] },
-  { id: 'massage', label: '마사지', pattern: /마사지|massage/, synonyms: [] },
-  { id: 'spa_onsen', label: '스파·온천', pattern: /스파|온천|찜질|\bspa\b|onsen|thermal|therme/, synonyms: [] },
-  { id: 'bbq_grill', label: '바베큐·그릴', pattern: /바베큐|그릴|고기집|barbecue|\bbbq\b|\bgrill\b/, synonyms: [] },
-  { id: 'french', label: '프렌치', pattern: /프렌치|프랑스 ?요리|bistro|brasserie|french restaurant/, synonyms: [] },
-  { id: 'mexican', label: '멕시칸', pattern: /멕시칸|타케리아|taco|taquer[ií]a|mexican/, synonyms: [] },
-  { id: 'indian_curry', label: '인도·커리', pattern: /인도음식|커리|\bcurry\b|indian food/, synonyms: [] },
-  { id: 'chinese', label: '중식', pattern: /중식|중국요리|chinese restaurant|dim ?sum|딤섬/, synonyms: [] },
+  { id: 'liquor_shop', parent: 'shopping', label: '주류샵', pattern: /(?:^|[^居])酒屋|주류샵|주판점|리커샵|리큐어\s?샵|사케샵|와인샵|liquor ?store|bottle ?shop|off-licen[cs]e|wine ?shop/, synonyms: [] },
+  { id: 'okonomiyaki', parent: 'restaurant', label: '오코노미야키', pattern: /お好み焼き|오코노미야키|okonomiyaki/, synonyms: [] },
+  { id: 'takoyaki', parent: 'restaurant', label: '타코야키', pattern: /たこ焼き|타코야키|takoyaki/, synonyms: [] },
+  { id: 'tonkatsu', parent: 'restaurant', label: '돈카츠', pattern: /とんかつ|돈카츠|tonkatsu|\bkatsu\b/, synonyms: [] },
+  { id: 'tempura', parent: 'restaurant', label: '텐푸라', pattern: /天ぷら|텐푸라|튀김|tempura/, synonyms: [] },
+  { id: 'thai_food', parent: 'restaurant', label: '타이음식', pattern: /타이음식|타이푸드|팟타이|똠얌|thai food|pad ?thai|tom ?yum/, synonyms: [] },
+  { id: 'italian', parent: 'restaurant', label: '이탈리안', pattern: /이탈리안|이태리 ?음식|ristorante|trattoria|osteria|파스타|\bpasta\b|피자|pizzeria/, synonyms: [] },
+  { id: 'cafe', parent: 'cafe', label: '카페', pattern: /카페|커피|coffee|caf[eé]/, synonyms: [] },
+  { id: 'bakery_dessert', parent: 'cafe', label: '베이커리·디저트', pattern: /베이커리|제과|빵집|디저트|bakery|p[aâ]tisserie|dessert/, synonyms: [] },
+  { id: 'massage', parent: 'wellness', label: '마사지', pattern: /마사지|massage/, synonyms: [] },
+  { id: 'spa_onsen', parent: 'wellness', label: '스파·온천', pattern: /스파|온천|찜질|\bspa\b|onsen|thermal|therme/, synonyms: [] },
+  { id: 'bbq_grill', parent: 'restaurant', label: '바베큐·그릴', pattern: /바베큐|그릴|고기집|barbecue|\bbbq\b|\bgrill\b/, synonyms: [] },
+  { id: 'french', parent: 'restaurant', label: '프렌치', pattern: /프렌치|프랑스 ?요리|bistro|brasserie|french restaurant/, synonyms: [] },
+  { id: 'mexican', parent: 'restaurant', label: '멕시칸', pattern: /멕시칸|타케리아|taco|taquer[ií]a|mexican/, synonyms: [] },
+  { id: 'indian_curry', parent: 'restaurant', label: '인도·커리', pattern: /인도음식|커리|\bcurry\b|indian food/, synonyms: [] },
+  { id: 'chinese', parent: 'restaurant', label: '중식', pattern: /중식|중국요리|chinese restaurant|dim ?sum|딤섬/, synonyms: [] },
+  // 2026-09-24 추가 — 예시 어휘일 뿐 허용 목록 전체가 아니다(필요하면 늘린다).
+  { id: 'korean', parent: 'restaurant', label: '한식', pattern: /한식|한정식|korean restaurant|korean food|韓国料理/, synonyms: [] },
+  { id: 'japanese', parent: 'restaurant', label: '일식', pattern: /일식|和食|日本料理|japanese restaurant/, synonyms: [] },
+  { id: 'vietnamese', parent: 'restaurant', label: '베트남음식', pattern: /베트남 ?음식|쌀국수|vietnamese restaurant|\bphở\b/, synonyms: [] },
+  { id: 'seafood', parent: 'restaurant', label: '해산물', pattern: /해산물|海鮮|seafood/, synonyms: [] },
+  { id: 'bar', parent: 'bar', label: '바', pattern: /(?:^|[^a-z])bar(?:$|[^a-z])|バー|칵테일|와인바|cocktail|wine ?bar/, synonyms: [] },
+  { id: 'pub', parent: 'bar', label: '펍', pattern: /\bpub\b|パブ|펍|brewery|taproom|beer hall/, synonyms: [] },
+  { id: 'clothing', parent: 'shopping', label: '의류', pattern: /의류|옷가게|옷집|구제 ?옷|빈티지 ?샵|古着|洋服|アパレル|clothing|apparel|vintage clothing/, synonyms: [] },
+  { id: 'shoes', parent: 'shopping', label: '신발', pattern: /신발|슈즈|靴屋|シューズ|shoe ?store|shoe ?shop|sneaker/, synonyms: [] },
+  { id: 'accessories', parent: 'shopping', label: '잡화', pattern: /잡화|액세서리|雑貨|accessor(y|ies)|jewel(le)?ry|gift ?shop|souvenir|기념품/, synonyms: [] },
+  { id: 'department_store', parent: 'shopping', label: '백화점·쇼핑몰', pattern: /백화점|쇼핑몰|百貨店|デパート|department store|shopping mall|\bmall\b/, synonyms: [] },
+  { id: 'grocery', parent: 'shopping', label: '마트', pattern: /(?:^|[^스])마트|슈퍼마켓|スーパー|supermarket|grocery/, synonyms: [] },
+  { id: 'convenience', parent: 'shopping', label: '편의점', pattern: /편의점|コンビニ|convenience store/, synonyms: [] },
+  { id: 'market', parent: 'shopping', label: '시장', pattern: /시장|市場|\bmarket\b|marché|mercado|mercato|\bchợ\b/, synonyms: [] },
+  { id: 'books', parent: 'shopping', label: '서점', pattern: /서점|書店|本屋|book ?store|bookshop|librairie/, synonyms: [] },
+  { id: 'landmark', parent: 'sights', label: '명소', pattern: /전망대|展望台|observation deck|landmark|monument/, synonyms: [] },
+  { id: 'museum', parent: 'sights', label: '박물관', pattern: /박물관|博物館|\bmuseum\b|musée|museo|müze/, synonyms: [] },
+  { id: 'art_gallery', parent: 'sights', label: '미술관', pattern: /미술관|美術館|갤러리|art museum|art gallery|galerie/, synonyms: [] },
+  { id: 'park', parent: 'sights', label: '공원', pattern: /공원|公園|庭園|\bpark\b|\bparc\b|parque|jardin|garden|giardino/, synonyms: [] },
+  { id: 'worship', parent: 'sights', label: '사찰·신사·성당', pattern: /신사|사찰|성당|神社|寺|shrine|temple|cathedral|church|mosque|basilica/, synonyms: [] },
+  { id: 'theme_park', parent: 'sights', label: '테마파크·동물원', pattern: /테마파크|놀이공원|동물원|수족관|水族館|動物園|theme park|amusement park|\bzoo\b|aquarium/, synonyms: [] },
+  { id: 'hair_beauty', parent: 'wellness', label: '미용실·네일', pattern: /미용실|헤어샵|네일|美容室|ネイル|hair salon|barber|nail salon|beauty salon/, synonyms: [] },
+  { id: 'pharmacy', parent: 'health', label: '약국·드럭스토어', pattern: /약국|드럭스토어|薬局|ドラッグ|pharmacy|drug ?store|farmacia|apotheke/, synonyms: [] },
+  { id: 'clinic', parent: 'health', label: '병원·의원', pattern: /병원|의원|치과|病院|クリニック|hospital|clinic|dental/, synonyms: [] },
 ];
 /* 사용자가 만든 태그·기본 태그 표시명 override(foodMap.customTags에
    저장) — loadFoodMap이 채우고 CRUD 함수(daCreateTag/daRenameTag/
@@ -696,43 +724,191 @@ function daLocale() { return _locale; }
    무시한다(억지로 끼워 맞추지 않는다). 국가·언어와 무관한 매핑이라
    방콕의 스시집도 정확히 스시로 분류된다(실제 근거가 공급자 데이터인
    경우). */
-const PLACE_TYPE_TO_CATEGORY = {
-  lodging: '숙소', hotel: '숙소', hostel: '숙소', guest_house: '숙소',
-  transit_station: '교통', train_station: '교통', subway_station: '교통', airport: '교통', bus_station: '교통',
-  spa: '마사지·스파', massage: '마사지·스파',
-  pharmacy: '약국·병원', hospital: '약국·병원', doctor: '약국·병원',
-  cafe: '카페·디저트', bakery: '카페·디저트', coffee_shop: '카페·디저트',
-  bar: '바·이자카야', night_club: '바·이자카야', pub: '바·이자카야',
-  tourist_attraction: '관광·명소', museum: '관광·명소', park: '관광·명소', place_of_worship: '관광·명소',
-  shopping_mall: '쇼핑', supermarket: '쇼핑', store: '쇼핑', convenience_store: '쇼핑',
-  restaurant: '맛집·식당', food: '맛집·식당', meal_takeaway: '맛집·식당',
+/* 2026-09-24 자동 분류 — 큰 분류 레지스트리. 저장값(stored)은 예전부터
+   place.cat에 들어 있던 한국어 문자열 그대로다(기존 데이터·동기화·테스트를
+   건드리지 않는다). 화면에는 내부 id로 묶고 표시명(labels)을 따로 둔다 —
+   영어 표시가 필요해지면 labels.en만 채우면 된다. aliases는 예전에 따로
+   있던 저장값을 같은 큰 분류로 묶는다(사우나·온천 → 휴식·미용). */
+const CATEGORY_REGISTRY = [
+  { id: 'restaurant', stored: '맛집·식당', labels: { ko: '식당' } },
+  { id: 'cafe', stored: '카페·디저트', labels: { ko: '카페·디저트' } },
+  { id: 'bar', stored: '바·이자카야', labels: { ko: '바·주점' } },
+  { id: 'shopping', stored: '쇼핑', labels: { ko: '쇼핑' } },
+  { id: 'sights', stored: '관광·명소', labels: { ko: '관광·문화' } },
+  { id: 'wellness', stored: '마사지·스파', aliases: ['사우나·온천'], labels: { ko: '휴식·미용' } },
+  { id: 'lodging', stored: '숙소', labels: { ko: '숙소' } },
+  { id: 'transport', stored: '교통', labels: { ko: '교통' } },
+  { id: 'health', stored: '약국·병원', labels: { ko: '약국·의료' } },
+  { id: 'unclassified', stored: '기타', labels: { ko: '미분류' } },
+];
+const _catById = new Map(CATEGORY_REGISTRY.map((c) => [c.id, c]));
+const _catByStored = new Map();
+CATEGORY_REGISTRY.forEach((c) => { _catByStored.set(c.stored, c); (c.aliases || []).forEach((a) => _catByStored.set(a, c)); });
+/* 저장값(또는 id) → 내부 id. 레지스트리에 없는 값(예: 옛 데이터·다른 기기의
+   새 값)은 버리지 않고 'custom:<값>'으로 따로 묶어 그대로 보여 준다. */
+function daCategoryId(storedOrId) {
+  const v = String(storedOrId || '기타');
+  if (_catById.has(v)) return v;
+  const c = _catByStored.get(v);
+  return c ? c.id : 'custom:' + v;
+}
+function daCategoryLabel(storedOrId) {
+  const id = daCategoryId(storedOrId);
+  const c = _catById.get(id);
+  if (!c) return id.slice('custom:'.length);
+  return c.labels[_locale] || c.labels.ko;
+}
+function daCategoryStored(id) { const c = _catById.get(id); return c ? c.stored : String(id || '').replace(/^custom:/, ''); }
+function daTagParent(label) {
+  const t = _allTagEntries().find((x) => x.label === label);
+  return t && t.parent ? t.parent : null;
+}
+
+/* 2026-09-24 자동 분류 — 공급자(Google Places) 업종 → 큰 분류·세부 태그.
+   근거: Places API(New) 응답의 types(문자열 배열)와 primaryType(하나, 없을
+   수 있음 — 있으면 항상 types 중 하나)는 googleapis의 공식 place.proto로
+   확인했다. 아래 기본 업종 이름(clothing_store·shoe_store·museum·store 등)은
+   Google 공식 클라이언트(google-maps-services-js)의 목록으로 확인했다.
+   `<요리>_restaurant` 같은 세부 식당 이름은 Places API(New)의 목록인데 이
+   작업 환경에서 공식 문서가 막혀 직접 확인하지 못했다 — 모르는 이름은
+   그냥 무시되므로(억지 분류 없음) 틀려도 오분류로 이어지지 않는다.
+   국가·언어와 무관하다(방콕의 스시집도, 파리의 옷가게도 같은 표). */
+const PROVIDER_TYPE_MAP = {
+  // 식당
+  sushi_restaurant: ['restaurant', 'sushi'], ramen_restaurant: ['restaurant', 'ramen'], japanese_restaurant: ['restaurant', 'japanese'],
+  korean_restaurant: ['restaurant', 'korean'], chinese_restaurant: ['restaurant', 'chinese'], thai_restaurant: ['restaurant', 'thai_food'],
+  italian_restaurant: ['restaurant', 'italian'], pizza_restaurant: ['restaurant', 'italian'], french_restaurant: ['restaurant', 'french'],
+  mexican_restaurant: ['restaurant', 'mexican'], indian_restaurant: ['restaurant', 'indian_curry'], vietnamese_restaurant: ['restaurant', 'vietnamese'],
+  seafood_restaurant: ['restaurant', 'seafood'], barbecue_restaurant: ['restaurant', 'bbq_grill'], steak_house: ['restaurant', 'bbq_grill'],
+  restaurant: ['restaurant', null], meal_takeaway: ['restaurant', null], meal_delivery: ['restaurant', null],
+  // 카페·디저트
+  cafe: ['cafe', 'cafe'], coffee_shop: ['cafe', 'cafe'], tea_house: ['cafe', 'cafe'],
+  bakery: ['cafe', 'bakery_dessert'], dessert_shop: ['cafe', 'bakery_dessert'], ice_cream_shop: ['cafe', 'bakery_dessert'], confectionery: ['cafe', 'bakery_dessert'],
+  // 바·주점
+  bar: ['bar', 'bar'], wine_bar: ['bar', 'bar'], pub: ['bar', 'pub'], night_club: ['bar', null],
+  // 쇼핑
+  clothing_store: ['shopping', 'clothing'], shoe_store: ['shopping', 'shoes'], jewelry_store: ['shopping', 'accessories'], gift_shop: ['shopping', 'accessories'],
+  department_store: ['shopping', 'department_store'], shopping_mall: ['shopping', 'department_store'],
+  supermarket: ['shopping', 'grocery'], grocery_store: ['shopping', 'grocery'], convenience_store: ['shopping', 'convenience'],
+  liquor_store: ['shopping', 'liquor_shop'], book_store: ['shopping', 'books'], market: ['shopping', 'market'],
+  electronics_store: ['shopping', null], furniture_store: ['shopping', null], home_goods_store: ['shopping', null], hardware_store: ['shopping', null],
+  bicycle_store: ['shopping', null], florist: ['shopping', null], pet_store: ['shopping', null],
+  // 관광·문화
+  tourist_attraction: ['sights', 'landmark'], historical_landmark: ['sights', 'landmark'], museum: ['sights', 'museum'], art_gallery: ['sights', 'art_gallery'],
+  park: ['sights', 'park'], national_park: ['sights', 'park'], zoo: ['sights', 'theme_park'], aquarium: ['sights', 'theme_park'], amusement_park: ['sights', 'theme_park'],
+  church: ['sights', 'worship'], hindu_temple: ['sights', 'worship'], mosque: ['sights', 'worship'], synagogue: ['sights', 'worship'], place_of_worship: ['sights', 'worship'],
+  // 휴식·미용
+  spa: ['wellness', 'spa_onsen'], sauna: ['wellness', 'spa_onsen'], public_bath: ['wellness', 'spa_onsen'], massage: ['wellness', 'massage'],
+  beauty_salon: ['wellness', 'hair_beauty'], hair_care: ['wellness', 'hair_beauty'], hair_salon: ['wellness', 'hair_beauty'], nail_salon: ['wellness', 'hair_beauty'],
+  // 숙소 / 교통 / 약국·의료
+  lodging: ['lodging', null], hotel: ['lodging', null], hostel: ['lodging', null], motel: ['lodging', null], guest_house: ['lodging', null],
+  bed_and_breakfast: ['lodging', null], resort_hotel: ['lodging', null], japanese_inn: ['lodging', null], campground: ['lodging', null],
+  airport: ['transport', null], train_station: ['transport', null], subway_station: ['transport', null], bus_station: ['transport', null],
+  transit_station: ['transport', null], light_rail_station: ['transport', null], ferry_terminal: ['transport', null], taxi_stand: ['transport', null],
+  pharmacy: ['health', 'pharmacy'], drugstore: ['health', 'pharmacy'], hospital: ['health', 'clinic'], doctor: ['health', 'clinic'], dentist: ['health', 'clinic'],
 };
-const PLACE_TYPE_TO_TAG = {
-  cafe: '카페', coffee_shop: '카페', bakery: '베이커리·디저트',
-  bar: null, // bar만으로는 이자카야/와인바 등 세부를 지어내지 않는다(근거 부족 시 미분류 원칙).
-  spa: '스파·온천', massage: '마사지',
-};
-/* types(공급자가 방금 돌려준 실제 유형 배열)로 cat/tags를 올린다.
-   사용자가 이미 확정한 값(catConfirmed/tagsConfirmed=true)은 이 확인이
-   방금 일어났어도 절대 덮지 않는다 — "사용자 확정값이 최우선"이라는
-   순서를 places 객체 단위로 강제한다. */
-function daApplyConfirmedTypes(p, types) {
-  if (!p || !Array.isArray(types)) return;
-  p.confirmedTypes = types; // 근거 추적용 — 나중에 재분류·디버깅에 쓴다.
+// 포괄 업종 — 구체 업종이 하나도 없을 때만 쓴다(store → 쇼핑, food → 식당).
+// establishment·point_of_interest처럼 업종을 말해 주지 않는 값은 무시한다.
+const PROVIDER_GENERIC_MAP = { store: 'shopping', food: 'restaurant' };
+function _providerTypeEntry(ty) {
+  if (PROVIDER_TYPE_MAP[ty]) return PROVIDER_TYPE_MAP[ty];
+  // 목록에 없는 세부 이름도 모양으로 큰 분류만 안전하게 잡는다(세부 태그는 안 지어냄).
+  if (/_restaurant$/.test(ty)) return ['restaurant', null];
+  if (/_store$/.test(ty) && ty !== 'store') return ['shopping', null];
+  return null;
+}
+/* 공급자 업종 배열(첫 값 = primaryType)로 큰 분류와 그 분류에 속한 세부 태그를
+   고른다. primaryType을 먼저 보되, 포괄 업종(store·food)은 구체 업종이 없을
+   때만 쓴다. 세부 태그는 고른 큰 분류에 속한 것만 붙인다. 근거가 없으면 null. */
+function daClassifyFromProviderTypes(types) {
+  const list = Array.isArray(types) ? types.filter((x) => typeof x === 'string') : [];
+  let catId = null;
+  for (const ty of list) { const e = _providerTypeEntry(ty); if (e) { catId = e[0]; break; } }
+  if (!catId) { for (const ty of list) if (PROVIDER_GENERIC_MAP[ty]) { catId = PROVIDER_GENERIC_MAP[ty]; break; } }
+  if (!catId) return null;
+  const tagIds = [];
+  for (const ty of list) { const e = _providerTypeEntry(ty); if (e && e[0] === catId && e[1] && !tagIds.includes(e[1])) tagIds.push(e[1]); }
+  const overrides = _builtinOverrideMap();
+  const tags = tagIds.map((tid) => { const t = TAG_REGISTRY_BUILTIN.find((x) => x.id === tid); return t ? (overrides.get(t.id) || t.label) : null; }).filter(Boolean);
+  return { catId, cat: daCategoryStored(catId), tags };
+}
+/* 이름·메모·주소 텍스트에서 찾은 세부 태그 중 큰 분류와 맞는 것만(예: 호텔
+   이름의 "Park"가 공원 태그로 번지지 않게). 사용자 태그는 자동 추정 대상이
+   아니다(daInferTags는 기본 레지스트리만 본다). */
+/* 먹고 마시는 곳(식당·카페·바)은 세부 업종이 서로 겹치는 일이 흔하다(야키토리
+   이자카야, 브런치 카페 등) — 이 셋끼리는 세부 태그를 함께 쓸 수 있다. 그 밖의
+   분류는 자기 분류의 세부 태그만(호텔 이름의 "Park"가 공원으로 번지지 않게). */
+const FOOD_DRINK = ['restaurant', 'cafe', 'bar'];
+function daTagFitsCategory(tagLabel, catStoredOrId) {
+  const par = daTagParent(tagLabel);
+  if (!par) return true; // 개인 태그 등 분류 없는 태그
+  const catId = daCategoryId(catStoredOrId);
+  if (catId === 'unclassified') return true;
+  if (par === catId) return true;
+  return FOOD_DRINK.includes(par) && FOOD_DRINK.includes(catId);
+}
+function _textTagsFor(text, catStored) {
+  return daInferTags(text).filter((label) => daTagFitsCategory(label, catStored));
+}
+/* 업종 근거 텍스트는 이름과 사용자 메모만. 주소는 쓰지 않는다 — 주소의 동네
+   이름이 업종 낱말과 겹쳐 오분류가 났다(예: 東京都港区의 "港"(항구)로 카페가
+   교통으로 분류됨, 寺町의 "寺"로 관광 분류). */
+function _placeText(p) { return String(p.name || '') + ' ' + String(p.note || ''); }
+/* 한 장소의 자동 분류(사용자 확정값은 절대 안 바꿈). 우선순위:
+   ① 사용자 확정(catConfirmed/tagsConfirmed) ② 이미 받은 공급자 업종
+   (p.confirmedTypes — 장소 확인 때 받은 것만, 분류만을 위한 새 조회 없음)
+   ③ 이름 등 텍스트 ④ 근거 없음 → 미분류(기타). 목록 이름(sourceLists)은
+   업종 근거로 쓰지 않는다('쇼핑' 목록에 카페가 있을 수 있다). 텍스트로도
+   근거가 없으면 이미 있던 자동 분류를 미분류로 되돌리지 않는다(예전 추정 보존). */
+function daAutoClassify(p) {
+  if (!p) return false;
+  const before = JSON.stringify([p.cat, p.tags]);
+  const prov = daClassifyFromProviderTypes(p.confirmedTypes);
   if (!p.catConfirmed) {
-    for (const ty of types) {
-      const cat = PLACE_TYPE_TO_CATEGORY[ty];
-      if (cat) { p.cat = cat; break; }
+    // 같은 큰 분류면 예전 저장값을 그대로 둔다(예: 사우나·온천 → 휴식·미용으로 묶일 뿐 값은 유지).
+    if (prov) { if (daCategoryId(p.cat) !== prov.catId) p.cat = prov.cat; }
+    else {
+      let guess = daInfer(_placeText(p));
+      if (guess === '기타') {
+        // 큰 분류 낱말은 없지만 세부 업종 낱말이 분명하면(예: "○○ 주판점", "△△ 의류")
+        // 그 세부 업종이 속한 큰 분류를 텍스트 근거로 쓴다. 브랜드명만으로는 안 한다.
+        const withParent = daInferTags(_placeText(p)).map(daTagParent).filter(Boolean);
+        if (withParent.length) guess = daCategoryStored(withParent[0]);
+      }
+      if (guess !== '기타' || !p.cat) p.cat = guess;
     }
   }
   if (!p.tagsConfirmed) {
-    const suggested = new Set(p.tags || []);
-    for (const ty of types) {
-      const tagLabel = PLACE_TYPE_TO_TAG[ty];
-      if (tagLabel) suggested.add(tagLabel);
-    }
-    p.tags = Array.from(suggested);
+    const next = [];
+    const push = (t) => { if (t && !next.includes(t)) next.push(t); };
+    const catId = daCategoryId(p.cat);
+    // 이미 있던 태그는 자동으로 지우지 않는다(기존 데이터 보존). 다른 큰 분류의
+    // 태그는 그 분류 필터에서만 보인다. 새 근거로 찾은 것만 덧붙인다.
+    (Array.isArray(p.tags) ? p.tags : []).forEach(push);
+    if (prov) prov.tags.filter((t) => daTagFitsCategory(t, catId)).forEach(push);
+    _textTagsFor(_placeText(p), p.cat).forEach(push);
+    p.tags = next;
   }
+  return JSON.stringify([p.cat, p.tags]) !== before;
+}
+/* 화면 표시용 분류 근거 — 저장하지 않고 그때그때 계산한다(기존 데이터를
+   바꾸지 않는다). 정확도 백분율은 만들지 않는다. */
+function daCategorySource(p) {
+  if (!p) return 'none';
+  if (p.catConfirmed) return 'user';
+  const prov = daClassifyFromProviderTypes(p.confirmedTypes);
+  if (prov && daCategoryId(prov.cat) === daCategoryId(p.cat)) return 'provider';
+  if (!p.cat || p.cat === '기타') return 'none';
+  return 'text';
+}
+/* 장소 확인(이미 앱이 허용한 유료 호출)으로 받은 업종을 반영한다. primaryType을
+   맨 앞에 두어 기존 필드(confirmedTypes) 하나에 순서로 담는다 — 새 공급자
+   필드를 따로 저장하지 않는다. 사용자 확정값은 절대 안 덮는다. */
+function daApplyConfirmedTypes(p, types, primaryType) {
+  if (!p || !Array.isArray(types)) return;
+  const ordered = primaryType && types.includes(primaryType) ? [primaryType, ...types.filter((t) => t !== primaryType)] : types.slice();
+  p.confirmedTypes = ordered;
+  daAutoClassify(p);
 }
 
 /* 2026-09-11 재검토(11차) 4절 — AI 보조 분류 클라이언트 연결. 규칙
@@ -1151,12 +1327,12 @@ function daMerge(arr, sourceLabel, places, importBatchId) {
       /* 유형 분류 — 확인된 유형(원본에 실제 cat이 있으면)을 이름 기반
          추정보다 우선하고, 사용자가 직접 고친 분류(catConfirmed)는
          재수입 때도 절대 덮지 않는다(2026-09-09 코드 검토). */
-      if (!exact.catConfirmed) { exact.cat = x.cat || daInfer(exact.name + ' ' + exact.note + ' ' + exact.address); exact.catConfirmed = !!x.cat; }
-      // 6-2절 — 세부 다중 태그도 같은 규칙(catConfirmed와 동일하게
-      // tagsConfirmed). 사용자가 직접 고른 적 없으면 재수입 때마다
-      // 최신 이름·메모·주소 기준으로 다시 추정해 둔다(더 정확해질 뿐,
-      // 사람이 확정한 값은 절대 안 건드림).
-      if (!exact.tagsConfirmed) exact.tags = daInferTags(exact.name + ' ' + exact.note + ' ' + exact.address);
+      // 2026-09-24 자동 분류 — 재가져오기에서도 우선순위를 지킨다: 사용자 확정값은
+      // 그대로, 파일에 실제 분류가 있으면 그것(확정), 아니면 이미 받아 둔 공급자
+      // 업종 > 이름 텍스트 순으로 다시 고른다(예전엔 텍스트 추정으로 덮어써 장소
+      // 확인 때 받은 업종 분류가 사라졌다).
+      if (!exact.catConfirmed && x.cat) { exact.cat = x.cat; exact.catConfirmed = true; }
+      daAutoClassify(exact);
       if (sourceLabel) { exact.sourceLists = Array.isArray(exact.sourceLists) ? exact.sourceLists : []; if (!exact.sourceLists.includes(sourceLabel)) exact.sourceLists.push(sourceLabel); }
       // 2026-09-11 재검토(9차) 6-1절 — 재가져오기가 이미 아는 장소의
       // 최초 추가 시각(firstAddedAt)이나 사용자가 이미 채운
@@ -1186,13 +1362,13 @@ function daMerge(arr, sourceLabel, places, importBatchId) {
     const p = Object.assign({ id: 'fm' + Date.now() + added + Math.floor(Math.random() * 9999) }, x);
     delete p.title;
     p.originName = x.name; p.originNote = x.note || ''; p.originAddress = x.address || '';
-    p.cat = x.cat || daInfer(p.name + ' ' + p.note + ' ' + p.address);
+    p.cat = x.cat || undefined;
     p.catConfirmed = !!x.cat;
-    // 6-2절 — 상위분류(cat)는 그대로 두고, 세부 다중 태그를 처음부터
-    // 같이 추정해 둔다(불확실하면 daInferTags가 빈 배열을 준다 — 억지로
-    // 아무 태그나 붙이지 않는다).
-    p.tags = daInferTags(p.name + ' ' + p.note + ' ' + p.address);
+    // 6-2절·2026-09-24 — 큰 분류와 세부 태그를 같은 규칙으로 고른다(불확실하면
+    // 미분류·빈 태그 — 억지로 붙이지 않는다). 목록 이름은 업종 근거로 쓰지 않는다.
+    p.tags = [];
     p.tagsConfirmed = false;
+    daAutoClassify(p);
     p.city = daCityGuess(p);
     p.sourceLists = sourceLabel ? [sourceLabel] : [];
     p.importKeys = [importFingerprint];
@@ -1249,6 +1425,13 @@ function daSetCat(places, id, cat) {
   if (!p) return false;
   p.cat = cat;
   p.catConfirmed = true;
+  // 2026-09-24 — 큰 분류를 바꾸면 자동으로 붙었던(사용자가 확정하지 않은)
+  // 다른 분류의 세부 태그는 뗀다(식당으로 고쳤는데 의류 태그가 남지 않게).
+  // 사용자가 직접 고른 태그(tagsConfirmed)와 개인 태그는 그대로 둔다.
+  if (!p.tagsConfirmed && Array.isArray(p.tags)) {
+    const catId = daCategoryId(cat);
+    p.tags = p.tags.filter((t) => daTagFitsCategory(t, catId));
+  }
   return true;
 }
 /* 6-2절 — 세부 태그 사용자 수정. catConfirmed와 같은 규칙: 한 번 사람이
@@ -1269,8 +1452,12 @@ function _migrateTags(places) {
   for (const p of places) {
     if (!p || !p.id) continue;
     if (!p.tagsConfirmed && !Array.isArray(p.tags)) {
-      p.tags = daInferTags(String(p.name || '') + ' ' + String(p.note || '') + ' ' + String(p.address || ''));
+      p.tags = daInferTags(_placeText(p));
     }
+    // 2026-09-24 자동 분류 — 사용자가 확정하지 않은 기존 장소는 이미 가진 근거
+    // (예전 장소 확인 때 받은 업종·이름 텍스트)만으로 보완한다. 새 조회 없음.
+    // 확정값·사용자가 비워 둔 값은 건드리지 않는다(daAutoClassify 규칙).
+    if (!p.catConfirmed || !p.tagsConfirmed) daAutoClassify(p);
   }
 }
 function daAssignCity(places, placeIds, city) {
@@ -1355,6 +1542,9 @@ function daBuildSpots(foodMap) {
     id: p.id,
     name: p.name || '이름 없음',
     category: p.cat || '기타',
+    categoryId: daCategoryId(p.cat || '기타'),
+    categoryLabel: daCategoryLabel(p.cat || '기타'),
+    categorySource: daCategorySource(p),
     catConfirmed: !!p.catConfirmed,
     area: p.address || '',
     memo: p.note || '',
@@ -1474,11 +1664,21 @@ window.DesignAdapter = {
   setTags: daSetTags,
   inferTags: daInferTags,
   knownCats: FM_INFER.map((x) => x[0]).concat('기타'),
+  // 2026-09-24 자동 분류 — 큰 분류(내부 id·표시명 분리)와 세부 분류 연결.
+  categoryEntries: () => CATEGORY_REGISTRY.map((c) => ({ id: c.id, stored: c.stored, label: c.labels[_locale] || c.labels.ko })),
+  categoryId: daCategoryId,
+  categoryLabel: daCategoryLabel,
+  categoryStored: daCategoryStored,
+  tagParent: daTagParent,
+  tagFitsCategory: daTagFitsCategory,
+  categorySource: daCategorySource,
+  autoClassify: daAutoClassify,
+  classifyFromProviderTypes: daClassifyFromProviderTypes,
   // 2026-09-11 재검토(10차) 4절 — getter로 둬서 세션 중 사용자가 만든
   // 태그(daCreateTag)도 곧바로 반영되게 한다. 21개는 시작 어휘일 뿐
   // 허용 목록 전체가 아니라는 지시를 그대로 구현한 부분이다.
   get knownTags() { return _allTagEntries().map((t) => t.label); },
-  get tagEntries() { return _allTagEntries().map((t) => ({ id: t.id, label: t.label, source: t.source || 'builtin' })); },
+  get tagEntries() { return _allTagEntries().map((t) => ({ id: t.id, label: t.label, source: t.source || 'builtin', parent: t.parent || null })); },
   createTag: daCreateTag,
   renameTag: daRenameTag,
   deleteCustomTag: daDeleteCustomTag,
